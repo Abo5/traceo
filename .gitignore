@@ -1,0 +1,9 @@
+.DS_Store
+**/.DS_Store
+backend/.venv/
+backend/storage/
+backend/*.db
+frontend/node_modules/
+frontend/.next/
+__pycache__/
+**/__pycache__/

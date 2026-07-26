@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Traceo — عرض للمستثمرين</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #131217;
+    --surface: #1B1A21;
+    --surface-2: #22212B;
+    --surface-3: #2C2B37;
+    --border: #312F3C;
+    --border-strong: #443F54;
+    --text: #F2EFF7;
+    --text-secondary: #ADA8BB;
+    --text-muted: #756F84;
+    --accent: #FF9B3D;
+    --accent-fill: #FF8A22;
+    --accent-fg: #211405;
+    --accent-subtle: rgba(255, 138, 34, 0.16);
+    --c-amber: #FF8A22;
+    --c-coral: #FF5C72;
+    --c-pink: #F85EC2;
+    --c-violet: #9B6BFF;
+    --c-blue: #4D9DFF;
+    --c-cyan: #2BD4C4;
+    --c-green: #4FD86B;
+    --c-yellow: #FFC53D;
+    --success: #3FD179;
+    --warning: #FFC53D;
+    --error: #FF5C72;
+    --grad-hero: linear-gradient(135deg, #FF8A22 0%, #F85EC2 52%, #9B6BFF 100%);
+    --grad-warm: linear-gradient(135deg, #FF8A22 0%, #FF5C72 100%);
+    --font-sans: 'IBM Plex Sans Arabic', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { color-scheme: dark; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .container { max-width: 1080px; margin: 0 auto; padding: 0 32px; }
+  section { padding: 64px 0; }
+  .band { background: var(--surface); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+
+  .eyebrow {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--accent); margin-bottom: 12px;
+  }
+  .eyebrow.muted { color: var(--text-muted); }
+  h2 { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.16; margin-bottom: 16px; }
+  h3 { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
+  .lead { font-size: 17px; color: var(--text-secondary); line-height: 1.6; max-width: 760px; }
+  .mono { font-family: var(--font-mono); }
+  .num { font-family: var(--font-mono); direction: ltr; unicode-bidi: isolate; }
+
+  /* ===== Cover ===== */
+  .cover { padding: 96px 0 72px; border-bottom: 1px solid var(--border); }
+  .cover-brand { display: flex; align-items: center; gap: 14px; margin-bottom: 48px; }
+  .logo-tile {
+    width: 44px; height: 44px; border-radius: 9px; background: var(--grad-hero);
+    display: flex; align-items: center; justify-content: center;
+    color: #1A1207; font-family: var(--font-mono); font-weight: 700; font-size: 24px;
+  }
+  .wordmark { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
+  .cover-tagline-mono { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); direction: ltr; unicode-bidi: isolate; }
+  .cover h1 { font-size: 52px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.1; max-width: 820px; margin-bottom: 20px; }
+  .cover .sub { font-size: 18px; color: var(--text-secondary); max-width: 720px; margin-bottom: 36px; }
+  .classification {
+    display: inline-flex; align-items: center; gap: 8px;
+    border: 1px solid var(--border-strong); border-radius: 999px;
+    padding: 7px 16px; font-size: 12px; color: var(--text-secondary);
+  }
+  .classification .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--success); }
+  .cover-meta { margin-top: 40px; display: flex; gap: 24px; flex-wrap: wrap; font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); }
+
+  /* ===== Stat tiles ===== */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 32px; }
+  .stat {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 22px 20px;
+  }
+  .stat .v { font-family: var(--font-mono); font-size: 30px; font-weight: 700; letter-spacing: -0.02em; direction: ltr; unicode-bidi: isolate; display: block; margin-bottom: 8px; }
+  .stat .l { font-size: 13px; color: var(--text-secondary); line-height: 1.4; display: block; }
+  .stat.amber .v { color: var(--c-amber); }
+  .stat.coral .v { color: var(--c-coral); }
+  .stat.violet .v { color: var(--c-violet); }
+  .stat.cyan .v { color: var(--c-cyan); }
+
+  /* ===== Cards ===== */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 24px; }
+  .card-2 { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+
+  /* ===== Pain list ===== */
+  .pain { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 28px; }
+  .pain .card-2 { display: flex; gap: 14px; align-items: flex-start; }
+  .chip-n {
+    flex: none; width: 28px; height: 28px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-mono); font-size: 12px; font-weight: 700;
+  }
+  .chip-amber  { background: rgba(255,138,34,.16);  color: var(--c-amber); }
+  .chip-coral  { background: rgba(255,92,114,.16);  color: var(--c-coral); }
+  .chip-pink   { background: rgba(248,94,194,.16);  color: var(--c-pink); }
+  .chip-violet { background: rgba(155,107,255,.16); color: var(--c-violet); }
+  .chip-blue   { background: rgba(77,157,255,.16);  color: var(--c-blue); }
+  .chip-cyan   { background: rgba(43,212,196,.16);  color: var(--c-cyan); }
+  .pain h4 { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+  .pain p { font-size: 13px; color: var(--text-secondary); }
+
+  /* ===== Pipeline ===== */
+  .pipeline { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-top: 28px; }
+  .pstep { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 18px 16px; position: relative; }
+  .pstep h4 { font-size: 14px; font-weight: 600; margin: 12px 0 6px; }
+  .pstep p { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+  .pstep .out { display: block; margin-top: 12px; font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); direction: ltr; unicode-bidi: isolate; text-align: right; }
+  .gate-banner {
+    margin-top: 20px; border: 1px solid var(--accent-fill); background: var(--accent-subtle);
+    border-radius: 12px; padding: 18px 22px; display: flex; align-items: center; gap: 14px;
+  }
+  .gate-banner .icon { flex: none; width: 34px; height: 34px; border-radius: 8px; background: var(--accent-fill); color: var(--accent-fg); display: flex; align-items: center; justify-content: center; font-weight: 700; font-family: var(--font-mono); font-size: 16px; }
+  .gate-banner h4 { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+  .gate-banner p { font-size: 13px; color: var(--text-secondary); }
+
+  /* ===== Moat ===== */
+  .moat { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin: 28px 0 36px; }
+  .moat .card-2 h4 { font-size: 14px; font-weight: 700; margin: 10px 0 6px; }
+  .moat .card-2 p { font-size: 12.5px; color: var(--text-secondary); }
+  .moat .tag { font-family: var(--font-mono); font-size: 11px; font-weight: 700; }
+
+  /* ===== Comparison table ===== */
+  .cmp { border: 1px solid var(--border); border-radius: 14px; overflow: hidden; background: var(--surface-2); }
+  .cmp table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .cmp th {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--text-muted); text-align: right; padding: 14px 18px;
+    border-bottom: 1px solid var(--border); background: var(--surface);
+  }
+  .cmp td { padding: 13px 18px; border-bottom: 1px solid var(--border); color: var(--text-secondary); vertical-align: top; }
+  .cmp tr:last-child td { border-bottom: none; }
+  .cmp td:first-child { color: var(--text); font-weight: 600; white-space: nowrap; }
+  .cmp .yes { color: var(--success); font-weight: 700; }
+  .cmp .no { color: var(--error); }
+  .cmp .part { color: var(--warning); }
+  .cmp tr.hl td { background: var(--accent-subtle); color: var(--text); }
+  .cmp tr.hl td:first-child { color: var(--accent); }
+
+  /* ===== Personas ===== */
+  .persona { border-top: 2px solid var(--border); }
+  .persona.a { border-top-color: var(--c-amber); }
+  .persona.b { border-top-color: var(--c-violet); }
+  .persona.c { border-top-color: var(--c-cyan); }
+  .persona .role { font-size: 12px; color: var(--text-muted); margin-bottom: 10px; }
+  .persona h4 { font-size: 16px; font-weight: 700; margin-bottom: 2px; }
+  .persona p { font-size: 13px; color: var(--text-secondary); margin-top: 10px; }
+  .persona .quote { font-size: 12.5px; border-right: 2px solid var(--border-strong); padding-right: 10px; color: var(--text-secondary); font-style: normal; margin-top: 12px; display: block; }
+
+  /* ===== Pricing ===== */
+  .plans { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 28px; }
+  .plan { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 22px 20px; }
+  .plan.hl { border-color: var(--accent-fill); background: rgba(255,138,34,.06); }
+  .plan .name { font-size: 16px; font-weight: 700; }
+  .plan .aud { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); margin-top: 2px; direction: ltr; unicode-bidi: isolate; display: block; text-align: right; }
+  .plan .price { font-family: var(--font-mono); font-size: 24px; font-weight: 700; margin: 16px 0 4px; direction: ltr; unicode-bidi: isolate; display: block; text-align: right; letter-spacing: -0.02em; }
+  .plan .per { font-size: 12px; color: var(--text-muted); margin-bottom: 14px; }
+  .plan ul { list-style: none; }
+  .plan li { font-size: 12.5px; color: var(--text-secondary); padding: 5px 0; border-bottom: 1px solid var(--border); }
+  .plan li:last-child { border-bottom: none; }
+  .price-note { margin-top: 18px; font-size: 12.5px; color: var(--text-muted); }
+  .principle {
+    margin-top: 24px; border: 1px solid var(--border-strong); border-radius: 12px;
+    padding: 20px 24px; background: var(--surface-2);
+  }
+  .principle h4 { font-size: 15px; font-weight: 700; color: var(--accent); margin-bottom: 6px; }
+  .principle p { font-size: 13.5px; color: var(--text-secondary); }
+
+  /* ===== Achievement checklist ===== */
+  .done { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 28px; }
+  .done .item {
+    display: flex; gap: 12px; align-items: flex-start;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px;
+  }
+  .done .check { flex: none; width: 20px; height: 20px; border-radius: 6px; background: rgba(63,209,121,.16); color: var(--success); font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+  .done .item p { font-size: 13px; color: var(--text-secondary); }
+  .done .item b { color: var(--text); font-weight: 600; }
+
+  /* ===== Timeline ===== */
+  .timeline { margin-top: 32px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; position: relative; }
+  .timeline::before {
+    content: ""; position: absolute; top: 15px; right: 12%; left: 12%;
+    height: 2px; background: var(--border-strong);
+  }
+  .tl-step { position: relative; padding: 0 14px; text-align: center; }
+  .tl-dot {
+    width: 32px; height: 32px; border-radius: 999px; margin: 0 auto 14px;
+    display: flex; align-items: center; justify-content: center; position: relative; z-index: 1;
+    font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+    background: var(--surface-3); border: 1px solid var(--border-strong); color: var(--text-secondary);
+  }
+  .tl-step.now .tl-dot { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--accent-fg); }
+  .tl-step h4 { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+  .tl-step .dur { font-family: var(--font-mono); font-size: 11px; color: var(--accent); margin-bottom: 8px; display: block; direction: ltr; unicode-bidi: isolate; }
+  .tl-step p { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+  .tl-step .badge-done {
+    display: inline-block; margin-top: 8px; font-size: 11px; font-weight: 600;
+    background: rgba(63,209,121,.16); color: var(--success); border-radius: 999px; padding: 3px 10px;
+  }
+
+  /* ===== BO cards ===== */
+  .bo-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 28px; }
+  .bo { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .bo .id { font-family: var(--font-mono); font-size: 11px; font-weight: 700; color: var(--c-blue); direction: ltr; unicode-bidi: isolate; display: inline-block; }
+  .bo .target { font-family: var(--font-mono); font-size: 20px; font-weight: 700; margin: 10px 0 6px; direction: ltr; unicode-bidi: isolate; display: block; text-align: right; letter-spacing: -0.02em; }
+  .bo p { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+  .bo.hard { border-color: var(--error); }
+  .bo.hard .target { color: var(--error); }
+  .bo.hard .id { color: var(--error); }
+
+  /* ===== Risks ===== */
+  .risk-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 28px; }
+  .risk { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .risk h4 { font-size: 14.5px; font-weight: 700; margin-bottom: 8px; }
+  .risk .r-id { font-family: var(--font-mono); font-size: 11px; color: var(--c-coral); direction: ltr; unicode-bidi: isolate; display: inline-block; margin-bottom: 8px; }
+  .risk p { font-size: 13px; color: var(--text-secondary); }
+  .risk .mit { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .risk .mit b { color: var(--c-green); font-weight: 600; font-size: 12px; }
+
+  /* ===== CTA ===== */
+  .cta { text-align: center; padding: 72px 0; }
+  .cta h2 { font-size: 34px; }
+  .cta .lead { margin: 0 auto 32px; }
+  .cta-points { display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; margin-bottom: 36px; }
+  .cta-point {
+    border: 1px solid var(--border-strong); border-radius: 999px;
+    padding: 9px 20px; font-size: 13px; color: var(--text-secondary);
+  }
+  .cta-btn {
+    display: inline-block; background: var(--accent-fill); color: var(--accent-fg);
+    font-weight: 700; font-size: 15px; padding: 14px 36px; border-radius: 8px; text-decoration: none;
+  }
+  .cta .contact { margin-top: 20px; font-family: var(--font-mono); font-size: 13px; color: var(--text-muted); direction: ltr; unicode-bidi: isolate; }
+
+  footer {
+    border-top: 1px solid var(--border); padding: 26px 0;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 12px; color: var(--text-muted);
+  }
+  footer .mono { direction: ltr; unicode-bidi: isolate; }
+
+  .src-note { font-size: 11.5px; color: var(--text-muted); margin-top: 20px; }
+
+  /* ===== Print ===== */
+  @media print {
+    :root {
+      --bg: #FFFFFF;
+      --surface: #FAFAFC;
+      --surface-2: #F4F3F8;
+      --surface-3: #ECEBF2;
+      --border: #D9D6E4;
+      --border-strong: #C2BED2;
+      --text: #1A1723;
+      --text-secondary: #4C4760;
+      --text-muted: #7C7690;
+      --accent: #C25E00;
+      --accent-subtle: rgba(255, 138, 34, 0.10);
+    }
+    html { color-scheme: light; }
+    body { background: #FFFFFF; color: var(--text); font-size: 12px; }
+    section { padding: 28px 0; page-break-inside: avoid; }
+    .cover { padding: 40px 0; }
+    .cover h1 { font-size: 34px; }
+    h2 { font-size: 22px; }
+    .cta-btn { border: 2px solid var(--accent); color: var(--accent); background: transparent; }
+    a { color: var(--accent); }
+  }
+
+  @media (max-width: 900px) {
+    .stats, .grid-4, .moat, .plans, .bo-grid, .timeline { grid-template-columns: repeat(2, 1fr); }
+    .pipeline { grid-template-columns: 1fr; }
+    .grid-3 { grid-template-columns: 1fr; }
+    .pain, .grid-2, .done, .risk-grid { grid-template-columns: 1fr; }
+    .timeline::before { display: none; }
+    .cover h1 { font-size: 36px; }
+    .cmp { overflow-x: auto; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ الغلاف ============ -->
+<header class="cover">
+  <div class="container">
+    <div class="cover-brand">
+      <div class="logo-tile">T</div>
+      <div>
+        <div class="wordmark">Traceo</div>
+        <div class="cover-tagline-mono">requirement → test → result</div>
+      </div>
+    </div>
+    <div class="eyebrow">منصة تصميم الاختبارات والتتبّع بالذكاء الاصطناعي — السوق السعودي</div>
+    <h1>كل متطلب، مرتبط باختبار نُفّذ فعلاً.</h1>
+    <p class="sub">Traceo تحوّل وثيقة المتطلبات — بالعربية أو الإنجليزية — إلى حزمة اختبارات API قابلة للتنفيذ، مرتبطة بكل متطلب على حدة، مع مصفوفة تتبّع حيّة تصلح دليلاً تعاقدياً وتدقيقياً.</p>
+    <span class="classification"><span class="dot"></span> تصنيف: عرض للمستثمرين — سرّي</span>
+    <div class="cover-meta">
+      <span>Traceo · TADQEEQ</span>
+      <span>MVP v1 — complete</span>
+      <span>Riyadh, Saudi Arabia</span>
+      <span>2026</span>
+    </div>
+  </div>
+</header>
+
+<!-- ============ الملخص التنفيذي ============ -->
+<section>
+  <div class="container">
+    <div class="eyebrow">الملخص التنفيذي</div>
+    <h2>المشكلة والحل في أربعة أسطر</h2>
+    <p class="lead">
+      فرق الجودة في السعودية تستهلك معظم طاقتها في عمل كتابي: تحويل كراسات الشروط يدوياً إلى حالات اختبار، ثم إعادة بناء مصفوفة التتبّع عند كل تسليم حكومي.
+      الرابط بين "ما اتُّفق عليه" و"ما تم التحقق منه" يتهالك خلال سبرنت واحد، وتُكتشف الفجوات متأخراً وتحت الضغط.
+      Traceo تقرأ الوثيقة — عربية كانت أو إنجليزية — تكتشف واجهات النظام الحقيقية من مواصفة OpenAPI، تولّد اختبارات مقيّدة بما اكتُشف فعلاً، تعرضها على مراجع بشري، ثم تنفّذها وتحدّث المصفوفة تلقائياً.
+      النتيجة: التتبّع يصبح ناتجاً جانبياً للعمل اليومي لا مشروعاً منفصلاً — قابلاً للتصدير كدليل تدقيق في أي لحظة.
+    </p>
+    <div class="stats">
+      <div class="stat amber">
+        <span class="v">40–60%</span>
+        <span class="l">من وقت فريق الجودة يُستهلك في كتابة حالات الاختبار وصيانتها يدوياً</span>
+      </div>
+      <div class="stat coral">
+        <span class="v">3–5 أيام</span>
+        <span class="l">لإعادة بناء مصفوفة التتبّع عند كل تسليم أو تدقيق</span>
+      </div>
+      <div class="stat violet">
+        <span class="v">0.5–1 يوم</span>
+        <span class="l">تكلفة إعادة الربط عند كل تغيير جوهري في متطلب</span>
+      </div>
+      <div class="stat cyan">
+        <span class="v">≤ 15 دقيقة</span>
+        <span class="l">هدفنا: من إنشاء المشروع إلى أول تشغيل فعلي للاختبارات</span>
+      </div>
+    </div>
+    <p class="src-note">الأرقام أعلاه فرضيات عمل موثّقة في وثيقة متطلبات الأعمال (BRD §3.2) من خبرة المؤسس المباشرة في الجودة، وتُقاس وتُثبَّت أثناء البايلوت مع الشركاء — لا يعتمد أي قرار استثماري على رقم غير قابل للقياس.</p>
+  </div>
+</section>
+
+<!-- ============ المشكلة ============ -->
+<section class="band">
+  <div class="container">
+    <div class="eyebrow">المشكلة</div>
+    <h2>رحلة كراسة الشروط الحكومية اليوم</h2>
+    <p class="lead">في المشروع السعودي النموذجي — وخصوصاً المنافسات الحكومية — تصل المتطلبات كوثيقة رسمية: كراسة شروط ومواصفات أو BRD أو طلب تغيير موقّع، بصيغة PDF أو Word، غالباً بالعربية، وغالباً بمئات الصفحات. ثم يحدث التالي:</p>
+    <div class="pain">
+      <div class="card-2">
+        <span class="chip-n chip-amber">01</span>
+        <div>
+          <h4>الاشتقاق اليدوي</h4>
+          <p>مهندس جودة يستخرج حالات الاختبار يدوياً إلى Excel أو TestRail أو Xray أو Azure Test Plans — سطراً سطراً، من وثيقة بمئات الصفحات.</p>
+        </div>
+      </div>
+      <div class="card-2">
+        <span class="chip-n chip-coral">02</span>
+        <div>
+          <h4>رابط يتهالك خلال سبرنت</h4>
+          <p>العلاقة بين المتطلب والاختبار تُسجَّل — إن سُجّلت أصلاً — كنص حر في عمود جدول، وتفقد صلاحيتها خلال سبرنت واحد.</p>
+        </div>
+      </div>
+      <div class="card-2">
+        <span class="chip-n chip-violet">03</span>
+        <div>
+          <h4>التغيير معضلة</h4>
+          <p>عندما يتغيّر متطلب، لا أحد يستطيع الجزم بأي الاختبارات أصبحت باطلة — فإما مراجعة كل شيء (مكلف) أو لا شيء (خطر).</p>
+        </div>
+      </div>
+      <div class="card-2">
+        <span class="chip-n chip-blue">04</span>
+        <div>
+          <h4>مصفوفة "شبه خيالية"</h4>
+          <p>عند التسليم أو التدقيق، تُعاد صياغة مصفوفة التتبّع بأثر رجعي وتحت ضغط الوقت — وتكون في جزء منها أقرب إلى الرواية منها إلى السجل.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ الحل ============ -->
+<section>
+  <div class="container">
+    <div class="eyebrow">الحل</div>
+    <h2>خط أنابيب من خمس مراحل — لا صندوق أسود</h2>
+    <p class="lead">النموذج يقترح، والنظام يتحقق. كل مرحلة لها مخرجات محددة قابلة للفحص، والمراجع البشري يملك القرار الأخير قبل أن يُحتسب أي اختبار.</p>
+    <div class="pipeline">
+      <div class="pstep">
+        <span class="chip-n chip-amber">01</span>
+        <h4>تحليل المتطلبات</h4>
+        <p>PDF أو DOCX أو Markdown — بالعربية أو الإنجليزية. استخراج منظّم: المعرّف، الوصف، معايير القبول، النوع، الأولوية.</p>
+        <span class="out">requirement_id + criteria</span>
+      </div>
+      <div class="pstep">
+        <span class="chip-n chip-coral">02</span>
+        <h4>اكتشاف الواجهات</h4>
+        <p>قراءة مواصفة OpenAPI / Swagger وبناء جرد كامل للواجهات — محرك حتمي بلا أي تدخل من النموذج اللغوي.</p>
+        <span class="out">endpoint inventory</span>
+      </div>
+      <div class="pstep">
+        <span class="chip-n chip-violet">03</span>
+        <h4>التوليد المقيّد</h4>
+        <p>حالات اختبار بتقنيات معتمدة — التجزئة المكافئة، القيم الحدّية، جداول القرار — مربوطة بمتطلب محدد ومقيّدة بالجرد المكتشف.</p>
+        <span class="out">EP · BVA · decision tables</span>
+      </div>
+      <div class="pstep">
+        <span class="chip-n chip-blue">04</span>
+        <h4>المراجعة البشرية</h4>
+        <p>طابور مراجعة: قبول أو تعديل أو رفض لكل حالة، مع نص المتطلب أمام المراجع، وسجل اعتماد موقّع بالاسم والوقت.</p>
+        <span class="out">approve / edit / reject</span>
+      </div>
+      <div class="pstep">
+        <span class="chip-n chip-cyan">05</span>
+        <h4>التنفيذ والمصفوفة</h4>
+        <p>تنفيذ الاختبارات المعتمدة على بيئة العميل مع الأدلة الكاملة، ومصفوفة تتبّع حيّة تُصدَّر إلى Excel وPDF.</p>
+        <span class="out">pass / fail + evidence</span>
+      </div>
+    </div>
+    <div class="gate-banner">
+      <div class="icon">⌀</div>
+      <div>
+        <h4>بوابة الأرضية: صفر واجهات مختلَقة — قاعدة عمل وليست ميزة</h4>
+        <p>كل حالة مولَّدة تُفحص ضد جرد الواجهات المكتشف قبل الحفظ: أي حالة تشير إلى واجهة أو مُعامل أو حقل غير موجود تُحذف ولا تُعرض على المستخدم أبداً. اختبارات هذه البوابة شرط إطلاق لأي إصدار — لأن واجهة واحدة مختلقة في عرض تجريبي تُفقدنا الحساب كله.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ لماذا الآن ولماذا نحن ============ -->
+<section class="band">
+  <div class="container">
+    <div class="eyebrow">لماذا الآن — ولماذا نحن</div>
+    <h2>الخندق الدفاعي: أربع خصائص لا تجتمع عند أي منافس</h2>
+    <p class="lead">سوق الاختبار المدعوم بالذكاء الاصطناعي عالمياً مزدحم وممول جيداً — و‏Traceo لا تنافس في الحالة العامة. ننافس في شريحة تحددها ثلاثة شروط سعودية تتزامن معاً ويخدمها المورّدون العالميون بشكل رديء: المتطلبات بالعربية، والتتبّع التزام تعاقدي في التسليم الحكومي، وقيود إقامة البيانات بموجب نظام حماية البيانات الشخصية وإرشادات سدايا.</p>
+    <div class="moat">
+      <div class="card-2">
+        <span class="tag" style="color:var(--c-amber)">D1</span>
+        <h4>العربية أولاً</h4>
+        <p>معالجة كراسات الشروط العربية — التخطيط، النص ثنائي الاتجاه، الأرقام العربية — استثمار جوهري عندنا، وهامش خطأ حسابي في إيرادات أي مورّد عالمي.</p>
+      </div>
+      <div class="card-2">
+        <span class="tag" style="color:var(--c-violet)">D2</span>
+        <h4>التتبّع ككائن أساسي</h4>
+        <p>المنافسون مبنيون حول التطبيق قيد الاختبار؛ إضافة نموذج متطلبات لاحقاً إعادةُ بناء لا ميزة. عندنا العلاقة متطلب↔اختبار هي جدول من الدرجة الأولى — هي المنتج نفسه.</p>
+      </div>
+      <div class="card-2">
+        <span class="tag" style="color:var(--c-blue)">D3</span>
+        <h4>النشر داخل المملكة</h4>
+        <p>تشغيل كامل داخل بنية العميل أو داخل المملكة — متوافق مع PDPL وإرشادات سدايا. مورّدو SaaS العالميون ممانعون بنيوياً لدعم نسخ ذاتية الاستضافة لكل عميل.</p>
+      </div>
+      <div class="card-2">
+        <span class="tag" style="color:var(--c-cyan)">D4</span>
+        <h4>كشف فجوات التغطية</h4>
+        <p>قائمة فورية بكل متطلب بلا اختبار معتمد — ممكنة فقط لأن لدينا نموذج متطلبات منظّم (نتيجة مباشرة لـ D2)، ومستحيلة على أدوات تبدأ من التطبيق.</p>
+      </div>
+    </div>
+    <div class="cmp">
+      <table>
+        <thead>
+          <tr>
+            <th>الفئة</th>
+            <th>متطلبات عربية</th>
+            <th>تتبّع متطلب↔اختبار</th>
+            <th>كشف فجوات التغطية</th>
+            <th>تنفيذ فعلي بالأدلة</th>
+            <th>نشر داخل المملكة</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>TestRail / Xray / Zephyr</td>
+            <td class="no">✗</td>
+            <td class="part">يدوي فقط — نص حر</td>
+            <td class="no">✗ لا فهم لنص المتطلب</td>
+            <td class="part">تخزين نتائج فقط</td>
+            <td class="part">جزئي</td>
+          </tr>
+          <tr>
+            <td>Testim / Mabl / Applitools</td>
+            <td class="no">✗ إنجليزية أولاً</td>
+            <td class="no">✗ تبدأ من التطبيق</td>
+            <td class="no">✗</td>
+            <td class="yes">✓ واجهات UI</td>
+            <td class="no">✗ SaaS فقط</td>
+          </tr>
+          <tr>
+            <td>Postman / RestAssured / Karate</td>
+            <td class="no">✗</td>
+            <td class="no">✗ لا مصدر متطلبات</td>
+            <td class="no">✗</td>
+            <td class="yes">✓ تأليف يدوي كامل</td>
+            <td class="part">أدوات محلية</td>
+          </tr>
+          <tr>
+            <td>نموذج لغوي عام — LLM chat</td>
+            <td class="part">صياغة بلا أساس</td>
+            <td class="no">✗ لا استمرارية</td>
+            <td class="no">✗</td>
+            <td class="no">✗ يخترع واجهات ولا ينفّذ</td>
+            <td class="no">✗ غير مقبول لبيانات منظَّمة</td>
+          </tr>
+          <tr class="hl">
+            <td>Traceo</td>
+            <td class="yes">✓ بمستوى الإنجليزية</td>
+            <td class="yes">✓ كائن أساسي</td>
+            <td class="yes">✓ قائمة حيّة</td>
+            <td class="yes">✓ API بأدلة كاملة</td>
+            <td class="yes">✓ من اليوم الأول معمارياً</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ============ السوق ============ -->
+<section>
+  <div class="container">
+    <div class="eyebrow">السوق</div>
+    <h2>ثلاث شرائح — بترتيب أولوية الشراء</h2>
+    <p class="lead">نرفض التقديرات الفوقية للسوق. المنهج تصاعدي: قائمة مسماة بأربعين حساباً مؤهلاً على الأقل قبل البناء — "سوق لا يمكن تعداده بالاسم ليس سوقاً مُتحققاً منه بعد".</p>
+    <div class="grid-3" style="margin-top:28px">
+      <div class="card">
+        <span class="chip-n chip-amber">1</span>
+        <h3 style="margin:12px 0 6px">بيوت البرمجيات على مشاريع حكومية</h3>
+        <p style="font-size:13px;color:var(--text-secondary)">بالمئات — عبر قوائم مورّدي اعتماد وسجلات وزارة الاتصالات وهيئة الحكومة الرقمية. متطلبات مكتوبة رسمياً، مواعيد صارمة، والتتبّع مطلوب تعاقدياً: كل ساعة جودة مستعادة تتحول هامشَ ربح مباشراً. دورة قرار سريعة ومشترٍ تقني.</p>
+      </div>
+      <div class="card">
+        <span class="chip-n chip-violet">2</span>
+        <h3 style="margin:12px 0 6px">جهات حكومية وشبه حكومية</h3>
+        <p style="font-size:13px;color:var(--text-secondary)">بالعشرات — منصات ضخمة وفرق جودة صغيرة وانكشاف تدقيقي مرتفع مع ميزانية متاحة. دورة شراء أطول، والنشر داخل بنية الجهة إلزامي — وهنا تحديداً قيمة العقد الأعلى وخندق D3.</p>
+      </div>
+      <div class="card">
+        <span class="chip-n chip-cyan">3</span>
+        <h3 style="margin:12px 0 6px">الستارتب آبس الممولة</h3>
+        <p style="font-size:13px;color:var(--text-secondary)">بالمئات — عبر منشآت ومحافظ الصناديق المحلية. فرق هندسية بلا وظيفة جودة مخصصة؛ أي تنظيم تحسين فوري. خدمة ذاتية بسعر منخفض: قناة حجم وتغذية راجعة للمنتج، لا إيراد مبكر.</p>
+      </div>
+    </div>
+    <h3 style="margin:40px 0 4px">الشخصيات الثلاث التي نبني لها</h3>
+    <div class="grid-3" style="margin-top:20px">
+      <div class="card persona a">
+        <h4>نواف</h4>
+        <div class="role">قائد جودة — بيت برمجيات 60 موظفاً · 4 مشاريع حكومية متزامنة</div>
+        <p>يستلم كراسات شروط عربية ومواصفات تقنية إنجليزية في المشروع نفسه، ويُقاس على العيوب الهاربة إلى UAT ومواعيد التسليم. لحظة الشراء: طُلبت منه مصفوفة تغطية عند معلم تسليم فبناها يدوياً في عطلة نهاية أسبوع.</p>
+        <span class="quote">"لا أثق بحالات اختبار مولَّدة" — لذلك يملك مراجعة وتعديل واعتماد كل حالة قبل أن تُحتسب.</span>
+      </div>
+      <div class="card persona b">
+        <h4>ريم</h4>
+        <div class="role">رئيسة الجودة — منصة حكومية رقمية</div>
+        <p>مسؤولة أمام التدقيق الداخلي عن أدلة التغطية مقابل المتطلبات المعتمدة، ولا تستطيع اعتماد أي أداة تُخرج وثائق المشروع خارج المملكة. لحظة الشراء: ملاحظة تدقيق على نقص أدلة الاختبار.</p>
+        <span class="quote">شروطها: نشر داخلي، تدفقات بيانات موثقة، والتزام دعم مكتوب — وكلها في صلب تصميم Traceo.</span>
+      </div>
+      <div class="card persona c">
+        <h4>عبدالله</h4>
+        <div class="role">قائد تقني — ستارتب من 12 شخصاً</div>
+        <p>لا وظيفة جودة لديه؛ يملك مواصفة OpenAPI لأن إطار العمل يولّدها تلقائياً. لحظة الشراء: حادثة إنتاج سببها واجهة لم تُختبر قط.</p>
+        <span class="quote">إن تجاوز الوصول إلى أول حزمة اختبارات ناجحة خمس عشرة دقيقة — لن يعود. هذا هو هدف التفعيل الصارم لدينا.</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ نموذج الإيرادات ============ -->
+<section class="band">
+  <div class="container">
+    <div class="eyebrow">نموذج الإيرادات</div>
+    <h2>أربع باقات — من التقييم الذاتي إلى عقد النشر الحكومي</h2>
+    <div class="plans">
+      <div class="plan">
+        <div class="name">Free</div>
+        <span class="aud">evaluation · persona C</span>
+        <span class="price">0 SAR</span>
+        <div class="per">للتقييم</div>
+        <ul>
+          <li>مشروع واحد · وثيقة متطلبات واحدة</li>
+          <li>سقف 50 حالة اختبار مولَّدة</li>
+          <li>اختبار API فقط</li>
+          <li>دعم مجتمعي</li>
+        </ul>
+      </div>
+      <div class="plan">
+        <div class="name">Pro</div>
+        <span class="aud">small team · startup</span>
+        <span class="price">~149 SAR</span>
+        <div class="per">لكل مستخدم / شهرياً — استرشادي</div>
+        <ul>
+          <li>مشاريع غير محدودة</li>
+          <li>سقوف توليد وتنفيذ بالحجم</li>
+          <li>تصدير Excel و PDF</li>
+          <li>دعم بريدي</li>
+        </ul>
+      </div>
+      <div class="plan hl">
+        <div class="name">Team</div>
+        <span class="aud">software house · segment 1</span>
+        <span class="price">~2,400 SAR</span>
+        <div class="per">شهرياً — استرشادي · حد أدنى 5 مقاعد</div>
+        <ul>
+          <li>كل مزايا Pro بحدود أعلى</li>
+          <li>صلاحيات حسب الدور</li>
+          <li>سجل تدقيق كامل</li>
+          <li>تكامل CI/CD و Jira — من v2</li>
+        </ul>
+      </div>
+      <div class="plan">
+        <div class="name">Enterprise</div>
+        <span class="aud">government · segment 2</span>
+        <span class="price">عقد سنوي</span>
+        <div class="per">يُسعَّر لكل نشر</div>
+        <ul>
+          <li>نشر On-premise أو داخل المملكة</li>
+          <li>اتفاقية مستوى خدمة SLA</li>
+          <li>تهيئة وتدريب</li>
+          <li>جهة دعم مسماة</li>
+        </ul>
+      </div>
+    </div>
+    <p class="price-note">الأسعار النهائية تُثبَّت عمداً بعد البايلوت — بناءً على الالتزام المكتوب بالدفع (BO-06) والساعات المُوفَّرة المقاسة فعلياً (BO-01). التثبيت على رقم شهري قبل قياس القيمة يبخس منتجاً تدقيقياً يُباع للحكومة. الأرقام المعروضة استرشادية من نموذج التسعير التصميمي.</p>
+    <div class="principle">
+      <h4>مبدأ التسعير</h4>
+      <p>نسعّر مقابل ساعات QA المستعادة — لا مقابل اشتراك منافس. مرجع المقارنة عند المشتري راتبُ مهندس جودة، لا فاتورة SaaS: فريق جودة من خمسة يصرف 40–60% من طاقته على التأليف والربط اليدوي، واستعادة نصف ذلك فقط تجعل المنصة تدفع ثمنها عند أي سعر واقعي للمقعد. لا عدّ على تنفيذ الاختبارات في الـ MVP — الفواتير غير المتوقعة تقتل الاستخدام الاعتيادي.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ الإنجاز الحالي ============ -->
+<section>
+  <div class="container">
+    <div class="eyebrow">الإنجاز الحالي</div>
+    <h2>MVP V1 مكتمل — منصة عاملة، لا عرض شرائح</h2>
+    <p class="lead">منصة متعددة المستأجرين تعمل من طرف إلى طرف: منظمات ومشاريع وأدوار وسجل تدقيق، والحلقة الكاملة من الوثيقة إلى المصفوفة المصدَّرة.</p>
+    <div class="done">
+      <div class="item"><span class="check">✓</span><p><b>استخراج عربي / إنجليزي</b> — تحليل PDF وDOCX وMarkdown مع تطبيع الأرقام العربية والنص ثنائي الاتجاه، وعرض النص المصدري بجانب كل متطلب مستخرج للتحقق.</p></div>
+      <div class="item"><span class="check">✓</span><p><b>محرك اكتشاف حتمي</b> — استيراد OpenAPI 3.x وSwagger 2.0 ملفاً أو رابطاً، جرد واجهات مطبَّع بالقيود والمخططات، بلا أي تدخل من النموذج اللغوي.</p></div>
+      <div class="item"><span class="check">✓</span><p><b>توليد بتقنيات معتمدة</b> — التجزئة المكافئة والقيم الحدّية وجداول القرار والحالات السلبية، مع بوابة تحقق تحذف أي حالة غير مؤسسة قبل الحفظ.</p></div>
+      <div class="item"><span class="check">✓</span><p><b>مراجعة بشرية كاملة</b> — طابور مراجعة باختصارات لوحة مفاتيح، اعتماد ورفض فردي وجماعي، وسجل اعتماد بالاسم والوقت لكل حالة.</p></div>
+      <div class="item"><span class="check">✓</span><p><b>تنفيذ فعلي بالأدلة</b> — تشغيل غير متزامن على بيئة العميل بمصادقة مُدارة، أدلة كاملة لكل خطوة: الطلب والاستجابة والتوكيدات مع حجب الأسرار قبل الحفظ.</p></div>
+      <div class="item"><span class="check">✓</span><p><b>مصفوفة حيّة وفجوات تغطية</b> — متطلب ← اختبارات ← آخر نتيجة، نسبة تغطية محدثة تلقائياً، ووسم تلقائي للحالات المتقادمة عند تغيّر المتطلب.</p></div>
+      <div class="item"><span class="check">✓</span><p><b>تصدير Excel و PDF</b> — مصفوفة وتقارير تشغيل بصيغة تسليم للعميل أو المدقق، بإخراج RTL صحيح عندما تكون لغة المشروع العربية.</p></div>
+      <div class="item"><span class="check">✓</span><p><b>بوابتا إطلاق كاختبارات آلية</b> — حزمة اختبارات الأرضية Grounding بعينات اختلاق عدائية، وحزمة عزل المستأجرين على كل واجهة — فشل أيٍّ منهما يمنع الإصدار.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ خارطة الطريق ============ -->
+<section class="band">
+  <div class="container">
+    <div class="eyebrow">خارطة الطريق</div>
+    <h2>من إثبات الحلقة الأساسية إلى عقود النشر الحكومية</h2>
+    <div class="timeline">
+      <div class="tl-step now">
+        <div class="tl-dot">MVP</div>
+        <h4>الحلقة الكاملة</h4>
+        <span class="dur">6–8 weeks</span>
+        <p>اختبار API من OpenAPI، استيعاب عربي وإنجليزي، توليد مرتبط بالمتطلبات بمراجعة بشرية، تنفيذ، مصفوفة وفجوات، تصدير.</p>
+        <span class="badge-done">مكتمل</span>
+      </div>
+      <div class="tl-step">
+        <div class="tl-dot">V1</div>
+        <h4>بلا مواصفة</h4>
+        <span class="dur">+6 weeks</span>
+        <p>اكتشاف الواجهات من الترافيك الفعلي عندما لا توجد مواصفة، واختبار وظيفي لواجهات المستخدم — يفتح شريحة الستارتب آبس والأنظمة القديمة.</p>
+      </div>
+      <div class="tl-step">
+        <div class="tl-dot">V2</div>
+        <h4>داخل سير العمل</h4>
+        <span class="dur">+8 weeks</span>
+        <p>تكامل CI/CD، تكامل Jira و Xray، ومحددات ذاتية الإصلاح Self-healing — ترسيخ يومي يرفع الاحتفاظ وتوسّع المقاعد.</p>
+      </div>
+      <div class="tl-step">
+        <div class="tl-dot">V3</div>
+        <h4>العقود الحكومية</h4>
+        <span class="dur">later</span>
+        <p>توزيعة On-prem مدعومة بعقود SLA وتدريب، واختبارات RTL والتوطين وإتاحة الوصول — اكتمال الشريحة الثانية بقيمة العقد الكاملة.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ مؤشرات البايلوت ============ -->
+<section>
+  <div class="container">
+    <div class="eyebrow">مؤشرات النجاح</div>
+    <h2>بايلوت 12 أسبوعاً — أهداف مكتوبة وقابلة للقياس</h2>
+    <p class="lead">أهداف متعمَّدة التواضع: غاية الـ MVP هي التعلّم الموثّق لا الإيراد. كل مؤشر له طريقة قياس محددة مع الشركاء الثلاثة.</p>
+    <div class="bo-grid">
+      <div class="bo">
+        <span class="id">BO-01</span>
+        <span class="target">≥ 50%</span>
+        <p>خفض الوقت الوسيط لإنتاج حزمة اختبارات معتمدة من وثيقة متطلبات، مقارنة بخط الأساس المقاس لدى الشريك.</p>
+      </div>
+      <div class="bo">
+        <span class="id">BO-02</span>
+        <span class="target">≥ 70%</span>
+        <p>نسبة الحالات المولَّدة التي يقبلها مراجع جودة بلا تعديل أو بتعديل طفيف — بوابة جودة صريحة.</p>
+      </div>
+      <div class="bo">
+        <span class="id">BO-03</span>
+        <span class="target">2 / 3</span>
+        <p>شركاء يصدّرون مصفوفة التغطية ويقدمونها فعلياً لعميل أو مدقق أثناء البايلوت — دليل أن التتبّع مُثمَّن.</p>
+      </div>
+      <div class="bo">
+        <span class="id">BO-04</span>
+        <span class="target">≥ 5</span>
+        <p>فجوات تغطية حقيقية لم تكن معروفة تُكتشف في مشاريع الشركاء — دليل التمايز في D4.</p>
+      </div>
+      <div class="bo">
+        <span class="id">BO-05</span>
+        <span class="target">≥ 2</span>
+        <p>دراستا حالة موقعتان بإذن استخدام اسم العميل — المرجعية المسماة أثمن من أي إنفاق إعلاني.</p>
+      </div>
+      <div class="bo">
+        <span class="id">BO-06</span>
+        <span class="target">2 / 3</span>
+        <p>شركاء يلتزمون كتابياً بباقة مدفوعة بعد البايلوت المجاني — التحقق الفعلي من الاستعداد للدفع.</p>
+      </div>
+      <div class="bo hard">
+        <span class="id">BO-07</span>
+        <span class="target">0</span>
+        <p>خطوات اختبار منفَّذة تشير إلى واجهة أو مُعامل غائب عن السطح المكتشف — بوابة صلبة: صفر اختلاق، بلا استثناء.</p>
+      </div>
+      <div class="bo">
+        <span class="id">weekly</span>
+        <span class="target">4 مؤشرات</span>
+        <p>مؤشرات قائدة أسبوعية: وثائق مرفوعة لكل شريك، نسبة المولَّد إلى المعتمد، تشغيلات الأسبوع، وزمن الوصول لأول تشغيل.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ المخاطر ============ -->
+<section class="band">
+  <div class="container">
+    <div class="eyebrow">المخاطر وكيف نديرها</div>
+    <h2>نبني حول المخاطر — لا نتجاهلها</h2>
+    <div class="risk-grid">
+      <div class="risk">
+        <span class="r-id">R-02 · prob: high · impact: critical</span>
+        <h4>اختلاق النموذج اللغوي يدمّر الثقة من أول عرض</h4>
+        <p>نموذج يخترع واجهة أو مُعاملاً أو معيار قبول واحداً يكفي لخسارة الحساب في السوق الحكومي.</p>
+        <p class="mit"><b>الإدارة:</b> التوليد مقيّد بالجرد المكتشف بنص متطلب أعمال (BR-09) لا قرار تقني؛ كل مخرجات النموذج تُتحقق مخططياً وكل معرّف يُفحص ضد الجرد قبل الحفظ؛ المخالفات تُحذف ولا تُعرض — واختبار هذه البوابة شرط إصدار آلي.</p>
+      </div>
+      <div class="risk">
+        <span class="r-id">R-04 · prob: medium · impact: high</span>
+        <h4>جودة العربية دون الإنجليزية — تقويض التمايز الجوهري</h4>
+        <p>إن كان استخراج المتطلبات من الوثائق العربية أضعف ملموساً، انهار عمود D1.</p>
+        <p class="mit"><b>الإدارة:</b> الاختبار على وثائق شركاء حقيقية — لا عينات نظيفة — في المرحلة صفر: نكتشف المشكلة في الأسبوع الثاني لا الأسبوع العشرين، مع معالجة مسبقة واعية بالتخطيط للنص العربي وقياس الجودة بتقييم مراجع بشري.</p>
+      </div>
+      <div class="risk">
+        <span class="r-id">R-06 · prob: high · impact: medium</span>
+        <h4>دورات البيع الحكومية أطول من المدرج المالي</h4>
+        <p>الشريحة الأعلى قيمة — الجهات الحكومية — هي الأبطأ شراءً، وانتظارها وحدها يستنزف الرَّاحلة.</p>
+        <p class="mit"><b>الإدارة:</b> تسلسل مقصود: الإيراد الأول من بيوت البرمجيات ذات دورة القرار السريعة (الشريحة 1)، والدخول الحكومي لاحقاً كحركة مدعومة بمراجع مسماة واستبيان أمني مكتمل — لا بيع حكومي بارد.</p>
+      </div>
+      <div class="risk">
+        <span class="r-id">R-07 · prob: medium · impact: medium</span>
+        <h4>كلفة الاستدلال قد تلتهم الهامش</h4>
+        <p>كلفة معالجة الوثيقة الواحدة تتناسب مع طولها وهي المتغير التكاليفي المهيمن.</p>
+        <p class="mit"><b>الإدارة:</b> قياس الكلفة لكل مشروع أثناء البايلوت؛ تخزين وإعادة استخدام المخرجات المحلَّلة؛ سقوف حجم لكل باقة؛ وطبقة تجريد للمزوّد تسمح بالتبديل إلى نماذج أرخص — أو مستضافة ذاتياً — بتغيير إعداد لا كود.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ الطلب / الخاتمة ============ -->
+<section class="cta">
+  <div class="container">
+    <div class="eyebrow" style="text-align:center">الطلب</div>
+    <h2>شراكة بايلوت: 12 أسبوعاً · 3 فرق جودة · مشاريع حقيقية</h2>
+    <p class="lead" style="text-align:center">
+      المنصة تعمل اليوم. المطلوب الآن إثبات الادعاءات الثلاثة القابلة للاختبار — الوقت المستهلك حقيقي، والمخرجات تتجاوز عتبة المراجع المحترف، والتتبّع يستحق الدفع — على مشاريع شركاء حقيقية بكراسات شروط حقيقية، وتحويل التزامين مكتوبين بالدفع إلى أول إيراد مرجعي.
+    </p>
+    <div class="cta-points">
+      <span class="cta-point">وثيقة متطلبات حقيقية — لا عينة</span>
+      <span class="cta-point">خط أساس مقاس لساعات التأليف الحالية</span>
+      <span class="cta-point">جلسة أسبوعية 30 دقيقة مع قائد الجودة</span>
+      <span class="cta-point">حق دراسة حالة مسماة</span>
+    </div>
+    <a class="cta-btn" href="mailto:aszda44@gmail.com">تواصل معنا — احجز جلسة العرض</a>
+    <div class="contact">Traceo · TADQEEQ — Riyadh</div>
+  </div>
+</section>
+
+<footer>
+  <div class="container" style="display:flex;justify-content:space-between;align-items:center;width:100%">
+    <span>Traceo · الرياض</span>
+    <span class="mono">on-premise available · data stays in the Kingdom</span>
+  </div>
+</footer>
+
+</body>
+</html>
