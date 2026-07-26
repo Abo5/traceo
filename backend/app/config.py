@@ -9,7 +9,7 @@ class Settings:
     API_V1_PREFIX = "/v1"
 
     DATABASE_URL = os.getenv("TRACEO_DATABASE_URL", f"sqlite:///{BASE_DIR / 'traceo.db'}")
-    SECRET_KEY = os.getenv("TRACEO_SECRET_KEY", "dev-secret-change-in-production")
+    SECRET_KEY = os.getenv("TRACEO_SECRET_KEY", "dev-secret-change-in-production-0000")
     TOKEN_TTL_HOURS = int(os.getenv("TRACEO_TOKEN_TTL_HOURS", "12"))  # NFR-SEC-07
 
     STORAGE_DIR = Path(os.getenv("TRACEO_STORAGE_DIR", str(BASE_DIR / "storage")))
