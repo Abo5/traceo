@@ -18,6 +18,7 @@ from ..db import get_db
 from ..deps import get_project_scoped, require
 from ..models import (Environment, Project, Requirement, RequirementTestCase,
                       Run, TestCase, TestResult, User)
+from .traceability import derive_severity, is_high_priority, run_display_id
 
 router = APIRouter()
 
@@ -51,6 +52,7 @@ def _requirements_by_case(db: Session, case_ids: list[str]) -> dict[str, list[di
     for link, req in rows:
         out[link.test_case_id].append({
             "id": req.id, "external_id": req.external_id, "description": req.description,
+            "priority": req.priority,
         })
     return out
 
@@ -96,18 +98,26 @@ def _report_entries(db: Session, run: Run) -> list[dict]:
             .order_by(TestResult.created_at.asc())
             .all())
     reqs = _requirements_by_case(db, [tc.id for _res, tc in rows])
-    return [{
-        "test_case": {"id": tc.id, "title": tc.title, "description": tc.description,
-                      "type": tc.type, "priority": tc.priority, "state": tc.state,
-                      "technique": tc.technique},
-        "test_case_version": res.test_case_version,
-        "outcome": res.outcome,
-        "duration_ms": res.duration_ms,
-        "failure_reason": res.failure_reason,
-        "evidence": res.evidence or [],
-        "requirements": reqs.get(tc.id, []),
-        "executed_at": _iso(res.created_at),
-    } for res, tc in rows]
+    entries = []
+    for res, tc in rows:
+        linked = reqs.get(tc.id, [])
+        high = any(is_high_priority(r.get("priority")) for r in linked)
+        entries.append({
+            "test_case": {"id": tc.id, "title": tc.title, "description": tc.description,
+                          "type": tc.type, "priority": tc.priority, "state": tc.state,
+                          "technique": tc.technique},
+            "test_case_version": res.test_case_version,
+            "outcome": res.outcome,
+            "duration_ms": res.duration_ms,
+            "failure_reason": res.failure_reason,
+            "evidence": res.evidence or [],
+            "requirements": linked,
+            "executed_at": _iso(res.created_at),
+            # FR-052: severity only meaningful on failed/errored cases
+            "severity": derive_severity(res.outcome, res.failure_reason, high)
+            if res.outcome in ("failed", "errored") else None,
+        })
+    return entries
 
 
 def _counts_of(run: Run, entries: list[dict]) -> dict:
@@ -241,15 +251,52 @@ def export_matrix(project_id: str, user: User = Depends(require("export")),
 
 
 # ---------------------------------------------------------------------------
-# Run report — JSON (FR-RPT-01/02/03)
+# Run report — JSON (FR-RPT-01/02/03 + FR-044-lite perf block)
 # ---------------------------------------------------------------------------
+
+def _percentile(sorted_vals: list[int], q: float) -> int:
+    """Nearest-rank percentile over a pre-sorted list."""
+    idx = min(len(sorted_vals) - 1, max(0, round(q * (len(sorted_vals) - 1))))
+    return sorted_vals[int(idx)]
+
+
+def _perf_block(db: Session, run: Run) -> list[dict]:
+    """Per-endpoint latency aggregation from evidence elapsed_ms (FR-044).
+    Evidence entries are positional per step, so the step list names the endpoint."""
+    rows = (db.query(TestResult, TestCase)
+            .join(TestCase, TestCase.id == TestResult.test_case_id)
+            .filter(TestResult.run_id == run.id)
+            .all())
+    buckets: dict[tuple[str, str], list[int]] = {}
+    for res, tc in rows:
+        steps = sorted(tc.steps, key=lambda s: s.order)
+        for i, ev in enumerate(res.evidence or []):
+            if not isinstance(ev, dict) or i >= len(steps):
+                continue
+            elapsed = ev.get("elapsed_ms")
+            if not isinstance(elapsed, (int, float)):
+                continue
+            key = (steps[i].method.upper(), steps[i].path)
+            buckets.setdefault(key, []).append(int(elapsed))
+    perf = []
+    for (method, path), vals in sorted(buckets.items(), key=lambda kv: (kv[0][1], kv[0][0])):
+        vals.sort()
+        perf.append({"method": method, "path": path,
+                     "p50_ms": _percentile(vals, 0.50),
+                     "p95_ms": _percentile(vals, 0.95),
+                     "max_ms": vals[-1], "calls": len(vals)})
+    return perf
+
 
 @router.get("/runs/{run_id}/report")
 def run_report(run_id: str, user: User = Depends(require("view")),
                db: Session = Depends(get_db)):
     run = _get_run(run_id, user, db)
     entries = _report_entries(db, run)
-    return {"run": _run_dict(run), "counts": _counts_of(run, entries), "cases": entries}
+    run_payload = _run_dict(run)
+    run_payload["display_id"] = run_display_id(db, run)
+    return {"run": run_payload, "counts": _counts_of(run, entries), "cases": entries,
+            "perf": _perf_block(db, run)}
 
 
 # ---------------------------------------------------------------------------
@@ -422,6 +469,7 @@ def run_report_html(run_id: str, user: User = Depends(require("view")),
     env = db.get(Environment, run.environment_id)
     entries = _report_entries(db, run)
     counts = _counts_of(run, entries)
+    display_id = run_display_id(db, run)
 
     arabic = bool(project and project.language == "ar")
     L = _LABELS_AR if arabic else _LABELS_EN
@@ -464,7 +512,8 @@ def run_report_html(run_id: str, user: User = Depends(require("view")),
 <div class="meta">
   {L["project"]}: <strong>{_esc(project.name if project else "?")}</strong> ·
   {L["environment"]}: <strong>{_esc(env.name if env else "?")}</strong> ·
-  {L["run"]}: <span class="mono">{_esc(run.id)}</span><br>
+  {L["run"]}: <span class="mono">#{display_id}</span>
+  <span class="mono" style="color:var(--muted)">{_esc(run.id)}</span><br>
   {L["state"]}: {_esc(run.state)} ·
   {L["started"]}: <span class="mono">{_esc(_iso(run.started_at) or "—")}</span> ·
   {L["finished"]}: <span class="mono">{_esc(_iso(run.finished_at) or "—")}</span>
@@ -514,6 +563,7 @@ def compare_runs(run_id: str, other_id: str, user: User = Depends(require("view"
                   .filter(TestCase.id.in_(list(shared))).all()}
 
     newly_failing, newly_passing = [], []
+    unchanged = 0
     for cid in sorted(shared):
         now_o, prev_o = current[cid].outcome, baseline[cid].outcome
         item = {"test_case_id": cid, "title": titles.get(cid, ""),
@@ -522,6 +572,15 @@ def compare_runs(run_id: str, other_id: str, user: User = Depends(require("view"
             newly_failing.append(item)
         elif now_o == "passed" and prev_o in ("failed", "errored"):
             newly_passing.append(item)
+        elif now_o == prev_o:
+            unchanged += 1
+
+    def _coverage(r: Run) -> float:
+        c = r.counts or {}
+        total = c.get("total", 0)
+        return round(c.get("passed", 0) / total * 100, 1) if total else 0.0
 
     return {"run_id": run.id, "other_id": other.id,
-            "newly_failing": newly_failing, "newly_passing": newly_passing}
+            "newly_failing": newly_failing, "newly_passing": newly_passing,
+            "unchanged": unchanged,
+            "coverage_delta": round(_coverage(run) - _coverage(other), 1)}

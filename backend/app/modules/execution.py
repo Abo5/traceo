@@ -22,6 +22,7 @@ from ..db import SessionLocal, get_db
 from ..deps import audit, get_project_scoped, require
 from ..models import Endpoint, Environment, Run, TestCase, TestResult, User
 from ..security import decrypt_secret, redact
+from .traceability import run_display_id, run_display_ids
 
 try:  # optional — json_schema assertions skip gracefully when absent
     import jsonschema
@@ -661,14 +662,22 @@ def list_runs(project_id: str, user: User = Depends(require("view")),
             .filter(Run.project_id == project_id,
                     Run.organisation_id == user.organisation_id)
             .order_by(Run.created_at.desc()).all())
-    return {"runs": [_run_dict(r) for r in runs]}
+    display_ids = run_display_ids(db, project_id)
+    payload = []
+    for r in runs:
+        d = _run_dict(r)
+        d["display_id"] = display_ids.get(r.id)
+        payload.append(d)
+    return {"runs": payload}
 
 
 @router.get("/runs/{run_id}")
 def get_run(run_id: str, user: User = Depends(require("view")),
             db: Session = Depends(get_db)):
     run = _get_run(run_id, user, db)
-    return _run_dict(run)
+    d = _run_dict(run)
+    d["display_id"] = run_display_id(db, run)
+    return d
 
 
 @router.get("/runs/{run_id}/results")

@@ -33,6 +33,11 @@ MAX_CANDIDATES = 10
 MAX_COMBOS = 8          # decision-table cap
 MAX_ENUM_SWEEP = 8
 
+# FR-034 localisation probes (Arabic round-trip) + FR-033 injection-shaped strings
+ARABIC_SAMPLE = "محمد الشمري"
+ARABIC_SAMPLE_LONG = "منصة الطلبات — اختبار"
+INJECTION_PAYLOADS = ("' OR 1=1--", "<script>alert(1)</script>")
+
 MAP_INSTRUCTIONS = (
     "You map ONE software requirement onto API endpoints. Pick ONLY from the closed "
     "candidate list below (TRD §4.3) — respond with the integer indices of the matching "
@@ -275,6 +280,27 @@ def _constrained_inputs(ep) -> list[dict]:
     return inputs
 
 
+def _is_free_text(sch: dict) -> bool:
+    """Free-text string: no enum, no pattern, no format (email/date/uuid/… excluded)."""
+    if not isinstance(sch, dict):
+        return False
+    if sch.get("type", "string") != "string":
+        return False
+    return not (sch.get("enum") or sch.get("pattern") or sch.get("format"))
+
+
+def _free_text_body_fields(ep) -> list[dict]:
+    """Top-level free-text string fields of the request body (FR-034 targets)."""
+    rs = _body_object_schema(ep)
+    if not rs:
+        return []
+    required = rs.get("required") or []
+    return [{"name": name, "where": "body", "schema": sch,
+             "required": name in required, "location": "body"}
+            for name, sch in rs["properties"].items()
+            if isinstance(sch, dict) and _is_free_text(sch)]
+
+
 def _required_inputs(ep) -> list[dict]:
     """Required params (non-path — a missing path param would break the URL, not the API
     contract) and required top-level body fields, for the missing-required negatives."""
@@ -491,6 +517,34 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str) -> list[dict]:
     # -- Positive (all depths): valid EP class with representative values
     cases.append(mk(f"Positive: valid request — {suffix}", "ep", "positive",
                     _step(ep, params, headers, body, _positive_assertions(ep))))
+
+    # -- Localisation (FR-034, all depths): Arabic round-trip through a free-text field
+    free_text = _free_text_body_fields(ep)
+    if free_text:
+        loc_inp = free_text[0]
+        sch = loc_inp["schema"]
+        arabic = ARABIC_SAMPLE
+        mn, mx = sch.get("minLength"), sch.get("maxLength")
+        if isinstance(mn, int) and mn > len(arabic):
+            arabic = ARABIC_SAMPLE_LONG if mn <= len(ARABIC_SAMPLE_LONG) else None
+        if arabic is not None and isinstance(mx, int) and mx < len(arabic):
+            arabic = None
+        if arabic is not None:
+            p2, b2 = _apply_input(loc_inp, arabic, params, body)
+            ok_code = _first_status(ep, 200, 299) or 200
+            assertions: list[dict] = [{"type": "status_code", "expected": ok_code}]
+            rss = _epget(ep, "response_schemas") or {}
+            resp_sch = rss.get(str(ok_code), rss.get(ok_code))
+            if (isinstance(resp_sch, dict) and isinstance(resp_sch.get("properties"), dict)
+                    and loc_inp["name"] in resp_sch["properties"]):
+                assertions.append({"type": "json_field", "path": loc_inp["name"],
+                                   "op": "eq", "expected": arabic})
+            assertions.append({"type": "header", "name": "Content-Type",
+                               "op": "contains", "expected": "utf-8"})
+            cases.append(mk(f"Localisation: Arabic round-trip in {loc_inp['name']} — {suffix}",
+                            "localisation", "positive",
+                            _step(ep, p2, headers, b2, assertions)))
+
     if depth == "smoke":
         return cases
 
@@ -559,6 +613,30 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str) -> list[dict]:
         cases.append(mk(f"Negative: malformed JSON body — {suffix}", "negative", "negative",
                         _step(ep, params, headers, None, [_error_assertion(ep)],
                               raw_body="{{malformed}}")))
+
+    # -- FR-033: oversized payload — one probe on the first bounded string input
+    for inp in inputs:
+        sch = inp["schema"]
+        if sch.get("type", "string") == "string" and isinstance(sch.get("maxLength"), int):
+            p2, b2 = _apply_input(inp, "x" * (sch["maxLength"] + 1000), params, body)
+            cases.append(mk(f"Negative: oversized payload in {inp['name']} — {suffix}",
+                            "negative", "negative",
+                            _step(ep, p2, headers, b2,
+                                  [{"type": "status_code", "expected": 400,
+                                    "expected_any": [400, 413, 422]}])))
+            break
+
+    # -- FR-033: injection-shaped strings — must be handled, never a 5xx
+    if free_text:
+        inj_inp = free_text[0]
+        for payload in INJECTION_PAYLOADS:
+            label = "SQL-shaped" if payload.startswith("'") else "script-shaped"
+            p2, b2 = _apply_input(inj_inp, payload, params, body)
+            cases.append(mk(f"Negative: injection-shaped input ({label}) in {inj_inp['name']} — {suffix}",
+                            "negative", "negative",
+                            _step(ep, p2, headers, b2,
+                                  [{"type": "status_code", "expected": 200,
+                                    "expected_any": [200, 201, 400, 422]}])))
 
     if depth != "exhaustive":
         return cases

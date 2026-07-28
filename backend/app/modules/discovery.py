@@ -22,7 +22,7 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from ..db import get_db
 from ..deps import audit, get_project_scoped, require
-from ..models import ApiSpec, Endpoint, TestStep, User
+from ..models import ApiSpec, Endpoint, TestCase, TestResult, TestStep, User
 
 router = APIRouter()
 
@@ -423,6 +423,53 @@ async def import_api_spec(project_id: str, request: Request,
     }
 
 
+def _endpoint_coverage(db: Session, project_id: str, org_id: str,
+                       endpoints: list[Endpoint]) -> dict[str, dict]:
+    """FR-024 endpoint coverage map, computed at read time from approved-case steps:
+    test_count, covered_params_pct (100 when the endpoint has no params), last_outcome."""
+    out = {e.id: {"test_count": 0, "covered_params_pct": 100.0, "last_outcome": None}
+           for e in endpoints}
+    ep_ids = list(out)
+    if not ep_ids:
+        return out
+
+    step_rows = (db.query(TestStep.endpoint_id, TestStep.test_case_id, TestStep.request)
+                 .join(TestCase, TestCase.id == TestStep.test_case_id)
+                 .filter(TestStep.endpoint_id.in_(ep_ids),
+                         TestCase.state == "approved",
+                         TestCase.project_id == project_id,
+                         TestCase.organisation_id == org_id)
+                 .all())
+    cases_by_ep: dict[str, set] = {}
+    eps_by_case: dict[str, set] = {}
+    referenced: dict[str, set] = {}
+    for ep_id, case_id, request in step_rows:
+        cases_by_ep.setdefault(ep_id, set()).add(case_id)
+        eps_by_case.setdefault(case_id, set()).add(ep_id)
+        req = request or {}
+        names = set(req.get("params") or {}) | set(req.get("headers") or {})
+        referenced.setdefault(ep_id, set()).update(str(n).lower() for n in names)
+
+    for e in endpoints:
+        out[e.id]["test_count"] = len(cases_by_ep.get(e.id, ()))
+        params = [p for p in (e.parameters or []) if isinstance(p, dict) and p.get("name")]
+        if params:
+            refs = referenced.get(e.id, set())
+            covered = sum(1 for p in params if str(p["name"]).lower() in refs)
+            out[e.id]["covered_params_pct"] = round(covered / len(params) * 100, 1)
+
+    case_ids = list(eps_by_case)
+    if case_ids:
+        res_rows = (db.query(TestResult.test_case_id, TestResult.outcome)
+                    .filter(TestResult.test_case_id.in_(case_ids))
+                    .order_by(TestResult.created_at.asc(), TestResult.id.asc())
+                    .all())
+        for case_id, outcome in res_rows:  # ascending: the last write wins = newest
+            for ep_id in eps_by_case.get(case_id, ()):
+                out[ep_id]["last_outcome"] = outcome
+    return out
+
+
 @router.get("/projects/{project_id}/endpoints")
 def list_endpoints(project_id: str, user: User = Depends(require("view")),
                    db: Session = Depends(get_db)):
@@ -431,7 +478,13 @@ def list_endpoints(project_id: str, user: User = Depends(require("view")),
         Endpoint.project_id == project_id,
         Endpoint.organisation_id == user.organisation_id,
     ).order_by(Endpoint.path.asc(), Endpoint.method.asc()).all()
-    return [_endpoint_dict(e) for e in rows]
+    coverage = _endpoint_coverage(db, project_id, user.organisation_id, rows)
+    payload = []
+    for e in rows:
+        d = _endpoint_dict(e)
+        d.update(coverage[e.id])
+        payload.append(d)
+    return payload
 
 
 @router.patch("/endpoints/{endpoint_id}")

@@ -55,7 +55,7 @@ function M({ children, style }: { children: React.ReactNode; style?: React.CSSPr
   return (
     <span
       dir="ltr"
-      style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, ...style }}
+      style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12, ...style }}
     >
       {children}
     </span>
@@ -506,7 +506,7 @@ export default function RequirementsPage() {
                     {r.external_id ?? "—"}
                   </M>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 14, color: "var(--text)", lineHeight: 1.6 }}>{r.description}</div>
+                    <div dir="auto" style={{ fontSize: 14, color: "var(--text)", lineHeight: 1.6 }}>{r.description}</div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8, alignItems: "center" }}>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                         <StatusDot state={r.state} />

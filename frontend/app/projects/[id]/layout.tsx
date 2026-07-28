@@ -7,15 +7,31 @@ import { ProjectProvider, useProject } from "@/lib/project-context";
 import { useLang } from "@/lib/i18n";
 import { Badge } from "@/components/ui";
 
-const NAV: { seg: string; ar: string; en: string }[] = [
-  { seg: "", ar: "نظرة عامة", en: "Overview" },
-  { seg: "requirements", ar: "المتطلبات", en: "Requirements" },
-  { seg: "endpoints", ar: "الواجهات", en: "Endpoints" },
-  { seg: "generate", ar: "التوليد", en: "Generate" },
-  { seg: "review", ar: "المراجعة", en: "Review" },
-  { seg: "runs", ar: "التشغيلات", en: "Runs" },
-  { seg: "matrix", ar: "المصفوفة", en: "Matrix" },
-  { seg: "environments", ar: "البيئات", en: "Environments" },
+const NAV_GROUPS: { ar: string; en: string; items: { seg: string; ar: string; en: string }[] }[] = [
+  {
+    ar: "مساحة العمل",
+    en: "Workspace",
+    items: [
+      { seg: "", ar: "نظرة عامة", en: "Overview" },
+      { seg: "requirements", ar: "المتطلبات", en: "Requirements" },
+      { seg: "endpoints", ar: "الواجهات", en: "Endpoints" },
+    ],
+  },
+  {
+    ar: "التحليل",
+    en: "Analysis",
+    items: [
+      { seg: "generate", ar: "التوليد", en: "Generate" },
+      { seg: "review", ar: "المراجعة", en: "Review" },
+      { seg: "runs", ar: "التشغيلات", en: "Runs" },
+      { seg: "matrix", ar: "المصفوفة", en: "Matrix" },
+    ],
+  },
+  {
+    ar: "الإعداد",
+    en: "Configure",
+    items: [{ seg: "environments", ar: "البيئات", en: "Environments" }],
+  },
 ];
 
 function Sidebar({ projectId }: { projectId: string }) {
@@ -44,21 +60,31 @@ function Sidebar({ projectId }: { projectId: string }) {
         </div>
       </div>
       <nav className="sidebar-nav">
-        {NAV.map((item) => {
-          const href = item.seg ? `${base}/${item.seg}` : base;
-          const active = item.seg
-            ? pathname === href || pathname.startsWith(`${href}/`)
-            : pathname === base || pathname === `${base}/`;
-          return (
-            <Link
-              key={item.seg || "overview"}
-              href={href}
-              className={`nav-item ${active ? "nav-item-active" : ""}`}
+        {NAV_GROUPS.map((group) => (
+          <div key={group.en} style={{ marginBottom: 6 }}>
+            <div
+              className="eyebrow"
+              style={{ padding: "10px 12px 4px", fontSize: 10.5, color: "var(--text-muted)" }}
             >
-              {ar ? item.ar : item.en}
-            </Link>
-          );
-        })}
+              {ar ? group.ar : group.en}
+            </div>
+            {group.items.map((item) => {
+              const href = item.seg ? `${base}/${item.seg}` : base;
+              const active = item.seg
+                ? pathname === href || pathname.startsWith(`${href}/`)
+                : pathname === base || pathname === `${base}/`;
+              return (
+                <Link
+                  key={item.seg || "overview"}
+                  href={href}
+                  className={`nav-item ${active ? "nav-item-active" : ""}`}
+                >
+                  {ar ? item.ar : item.en}
+                </Link>
+              );
+            })}
+          </div>
+        ))}
       </nav>
     </aside>
   );

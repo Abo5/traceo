@@ -70,7 +70,7 @@
 
   /* fonts */
   --font-ui: "IBM Plex Sans Arabic", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-mono: "JetBrains Mono", "IBM Plex Sans Arabic", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 /* ---------- base ---------- */

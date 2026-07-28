@@ -5,7 +5,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
-import { Badge, Button, Card, Empty, Input, PageHeader, Pill, Table } from "@/components/ui";
+import { Badge, Button, Card, Empty, Input, PageHeader, Pill, Progress, RefChip, StatusDot, Table } from "@/components/ui";
 
 function asList(x: any): any[] {
   if (Array.isArray(x)) return x;
@@ -14,7 +14,7 @@ function asList(x: any): any[] {
 
 function M({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
-    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, ...style }}>
+    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12, ...style }}>
       {children}
     </span>
   );
@@ -35,7 +35,7 @@ function MethodBadge({ method }: { method: string }) {
     <span
       dir="ltr"
       style={{
-        fontFamily: "'JetBrains Mono', monospace",
+        fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace",
         fontSize: 11,
         fontWeight: 700,
         letterSpacing: "0.04em",
@@ -115,6 +115,9 @@ export default function EndpointsPage() {
           path: "المسار",
           summary: "الملخّص",
           params: "المعاملات",
+          tests: "الاختبارات",
+          coverage: "التغطية",
+          lastOutcome: "آخر نتيجة",
           security: "الأمان",
           secured: "مؤمَّن",
           open: "مفتوح",
@@ -145,6 +148,9 @@ export default function EndpointsPage() {
           path: "Path",
           summary: "Summary",
           params: "Params",
+          tests: "Tests",
+          coverage: "Coverage",
+          lastOutcome: "Last outcome",
           security: "Security",
           secured: "Secured",
           open: "Open",
@@ -237,7 +243,7 @@ export default function EndpointsPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      <PageHeader title={L.title} sub={L.sub} />
+      <PageHeader title={L.title} sub={L.sub} actions={<RefChip id="FR-024" />} />
 
       <Card title={L.importCard}>
         <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
@@ -256,7 +262,7 @@ export default function EndpointsPage() {
               placeholder={L.urlPh}
               value={url}
               onChange={(e: any) => setUrl(e.target.value)}
-              style={{ flex: 1, minWidth: 260, fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}
+              style={{ flex: 1, minWidth: 260, fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12 }}
             />
             <Button disabled={importing || !url.trim()} onClick={() => doImport({ url: url.trim() })}>
               {importing ? L.importing : L.fetchBtn}
@@ -347,12 +353,20 @@ export default function EndpointsPage() {
         ) : eps.length === 0 ? (
           <Empty title={L.empty} hint={L.emptyHint} />
         ) : (
-          <Table head={[L.method, L.path, L.summary, L.params, L.security, L.included]}>
+          <Table head={[L.method, L.path, L.summary, L.params, L.tests, L.coverage, L.lastOutcome, L.security, L.included]}>
             {eps.map((ep) => {
               const params = Array.isArray(ep.parameters) ? ep.parameters.length : 0;
               const secured = Array.isArray(ep.security) ? ep.security.length > 0 : !!ep.security;
+              const testCount = ep.test_count ?? 0;
+              const covPct = ep.covered_params_pct ?? null;
               return (
-                <tr key={ep.id} style={{ opacity: ep.excluded ? 0.5 : 1 }}>
+                <tr
+                  key={ep.id}
+                  style={{
+                    opacity: ep.excluded ? 0.5 : 1,
+                    background: !ep.excluded && testCount === 0 ? "rgba(255,197,61,.07)" : undefined,
+                  }}
+                >
                   <td>
                     <MethodBadge method={ep.method} />
                   </td>
@@ -362,6 +376,31 @@ export default function EndpointsPage() {
                   <td style={{ fontSize: 13, color: "var(--text-secondary)" }}>{ep.summary ?? "—"}</td>
                   <td>
                     <M style={{ color: "var(--text-secondary)" }}>{params}</M>
+                  </td>
+                  <td>
+                    <M style={{ color: testCount === 0 ? "var(--warning)" : "var(--text)" }}>{testCount}</M>
+                  </td>
+                  <td style={{ minWidth: 90 }}>
+                    {covPct == null ? (
+                      <span style={{ color: "var(--text-muted)" }}>—</span>
+                    ) : (
+                      <div className="row" style={{ gap: 6, alignItems: "center" }}>
+                        <div style={{ width: 52 }}>
+                          <Progress pct={covPct} tone={covPct >= 80 ? "success" : covPct >= 40 ? "warning" : "error"} />
+                        </div>
+                        <M style={{ fontSize: 10.5, color: "var(--text-secondary)" }}>{covPct}%</M>
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    {ep.last_outcome ? (
+                      <span className="row" style={{ gap: 6, alignItems: "center" }}>
+                        <StatusDot state={ep.last_outcome} />
+                        <M style={{ fontSize: 10.5 }}>{ep.last_outcome}</M>
+                      </span>
+                    ) : (
+                      <span style={{ color: "var(--text-muted)" }}>—</span>
+                    )}
                   </td>
                   <td>
                     <Badge tone={secured ? "info" : "muted"}>{secured ? L.secured : L.open}</Badge>

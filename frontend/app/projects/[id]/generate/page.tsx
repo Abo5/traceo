@@ -21,7 +21,7 @@ function jobPct(j: any): number {
 
 function M({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
-    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, ...style }}>
+    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12, ...style }}>
       {children}
     </span>
   );
@@ -262,7 +262,7 @@ function GenerateInner() {
                       {r.external_id ?? "—"}
                     </M>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.6 }}>{r.description}</div>
+                      <div dir="auto" style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.6 }}>{r.description}</div>
                       <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
                         {r.type && <Badge tone="info">{r.type}</Badge>}
                         {r.priority && (
@@ -389,12 +389,28 @@ function GenerateInner() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   {unmappable.map((u, i) => {
                     const req = reqById[u.requirement_id];
+                    const reasonLabel =
+                      lang === "ar"
+                        ? ({
+                            no_reachable_endpoint: "لا توجد واجهة مطابقة",
+                            all_cases_disabled: "لا حالات معتمدة (روابط موجودة)",
+                            no_approved_cases: "لا حالات معتمدة",
+                            unmappable: "تعذّر الربط بواجهة",
+                          } as Record<string, string>)[u.reason]
+                        : undefined;
                     return (
                       <div key={i} style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
-                        <M style={{ color: "var(--warning)" }}>
+                        <M style={{ color: "var(--warning)", whiteSpace: "nowrap" }}>
                           {req?.external_id ?? u.requirement_id}
                         </M>
-                        <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{u.reason}</span>
+                        <span dir="auto" style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                          {reasonLabel ?? <bdi style={{ whiteSpace: "nowrap" }}>{u.reason}</bdi>}
+                        </span>
+                        {u.next_action && (
+                          <span dir="auto" style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                            {u.next_action}
+                          </span>
+                        )}
                       </div>
                     );
                   })}

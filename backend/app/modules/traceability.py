@@ -18,9 +18,66 @@ from ..models import (Requirement, RequirementTestCase, Run, TestCase,
 
 router = APIRouter()
 
+# v2 gap vocabulary (FR-051): reason -> Arabic next action.
+GAP_NEXT_ACTIONS = {
+    "no_reachable_endpoint": "استورد مواصفة تغطي هذا المتطلب أو اربطه يدوياً",
+    "all_cases_disabled": "اعتمد إحدى الحالات المرتبطة في المراجعة",
+    "no_approved_cases": "ولّد حالات لهذا المتطلب",
+}
+
+RUN_DISPLAY_BASE = 1000  # first run of a project renders as #1001
+
+_HIGH_PRIORITIES = ("high", "critical")
+
 
 def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt else None
+
+
+# ---------------------------------------------------------------------------
+# Shared read-time helpers (no schema changes — everything computed on read)
+# ---------------------------------------------------------------------------
+
+def run_display_ids(db: Session, project_id: str) -> dict[str, int]:
+    """run_id -> chronological #1001-style display id within the project."""
+    rows = (db.query(Run.id).filter(Run.project_id == project_id)
+            .order_by(Run.created_at.asc(), Run.id.asc()).all())
+    return {rid: RUN_DISPLAY_BASE + i + 1 for i, (rid,) in enumerate(rows)}
+
+
+def run_display_id(db: Session, run: Run) -> int:
+    return run_display_ids(db, run.project_id).get(run.id, RUN_DISPLAY_BASE + 1)
+
+
+def is_high_priority(priority: str | None) -> bool:
+    return (priority or "").lower() in _HIGH_PRIORITIES
+
+
+def derive_severity(outcome: str, failure_reason: dict | None, high_priority: bool) -> str:
+    """FR-052 severity = requirement priority × failure class.
+
+    critical = high-priority requirement + business-rule failure (json_field assertion);
+    major    = schema (json_schema) failure OR transport error OR high-priority other;
+    minor    = everything else."""
+    fr = failure_reason or {}
+    assertion = fr.get("assertion") if isinstance(fr.get("assertion"), dict) else {}
+    if outcome == "errored" or (fr.get("error") and not assertion):
+        return "major"  # transport / execution error
+    atype = assertion.get("type")
+    if atype == "json_field":  # business-rule class
+        return "critical" if high_priority else "minor"
+    if atype == "json_schema":  # schema class
+        return "major"
+    return "major" if high_priority else "minor"
+
+
+def gap_reason(case_states: list[str]) -> str:
+    """v2 gap-reason vocabulary for an uncovered confirmed requirement."""
+    if not case_states:
+        return "no_reachable_endpoint"  # never mapped / unmappable
+    if not any(s == "approved" for s in case_states):
+        return "all_cases_disabled"  # linked, but nothing approved counts
+    return "no_approved_cases"  # fallback
 
 
 # ---------------------------------------------------------------------------
@@ -113,13 +170,11 @@ def traceability_matrix(project_id: str, user: User = Depends(require("view")),
             confirmed_total += 1
             if has_approved:
                 confirmed_covered += 1
-            elif not cases:
-                # never linked at all — generation could not (or did not) map it
-                gaps.append({"requirement_id": req.id, "external_id": req.external_id,
-                             "reason": "unmappable"})
             else:
+                reason = gap_reason([c["state"] for c in cases])
                 gaps.append({"requirement_id": req.id, "external_id": req.external_id,
-                             "reason": "no_approved_cases"})
+                             "reason": reason,
+                             "next_action": GAP_NEXT_ACTIONS[reason]})
 
         rows.append({
             "requirement": {

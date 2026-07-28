@@ -5,7 +5,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useParams } from "next/navigation";
 import { API, api, getToken } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
-import { Badge, Button, Card, Empty, PageHeader, Pill, Select, StatCard, StatusDot, Table, stateTone } from "@/components/ui";
+import { Badge, Button, Card, DateTimeText, Empty, PageHeader, Pill, RefChip, Select, SeverityBadge, StatCard, StatusDot, Table, fmtDateTime, stateTone } from "@/components/ui";
 
 type Tone = "success" | "warning" | "error" | "info" | "muted" | "accent";
 
@@ -16,7 +16,7 @@ function asList(x: any): any[] {
 
 function M({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
-    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, ...style }}>
+    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12, ...style }}>
       {children}
     </span>
   );
@@ -32,7 +32,7 @@ function JsonBlock({ value }: { value: any }) {
         borderRadius: 10,
         padding: "10px 12px",
         margin: 0,
-        fontFamily: "'JetBrains Mono', monospace",
+        fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace",
         fontSize: 11.5,
         lineHeight: 1.6,
         color: "var(--text-secondary)",
@@ -50,15 +50,6 @@ function JsonBlock({ value }: { value: any }) {
 
 function shortId(id?: string): string {
   return id ? String(id).slice(0, 8) : "—";
-}
-
-function fmtDate(s?: string): string {
-  if (!s) return "—";
-  try {
-    return new Date(s).toLocaleString();
-  } catch {
-    return s;
-  }
 }
 
 function fmtDur(ms: number): string {
@@ -121,6 +112,16 @@ export default function RunReportPage() {
           loadError: "تعذّر تحميل التقرير",
           retry: "إعادة المحاولة",
           failReason: "سبب الإخفاق",
+          sevAll: "الكل",
+          sevCritical: "حرج",
+          sevMajor: "كبير",
+          sevMinor: "طفيف",
+          perf: "الأداء",
+          perfEndpoint: "الواجهة",
+          perfCalls: "النداءات",
+          coverageDelta: "فرق التغطية",
+          unchanged: "دون تغيير",
+          pts: "نقطة",
         }
       : {
           title: "Run report",
@@ -160,6 +161,16 @@ export default function RunReportPage() {
           loadError: "Failed to load report",
           retry: "Retry",
           failReason: "Failure reason",
+          sevAll: "All",
+          sevCritical: "Critical",
+          sevMajor: "Major",
+          sevMinor: "Minor",
+          perf: "Performance",
+          perfEndpoint: "Endpoint",
+          perfCalls: "Calls",
+          coverageDelta: "Coverage delta",
+          unchanged: "Unchanged",
+          pts: "pts",
         };
 
   const outcomeLabel = (o: string) =>
@@ -175,6 +186,7 @@ export default function RunReportPage() {
 
   const [tab, setTab] = useState<"failures" | "all" | "compare">("failures");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [sevF, setSevF] = useState("all");
 
   const [otherRun, setOtherRun] = useState("");
   const [compare, setCompare] = useState<any | null>(null);
@@ -251,6 +263,8 @@ export default function RunReportPage() {
   }, [results]);
 
   const failures = cases.filter((c) => c.outcome === "failed" || c.outcome === "errored");
+  const sevFailures = sevF === "all" ? failures : failures.filter((c) => c.severity === sevF);
+  const perf: any[] = Array.isArray(report?.perf) ? report.perf : [];
 
   const durationMs = useMemo(() => {
     const s = run.started_at ? Date.parse(run.started_at) : NaN;
@@ -325,7 +339,10 @@ export default function RunReportPage() {
       <PageHeader
         title={
           <span style={{ display: "inline-flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            {L.title} <M style={{ fontSize: 15, color: "var(--accent)" }}>{shortId(String(runId))}</M>
+            {L.title}{" "}
+            <M style={{ fontSize: 15, color: "var(--accent)" }}>
+              {run.display_id ? `#${run.display_id}` : shortId(String(runId))}
+            </M>
             {run.state && (
               <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
                 <StatusDot state={run.state} />
@@ -340,10 +357,10 @@ export default function RunReportPage() {
               {L.env}: {envName}
             </span>
             <span>
-              {L.started}: <M style={{ fontSize: 11 }}>{fmtDate(run.started_at)}</M>
+              {L.started}: <DateTimeText value={run.started_at} />
             </span>
             <span>
-              {L.finished}: <M style={{ fontSize: 11 }}>{fmtDate(run.finished_at)}</M>
+              {L.finished}: <DateTimeText value={run.finished_at} />
             </span>
             <span>
               {L.initiator}: {initiator}
@@ -387,7 +404,24 @@ export default function RunReportPage() {
           </Card>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {failures.map((c, i) => {
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {[
+                ["all", L.sevAll],
+                ["critical", L.sevCritical],
+                ["major", L.sevMajor],
+                ["minor", L.sevMinor],
+              ].map(([v, label]) => (
+                <Pill key={v} active={sevF === v} onClick={() => setSevF(v)}>
+                  {label}
+                  {v !== "all" && (
+                    <M style={{ fontSize: 10, marginInlineStart: 4 }}>
+                      {failures.filter((c) => c.severity === v).length}
+                    </M>
+                  )}
+                </Pill>
+              ))}
+            </div>
+            {sevFailures.map((c, i) => {
               const cid = caseId(c);
               const isOpen = expanded.has(cid || String(i));
               const key = cid || String(i);
@@ -435,6 +469,7 @@ export default function RunReportPage() {
                         {r.external_id ?? r.id}
                       </M>
                     ))}
+                    <SeverityBadge severity={c.severity ?? c.test_case?.severity} />
                     <Badge tone={tone}>{outcomeLabel(c.outcome)}</Badge>
                     <span style={{ color: "var(--text-muted)", fontSize: 12 }}>{isOpen ? "▴" : "▾"}</span>
                   </button>
@@ -467,7 +502,7 @@ export default function RunReportPage() {
                           <ol style={{ margin: 0, paddingInlineStart: 20, display: "flex", flexDirection: "column", gap: 4 }}>
                             {reproSteps.map((s: any, j: number) => (
                               <li key={j} style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                                <M style={{ fontSize: 11, color: "var(--text)" }}>
+                                <M style={{ fontSize: 11, color: "var(--text)", whiteSpace: "nowrap" }}>
                                   {(s.method ?? "").toUpperCase()} {s.path}
                                 </M>
                               </li>
@@ -491,7 +526,10 @@ export default function RunReportPage() {
                               <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>
                                 {L.response}
                                 {typeof ev.elapsed_ms === "number" && (
-                                  <M style={{ fontSize: 10, color: "var(--text-muted)" }}> · {ev.elapsed_ms}ms</M>
+                                  <>
+                                    {" — "}
+                                    <M style={{ fontSize: 10, color: "var(--text-muted)", whiteSpace: "nowrap" }}>{ev.elapsed_ms} ms</M>
+                                  </>
                                 )}
                               </div>
                               <JsonBlock value={ev.response} />
@@ -587,7 +625,7 @@ export default function RunReportPage() {
                 <option value="">{L.pickRun}</option>
                 {compareRuns.map((r) => (
                   <option key={r.id} value={r.id}>
-                    {shortId(r.id)} — {fmtDate(r.started_at ?? r.created_at)} ({r.state})
+                    {r.display_id ? `#${r.display_id}` : shortId(r.id)} — {fmtDateTime(r.started_at ?? r.created_at)} ({r.state})
                   </option>
                 ))}
               </Select>
@@ -595,6 +633,42 @@ export default function RunReportPage() {
 
             {compareLoading && <div style={{ color: "var(--text-muted)", fontSize: 13 }}>…</div>}
             {compareError && <div style={{ color: "var(--error)", fontSize: 13 }}>{compareError}</div>}
+
+            {compare && !compareLoading && (
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                {typeof compare.coverage_delta === "number" && (
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      gap: 6,
+                      alignItems: "baseline",
+                      border: `1px solid ${compare.coverage_delta >= 0 ? "var(--success)" : "var(--error)"}`,
+                      background: compare.coverage_delta >= 0 ? "var(--success-subtle)" : "var(--error-subtle)",
+                      color: compare.coverage_delta >= 0 ? "var(--success)" : "var(--error)",
+                      borderRadius: 999,
+                      padding: "3px 12px",
+                      fontSize: 12,
+                      fontWeight: 600,
+                    }}
+                  >
+                    {L.coverageDelta}
+                    <M style={{ fontWeight: 700, color: "inherit" }}>
+                      {compare.coverage_delta > 0 ? "+" : ""}
+                      {compare.coverage_delta}
+                    </M>
+                    {L.pts}
+                  </span>
+                )}
+                {(typeof compare.unchanged === "number" || Array.isArray(compare.unchanged)) && (
+                  <Badge tone="muted">
+                    {L.unchanged}{" "}
+                    <M style={{ fontSize: 11, fontWeight: 700 }}>
+                      {Array.isArray(compare.unchanged) ? compare.unchanged.length : compare.unchanged}
+                    </M>
+                  </Badge>
+                )}
+              </div>
+            )}
 
             {compare && !compareLoading && (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
@@ -648,6 +722,42 @@ export default function RunReportPage() {
               </div>
             )}
           </div>
+        </Card>
+      )}
+
+      {/* Performance (FR-044) */}
+      {perf.length > 0 && (
+        <Card
+          title={
+            <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+              {L.perf} <RefChip id="FR-044" />
+            </span>
+          }
+          pad={false}
+        >
+          <Table head={[L.perfEndpoint, "p50", "p95", "max", L.perfCalls]}>
+            {perf.map((p: any, i: number) => (
+              <tr key={i}>
+                <td>
+                  <M style={{ color: "var(--text)", whiteSpace: "nowrap" }}>
+                    {(p.method ?? "").toUpperCase()} {p.path}
+                  </M>
+                </td>
+                <td>
+                  <M style={{ color: "var(--text-secondary)" }}>{p.p50_ms ?? "—"} ms</M>
+                </td>
+                <td>
+                  <M style={{ color: "var(--text-secondary)" }}>{p.p95_ms ?? "—"} ms</M>
+                </td>
+                <td>
+                  <M style={{ color: "var(--warning)" }}>{p.max_ms ?? "—"} ms</M>
+                </td>
+                <td>
+                  <M style={{ color: "var(--text-secondary)" }}>{p.calls ?? "—"}</M>
+                </td>
+              </tr>
+            ))}
+          </Table>
         </Card>
       )}
     </div>

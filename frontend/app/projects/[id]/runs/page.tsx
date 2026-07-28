@@ -6,16 +6,16 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
-import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Select, StatusDot, Table, stateTone } from "@/components/ui";
+import { Badge, Button, Card, DateTimeText, Empty, Field, Input, Modal, PageHeader, Select, StatusDot, Table, stateTone } from "@/components/ui";
 
 function asList(x: any): any[] {
   if (Array.isArray(x)) return x;
-  return x?.items ?? x?.results ?? x?.runs ?? x?.environments ?? [];
+  return x?.items ?? x?.results ?? x?.runs ?? x?.environments ?? x?.test_cases ?? [];
 }
 
 function M({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
-    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, ...style }}>
+    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12, ...style }}>
       {children}
     </span>
   );
@@ -23,15 +23,6 @@ function M({ children, style }: { children: ReactNode; style?: CSSProperties }) 
 
 function shortId(id?: string): string {
   return id ? String(id).slice(0, 8) : "—";
-}
-
-function fmtDate(s?: string): string {
-  if (!s) return "—";
-  try {
-    return new Date(s).toLocaleString();
-  } catch {
-    return s;
-  }
 }
 
 const TERMINAL = ["completed", "aborted", "cancelled", "failed"];
@@ -382,7 +373,7 @@ export default function RunsPage() {
                 <tr key={r.id}>
                   <td>
                     <Link href={`/projects/${id}/runs/${r.id}`} style={{ textDecoration: "none" }}>
-                      <M style={{ color: "var(--accent)" }}>{shortId(r.id)}</M>
+                      <M style={{ color: "var(--accent)" }}>{r.display_id ? `#${r.display_id}` : shortId(r.id)}</M>
                     </Link>
                   </td>
                   <td>
@@ -401,10 +392,10 @@ export default function RunsPage() {
                     </M>
                   </td>
                   <td>
-                    <M style={{ color: "var(--text-secondary)", fontSize: 11 }}>{fmtDate(r.started_at ?? r.created_at)}</M>
+                    <DateTimeText value={r.started_at ?? r.created_at} style={{ color: "var(--text-secondary)" }} />
                   </td>
                   <td>
-                    <M style={{ color: "var(--text-secondary)", fontSize: 11 }}>{fmtDate(r.finished_at)}</M>
+                    <DateTimeText value={r.finished_at} style={{ color: "var(--text-secondary)" }} />
                   </td>
                   <td style={{ fontSize: 12, color: "var(--text-secondary)" }}>
                     {r.initiator?.name ?? r.initiated_by_name ?? r.initiated_by ?? r.created_by ?? "—"}

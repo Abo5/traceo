@@ -6,13 +6,13 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { API, api, getToken } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
-import { Badge, Button, Card, Empty, PageHeader, Pill, Progress, StatCard, StatusDot } from "@/components/ui";
+import { Badge, Button, Card, Empty, PageHeader, Pill, Progress, RefChip, StatCard, StatusDot } from "@/components/ui";
 
 type Tone = "success" | "warning" | "error" | "info" | "muted" | "accent";
 
 function M({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
-    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, ...style }}>
+    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12, ...style }}>
       {children}
     </span>
   );
@@ -69,8 +69,10 @@ export default function MatrixPage() {
           emptyFilteredHint: "جرّب مرشّحًا آخر",
           gapsTitle: "الفجوات",
           noGaps: "لا توجد فجوات — كل المتطلبات المؤكّدة مغطاة",
-          gapNoCases: "لا توجد حالات معتمدة",
+          gapNoCases: "لا حالات معتمدة",
           gapUnmappable: "تعذّر الربط بواجهة",
+          gapNoEndpoint: "لا توجد واجهة مطابقة",
+          gapDisabled: "لا حالات معتمدة (روابط موجودة)",
           targetGen: "توليد مستهدف",
           loadError: "تعذّر تحميل المصفوفة",
           retry: "إعادة المحاولة",
@@ -98,6 +100,8 @@ export default function MatrixPage() {
           noGaps: "No gaps — every confirmed requirement is covered",
           gapNoCases: "No approved cases",
           gapUnmappable: "Could not map to an endpoint",
+          gapNoEndpoint: "No reachable endpoint",
+          gapDisabled: "No approved cases (links exist)",
           targetGen: "Targeted generation",
           loadError: "Failed to load the matrix",
           retry: "Retry",
@@ -158,7 +162,11 @@ export default function MatrixPage() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <PageHeader
-        title={L.title}
+        title={
+          <span style={{ display: "inline-flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            {L.title} <RefChip id="FR-050" />
+          </span>
+        }
         sub={L.sub}
         actions={
           <Button variant="secondary" disabled={exporting} onClick={exportXlsx}>
@@ -233,6 +241,7 @@ export default function MatrixPage() {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div
                           title={req.description}
+                          dir="auto"
                           style={{
                             fontSize: 13,
                             color: "var(--text)",
@@ -271,7 +280,10 @@ export default function MatrixPage() {
                                 >
                                   <StatusDot state={c.latest_outcome ?? c.state} />
                                   <span
+                                    dir="auto"
                                     style={{
+                                      display: "block",
+                                      minWidth: 0,
                                       overflow: "hidden",
                                       textOverflow: "ellipsis",
                                       whiteSpace: "nowrap",
@@ -326,9 +338,16 @@ export default function MatrixPage() {
                           ? L.gapNoCases
                           : g.reason === "unmappable"
                             ? L.gapUnmappable
-                            : g.reason}
+                            : g.reason === "no_reachable_endpoint"
+                              ? L.gapNoEndpoint
+                              : g.reason === "all_cases_disabled"
+                                ? L.gapDisabled
+                                : g.reason}
                       </span>
                     </div>
+                    {g.next_action && (
+                      <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{g.next_action}</div>
+                    )}
                     <div>
                       <Link href={`/projects/${id}/generate?req=${g.requirement_id}`}>
                         <Button variant="secondary" size="sm">

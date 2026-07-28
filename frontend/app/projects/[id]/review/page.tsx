@@ -15,6 +15,7 @@ import {
   Modal,
   PageHeader,
   Pill,
+  RefChip,
   Select,
   StatusDot,
   Textarea,
@@ -37,7 +38,7 @@ function asList(x: any): any[] {
 
 function M({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
-    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, ...style }}>
+    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12, ...style }}>
       {children}
     </span>
   );
@@ -53,7 +54,7 @@ function JsonBlock({ value }: { value: any }) {
         borderRadius: 10,
         padding: "10px 12px",
         margin: 0,
-        fontFamily: "'JetBrains Mono', monospace",
+        fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace",
         fontSize: 11.5,
         lineHeight: 1.6,
         color: "var(--text-secondary)",
@@ -454,7 +455,11 @@ export default function ReviewPage() {
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <PageHeader
         title={L.title}
-        sub={L.sub}
+        sub={
+          <span style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            {L.sub} <RefChip id="FR-035" /> <RefChip id="FR-036" />
+          </span>
+        }
         actions={<M style={{ color: "var(--text-muted)", fontSize: 11 }}>{L.kbd}</M>}
       />
 
@@ -564,18 +569,20 @@ export default function ReviewPage() {
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                           <StatusDot state={c.state} />
                           <div
-                            style={{
-                              fontSize: 13,
-                              fontWeight: 600,
-                              color: "var(--text)",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                              flex: 1,
-                            }}
+                            style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", flex: 1, minWidth: 0 }}
                             title={c.title}
                           >
-                            {c.title}
+                            <span
+                              dir="auto"
+                              style={{
+                                display: "block",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {c.title}
+                            </span>
                           </div>
                         </div>
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6, alignItems: "center" }}>
@@ -727,7 +734,7 @@ export default function ReviewPage() {
                         >
                           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                             <M style={{ color: "var(--text-muted)", fontSize: 11 }}>#{s.order ?? i + 1}</M>
-                            <M style={{ color: "var(--text)", fontWeight: 700 }}>
+                            <M style={{ color: "var(--text)", fontWeight: 700, whiteSpace: "nowrap" }}>
                               {(s.method ?? "").toUpperCase()} {s.path}
                             </M>
                           </div>
@@ -846,7 +853,7 @@ export default function ReviewPage() {
             <Textarea
               dir="ltr"
               rows={8}
-              style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11.5 }}
+              style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 11.5 }}
               value={editForm.steps}
               onChange={(e: any) => setEditForm((f) => ({ ...f, steps: e.target.value }))}
             />
@@ -855,7 +862,7 @@ export default function ReviewPage() {
             <Textarea
               dir="ltr"
               rows={5}
-              style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11.5 }}
+              style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 11.5 }}
               value={editForm.assertions}
               onChange={(e: any) => setEditForm((f) => ({ ...f, assertions: e.target.value }))}
             />

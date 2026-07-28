@@ -24,6 +24,8 @@ from ..models import (ApiSpec, Endpoint, Environment, Project, Requirement,
                       RequirementTestCase, Run, SourceDocument, TestCase,
                       TestResult, TestStep, User)
 from ..security import decrypt_secret, encrypt_secret, redact
+from .traceability import (GAP_NEXT_ACTIONS, derive_severity, gap_reason,
+                           is_high_priority, run_display_ids)
 
 router = APIRouter()
 
@@ -211,7 +213,51 @@ def delete_project(project_id: str, user: User = Depends(require("manage_project
     return {"deleted": True}
 
 
-# --- dashboard (FR-PRJ-07) ----------------------------------------------------
+# --- dashboard (FR-PRJ-07 + v2 FR-054/FR-062/FR-051/FR-052) --------------------
+
+def _median_int(values: list[float]) -> int | None:
+    if not values:
+        return None
+    values = sorted(values)
+    n = len(values)
+    mid = n // 2
+    return int(values[mid]) if n % 2 else int((values[mid - 1] + values[mid]) / 2)
+
+
+def _run_coverage_pct(run: Run) -> float:
+    c = run.counts or {}
+    total = c.get("total", 0)
+    return round(c.get("passed", 0) / total * 100, 1) if total else 0.0
+
+
+def _case_requirement_info(db: Session, case_ids: list[str]) -> dict[str, dict]:
+    """case_id -> {external_ids: [...], high_priority: bool} over linked requirements."""
+    info = {cid: {"external_ids": [], "high_priority": False} for cid in case_ids}
+    if not case_ids:
+        return info
+    rows = (db.query(RequirementTestCase.test_case_id,
+                     Requirement.external_id, Requirement.priority)
+            .join(Requirement, Requirement.id == RequirementTestCase.requirement_id)
+            .filter(RequirementTestCase.test_case_id.in_(case_ids))
+            .all())
+    for cid, external_id, priority in rows:
+        entry = info[cid]
+        if external_id:
+            entry["external_ids"].append(external_id)
+        if is_high_priority(priority):
+            entry["high_priority"] = True
+    return info
+
+
+def _run_outcome_map(db: Session, run_id: str) -> dict[str, TestResult]:
+    """test_case_id -> latest TestResult within one run (ascending scan, last wins)."""
+    out: dict[str, TestResult] = {}
+    rows = (db.query(TestResult).filter(TestResult.run_id == run_id)
+            .order_by(TestResult.created_at.asc(), TestResult.id.asc()).all())
+    for res in rows:
+        out[res.test_case_id] = res
+    return out
+
 
 @router.get("/projects/{project_id}/dashboard")
 def project_dashboard(project_id: str, user: User = Depends(require("view")),
@@ -252,12 +298,102 @@ def project_dashboard(project_id: str, user: User = Depends(require("view")),
               .order_by(Run.created_at.desc())
               .first())
 
+    display_ids = run_display_ids(db, project_id)
+
+    # -- trend (FR-054): last 14 completed runs, oldest -> newest
+    completed = (db.query(Run)
+                 .filter(Run.project_id == project_id, Run.organisation_id == org_id,
+                         Run.state == "completed")
+                 .order_by(Run.created_at.desc(), Run.id.desc())
+                 .limit(14).all())
+    completed.reverse()
+    trend = []
+    for r in completed:
+        c = r.counts or {}
+        trend.append({"run_id": r.id, "display_id": display_ids.get(r.id),
+                      "coverage_pct": _run_coverage_pct(r),
+                      "passed": c.get("passed", 0), "failed": c.get("failed", 0),
+                      "errored": c.get("errored", 0)})
+
+    # -- median run duration over the same window
+    durations = [(r.finished_at - r.started_at).total_seconds() * 1000
+                 for r in completed if r.started_at and r.finished_at]
+    median_duration_ms = _median_int(durations)
+
+    # -- open defects (FR-052) + regression watch (FR-062) on the completed runs
+    open_defects = {"total": 0, "critical": 0}
+    regression_watch: list[dict] = []
+    if completed:
+        latest_completed = completed[-1]
+        latest_results = _run_outcome_map(db, latest_completed.id)
+        failing = {cid: res for cid, res in latest_results.items()
+                   if res.outcome in ("failed", "errored")}
+        req_info = _case_requirement_info(db, list(failing))
+        open_defects["total"] = len(failing)
+        open_defects["critical"] = sum(
+            1 for cid, res in failing.items()
+            if derive_severity(res.outcome, res.failure_reason,
+                               req_info[cid]["high_priority"]) == "critical")
+
+        if len(completed) >= 2:
+            previous_results = _run_outcome_map(db, completed[-2].id)
+            regressed = {cid: res for cid, res in failing.items()
+                         if previous_results.get(cid) is not None
+                         and previous_results[cid].outcome == "passed"}
+            if regressed:
+                titles = {tc.id: tc.title for tc in db.query(TestCase)
+                          .filter(TestCase.id.in_(list(regressed))).all()}
+                for cid in sorted(regressed, key=lambda c: titles.get(c, "")):
+                    res = regressed[cid]
+                    regression_watch.append({
+                        "test_case_id": cid,
+                        "title": titles.get(cid, ""),
+                        "requirement_external_ids": req_info[cid]["external_ids"],
+                        "run_id": latest_completed.id,
+                        "outcome": res.outcome,
+                        "severity": derive_severity(res.outcome, res.failure_reason,
+                                                    req_info[cid]["high_priority"]),
+                    })
+
+    # -- gap detail (FR-051): uncovered confirmed requirements + next action
+    confirmed_reqs = (db.query(Requirement)
+                      .filter(Requirement.project_id == project_id,
+                              Requirement.organisation_id == org_id,
+                              Requirement.state == "confirmed")
+                      .order_by(Requirement.external_id.asc(),
+                                Requirement.created_at.asc()).all())
+    states_by_req: dict[str, list[str]] = {}
+    link_rows = (db.query(RequirementTestCase.requirement_id, TestCase.state)
+                 .join(TestCase, TestCase.id == RequirementTestCase.test_case_id)
+                 .filter(TestCase.project_id == project_id,
+                         TestCase.organisation_id == org_id).all())
+    for rid, state in link_rows:
+        states_by_req.setdefault(rid, []).append(state)
+    gaps_detail = []
+    for req in confirmed_reqs:
+        states = states_by_req.get(req.id, [])
+        if any(s == "approved" for s in states):
+            continue
+        reason = gap_reason(states)
+        gaps_detail.append({"requirement_id": req.id, "external_id": req.external_id,
+                            "reason": reason, "next_action": GAP_NEXT_ACTIONS[reason]})
+
+    latest_payload = None
+    if latest:
+        latest_payload = _run_payload(latest)
+        latest_payload["display_id"] = display_ids.get(latest.id)
+
     return {
         "requirement_count": requirement_count,
         "confirmed_count": confirmed_count,
         "test_case_counts": tc_counts,
         "coverage_pct": coverage_pct,
-        "latest_run": _run_payload(latest) if latest else None,
+        "latest_run": latest_payload,
+        "trend": trend,
+        "regression_watch": regression_watch,
+        "gaps_detail": gaps_detail,
+        "open_defects": open_defects,
+        "median_duration_ms": median_duration_ms,
     }
 
 
