@@ -574,6 +574,25 @@ def _execute_run(job, run_id: str, case_ids: list[str]):
         run.state = "cancelled" if cancelled else "completed"
         run.finished_at = _utcnow()
         db.commit()
+
+        # v2 addendum: notify project webhooks after the terminal state (lazy import
+        # avoids a module cycle; a webhook failure must never break a run).
+        try:
+            from ..models import Project
+            from .integrations import fire_webhooks
+            project = db.get(Project, run.project_id)
+            total, passed = counts.get("total", 0), counts.get("passed", 0)
+            fire_webhooks(db, run.project_id, "run.completed", {
+                "event": "run.completed",
+                "project": {"id": run.project_id,
+                            "name": project.name if project else ""},
+                "run": {"id": run.id, "display_id": run_display_id(db, run),
+                        "state": run.state, "counts": counts,
+                        "coverage_pct": round(passed / total * 100, 1) if total else None},
+                "timestamp": _utcnow().isoformat(),
+            })
+        except Exception:  # noqa: BLE001
+            pass
         return {"run_id": run_id, "state": run.state, "counts": counts}
     except Exception as e:  # noqa: BLE001 — never leave a run stuck in 'running'
         try:

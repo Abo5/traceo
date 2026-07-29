@@ -27,6 +27,31 @@ function shortId(id?: string): string {
 
 const TERMINAL = ["completed", "aborted", "cancelled", "failed"];
 
+/** 26px tinted numbered chip (design spec §2.20). */
+function NumberedChip({ n, color }: { n: string; color: string }) {
+  return (
+    <span
+      dir="ltr"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 26,
+        height: 26,
+        borderRadius: 8,
+        background: `color-mix(in srgb, ${color} 16%, transparent)`,
+        color,
+        fontFamily: "'JetBrains Mono',ui-monospace,monospace",
+        fontSize: 12,
+        fontWeight: 700,
+        flexShrink: 0,
+      }}
+    >
+      {n}
+    </span>
+  );
+}
+
 export default function RunsPage() {
   const { id } = useParams<{ id: string }>();
   const { lang } = useLang();
@@ -70,6 +95,11 @@ export default function RunsPage() {
           loadError: "تعذّر تحميل البيانات",
           retry: "إعادة المحاولة",
           search: "بحث…",
+          step1: "الهدف",
+          step2: "النطاق",
+          step3: "القواعد",
+          rulesHint: "تقنيات التوليد المفعّلة — للقراءة فقط",
+          techniques: ["EP", "BVA", "سلبي", "جداول القرار", "التعريب"],
         }
       : {
           title: "Runs",
@@ -108,6 +138,11 @@ export default function RunsPage() {
           loadError: "Failed to load data",
           retry: "Retry",
           search: "Search…",
+          step1: "Target",
+          step2: "Scope",
+          step3: "Rules",
+          rulesHint: "Enabled generation techniques — read-only",
+          techniques: ["EP", "BVA", "Negative", "Decision tables", "Localisation"],
         };
 
   const stateLabel = (s: string) =>
@@ -259,41 +294,99 @@ export default function RunsPage() {
           <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 13 }}>…</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end" }}>
-              <div style={{ minWidth: 240 }}>
-                <Field label={L.env}>
-                  <Select value={envId} onChange={(e: any) => setEnvId(e.target.value)}>
-                    <option value="">{L.pickEnv}</option>
-                    {envs.map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {e.name}
-                      </option>
+            {/* 01 · target */}
+            <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
+              <NumberedChip n="01" color="#FF8A22" />
+              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{L.step1}</div>
+                <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end" }}>
+                  <div style={{ minWidth: 240 }}>
+                    <Field label={L.env}>
+                      <Select value={envId} onChange={(e: any) => setEnvId(e.target.value)}>
+                        <option value="">{L.pickEnv}</option>
+                        {envs.map((e) => (
+                          <option key={e.id} value={e.id}>
+                            {e.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  </div>
+                  {envId && (
+                    <div style={{ paddingBottom: 12 }}>
+                      <M style={{ fontSize: 12, color: "var(--text-muted)", overflowWrap: "anywhere" }}>
+                        {envs.find((e) => e.id === envId)?.base_url ?? ""}
+                      </M>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* 02 · scope */}
+            <div style={{ display: "flex", gap: 14, alignItems: "flex-start", borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+              <NumberedChip n="02" color="#9B6BFF" />
+              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{L.step2}</div>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                  <span style={{ display: "inline-flex", alignItems: "baseline", gap: 8 }}>
+                    <M style={{ fontSize: 20, fontWeight: 700, color: "var(--success)" }}>{approved.length}</M>
+                    <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>{L.approvedCount}</span>
+                  </span>
+                  <Button variant="secondary" size="sm" onClick={() => setSubsetOpen(true)} disabled={approved.length === 0}>
+                    {L.subset}
+                  </Button>
+                  {subset.size > 0 && (
+                    <Badge tone="accent">
+                      <M style={{ fontSize: 11 }}>{subset.size}</M> {L.subsetPicked}
+                    </Badge>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* 03 · rules */}
+            <div style={{ display: "flex", gap: 14, alignItems: "flex-start", borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+              <NumberedChip n="03" color="#2BD4C4" />
+              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{L.step3}</div>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                  <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap" }}>
+                    {L.techniques.map((tName) => (
+                      <span
+                        key={tName}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          height: 22,
+                          padding: "0 10px",
+                          borderRadius: 6,
+                          background: "var(--surface-2)",
+                          border: "1px solid var(--border)",
+                          fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace",
+                          fontSize: 10.5,
+                          fontWeight: 500,
+                          color: "var(--text-secondary)",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {tName}
+                      </span>
                     ))}
-                  </Select>
-                </Field>
+                  </span>
+                  <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{L.rulesHint}</span>
+                </div>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, paddingBottom: 8 }}>
-                <M style={{ fontSize: 18, fontWeight: 700, color: "var(--success)" }}>{approved.length}</M>
-                <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>{L.approvedCount}</span>
-              </div>
-              <div style={{ paddingBottom: 4, display: "flex", gap: 8, alignItems: "center" }}>
-                <Button variant="secondary" size="sm" onClick={() => setSubsetOpen(true)} disabled={approved.length === 0}>
-                  {L.subset}
-                </Button>
-                {subset.size > 0 && (
-                  <Badge tone="accent">
-                    <M style={{ fontSize: 11 }}>{subset.size}</M> {L.subsetPicked}
-                  </Badge>
-                )}
-              </div>
-              <div style={{ paddingBottom: 4, marginInlineStart: "auto" }}>
-                <Button
-                  disabled={launching || !envId || approved.length === 0 || (!!live && !liveTerminal)}
-                  onClick={launch}
-                >
-                  {launching ? L.launching : `${L.run} ▶`}
-                </Button>
-              </div>
+            </div>
+
+            {/* launch */}
+            <div style={{ display: "flex", justifyContent: "flex-end", borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+              <Button
+                disabled={launching || !envId || approved.length === 0 || (!!live && !liveTerminal)}
+                onClick={launch}
+              >
+                {launching ? L.launching : `${L.run} ▶`}
+              </Button>
             </div>
 
             {envs.length === 0 && <div style={{ fontSize: 13, color: "var(--warning)" }}>{L.noEnvs}</div>}

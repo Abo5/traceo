@@ -17,8 +17,10 @@ from .modules.review import router as review_router
 from .modules.execution import router as execution_router
 from .modules.traceability import router as traceability_router
 from .modules.reporting import router as reporting_router
+from .modules.integrations import router as integrations_router, start_scheduler
+from .modules.reference import router as reference_router
 
-app = FastAPI(title=settings.APP_NAME, version="1.0.0")
+app = FastAPI(title=settings.APP_NAME, version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -29,7 +31,10 @@ app.add_middleware(
 )
 
 P = settings.API_V1_PREFIX
-for r in (identity_router, projects_router, ingestion_router, discovery_router,
+# integrations mounts FIRST: its X-API-Key wrappers must take precedence on the
+# public-API paths (gate/traceability/run read/run launch — v2 addendum).
+for r in (integrations_router, reference_router,
+          identity_router, projects_router, ingestion_router, discovery_router,
           generation_router, review_router, execution_router, traceability_router,
           reporting_router):
     app.include_router(r, prefix=P)
@@ -51,6 +56,7 @@ def health():
 @app.on_event("startup")
 def startup():
     Base.metadata.create_all(bind=engine)
+    start_scheduler()  # FR-060 daemon thread — guarded internally, starts once
     if settings.SEED_DEMO:
         db = SessionLocal()
         try:

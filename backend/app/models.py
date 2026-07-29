@@ -102,7 +102,11 @@ class ApiSpec(TimestampMixin, Base):
 class Endpoint(TimestampMixin, Base):
     __tablename__ = "endpoints"
     organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
-    api_spec_id: Mapped[str] = mapped_column(ForeignKey("api_specs.id"), index=True)
+    # Nullable because only spec-imported endpoints belong to an ApiSpec; those
+    # discovered from traffic, the DOM or a Postman collection (FR-021/022/023)
+    # have no spec document behind them.
+    api_spec_id: Mapped[str | None] = mapped_column(
+        ForeignKey("api_specs.id"), index=True, nullable=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
     method: Mapped[str] = mapped_column(String(10))
     path: Mapped[str] = mapped_column(String(500))
@@ -114,6 +118,13 @@ class Endpoint(TimestampMixin, Base):
     security: Mapped[list] = mapped_column(JSON, default=list)
     tags: Mapped[list] = mapped_column(JSON, default=list)
     excluded: Mapped[bool] = mapped_column(Boolean, default=False)  # FR-DSC-05
+    # Which discovery mode produced this endpoint. When the same endpoint is seen
+    # by several modes, the highest-fidelity source wins per attribute:
+    # spec > traffic > dom > postman (SRS §L2).
+    source: Mapped[str] = mapped_column(String(20), default="spec")
+    # How many times traffic capture observed this endpoint (FR-021 AC-3); stays 0
+    # for endpoints that were declared rather than observed.
+    observed_count: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class TestCase(TimestampMixin, Base):
@@ -183,6 +194,48 @@ class TestResult(TimestampMixin, Base):
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     failure_reason: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # assertion/expected/actual
     evidence: Mapped[list] = mapped_column(JSON, default=list)  # per-step, redacted + truncated
+
+
+class ApiKey(TimestampMixin, Base):
+    """Public API key (FR-061 token surface). Full key shown ONCE at creation;
+    only the sha256 hash is stored (prefix kept for UI identification)."""
+    __tablename__ = "api_keys"
+    organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    prefix: Mapped[str] = mapped_column(String(12))  # first 8 chars, shown in UI
+    key_hash: Mapped[str] = mapped_column(String(64), index=True)  # sha256 of full key
+    created_by: Mapped[str] = mapped_column(String(36))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class Schedule(TimestampMixin, Base):
+    """Scheduled run (FR-060) — the scheduler daemon launches the standard
+    run path for every enabled schedule whose next_run_at has elapsed."""
+    __tablename__ = "schedules"
+    organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    environment_id: Mapped[str] = mapped_column(ForeignKey("environments.id"))
+    name: Mapped[str] = mapped_column(String(200))
+    interval_minutes: Mapped[int] = mapped_column(Integer)  # min 15
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    next_run_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    created_by: Mapped[str] = mapped_column(String(36))
+
+
+class Webhook(TimestampMixin, Base):
+    """Outbound webhook (FR-070/072 transport — Slack incoming webhooks compatible)."""
+    __tablename__ = "webhooks"
+    organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    url: Mapped[str] = mapped_column(String(500))
+    secret: Mapped[str | None] = mapped_column(String(200), nullable=True)  # X-Traceo-Signature HMAC
+    events: Mapped[list] = mapped_column(JSON, default=list)  # MVP: ["run.completed"]
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_fired_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class AuditEntry(Base):

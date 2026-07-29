@@ -1,0 +1,1264 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Traceo — requirement → test → result</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   FORGE DESIGN SYSTEM — tokens
+   ============================================================ */
+:root{
+  --bg:#131217; --surface:#1B1A21; --surface-2:#22212B; --surface-3:#2C2B37;
+  --overlay:rgba(7,7,11,.66);
+  --border:#312F3C; --border-strong:#443F54;
+  --text:#F2EFF7; --text-secondary:#ADA8BB; --text-muted:#756F84; --text-inverse:#1A1207;
+
+  --accent:#FF9B3D; --accent-press:#F08A2A; --accent-fill:#FF8A22; --accent-fill-press:#F07A12;
+  --accent-fg:#211405; --accent-subtle:rgba(255,138,34,.16); --accent-ring:rgba(255,138,34,.42);
+
+  --c-amber:#FF8A22; --c-coral:#FF5C72; --c-pink:#F85EC2; --c-violet:#9B6BFF;
+  --c-blue:#4D9DFF; --c-cyan:#2BD4C4; --c-green:#4FD86B; --c-yellow:#FFC53D;
+
+  --success:#3FD179; --success-subtle:rgba(63,209,121,.16);
+  --warning:#FFC53D; --warning-subtle:rgba(255,197,61,.16);
+  --error:#FF5C72;   --error-subtle:rgba(255,92,114,.16);
+  --info:#4D9DFF;    --info-subtle:rgba(77,157,255,.16);
+
+  --grad-warm:linear-gradient(135deg,#FF8A22 0%,#FF5C72 100%);
+  --grad-cool:linear-gradient(135deg,#9B6BFF 0%,#4D9DFF 100%);
+  --grad-hero:linear-gradient(135deg,#FF8A22 0%,#F85EC2 52%,#9B6BFF 100%);
+  --grad-mint:linear-gradient(135deg,#2BD4C4 0%,#4FD86B 100%);
+
+  --font-sans:'IBM Plex Sans Arabic',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
+
+  --r-xs:6px; --r-sm:8px; --r-md:12px; --r-lg:16px; --r-xl:22px; --r-pill:999px;
+  --shadow-md:0 6px 18px rgba(0,0,0,.34); --shadow-lg:0 16px 40px rgba(0,0,0,.46);
+  --dur:200ms; --ease:cubic-bezier(.2,.6,.2,1);
+  --sidebar-w:248px; --topbar-h:60px;
+  color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;font-family:var(--font-sans);font-size:15px;line-height:1.55;color:var(--text);background:var(--bg);-webkit-font-smoothing:antialiased}
+h1,h2,h3,h4{margin:0;text-wrap:balance}
+p{margin:0;text-wrap:pretty}
+a{color:var(--accent);text-decoration:none}
+button{font-family:inherit}
+::selection{background:var(--accent-subtle)}
+:focus-visible{outline:2px solid var(--accent-ring);outline-offset:2px}
+.mono{font-family:var(--font-mono)}
+.muted{color:var(--text-muted)}
+.sec{color:var(--text-secondary)}
+.eyebrow{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)}
+.hidden{display:none !important}
+
+/* ---------- buttons ---------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:44px;padding:0 20px;border-radius:var(--r-sm);
+  border:1px solid transparent;font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap;
+  transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease),transform 80ms var(--ease)}
+.btn:active{transform:scale(.97)}
+.btn-primary{background:var(--accent-fill);color:var(--accent-fg)}
+.btn-primary:hover{background:var(--accent-fill-press)}
+.btn-secondary{background:var(--surface-2);color:var(--text);border-color:var(--border-strong)}
+.btn-secondary:hover{background:var(--surface-3)}
+.btn-ghost{background:transparent;color:var(--text-secondary)}
+.btn-ghost:hover{background:var(--surface-2);color:var(--text)}
+.btn-sm{height:36px;padding:0 14px;font-size:13px}
+.btn-lg{height:52px;padding:0 26px;font-size:15px}
+.btn-block{width:100%}
+
+/* ---------- surfaces ---------- */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md)}
+.card-pad{padding:20px}
+.card-head{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--border)}
+.card-head h3{font-size:15px;font-weight:600;letter-spacing:-.01em;flex:1}
+
+/* ---------- badges / chips ---------- */
+.badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:var(--r-pill);font-size:12px;font-weight:600;white-space:nowrap}
+.badge-success{background:var(--success-subtle);color:var(--success)}
+.badge-warning{background:var(--warning-subtle);color:var(--warning)}
+.badge-error{background:var(--error-subtle);color:var(--error)}
+.badge-info{background:var(--info-subtle);color:var(--info)}
+.badge-neutral{background:var(--surface-3);color:var(--text-secondary)}
+.badge-accent{background:var(--accent-subtle);color:var(--accent)}
+.chip{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border-radius:var(--r-pill);border:1px solid var(--border);
+  background:transparent;color:var(--text-secondary);font-size:13px;font-weight:500;cursor:pointer;transition:all var(--dur) var(--ease)}
+.chip:hover{border-color:var(--border-strong);color:var(--text)}
+.chip.on{background:var(--accent-subtle);border-color:var(--accent);color:var(--accent)}
+.tag{display:inline-flex;padding:3px 9px;border-radius:var(--r-xs);background:var(--surface-3);color:var(--text-secondary);font-family:var(--font-mono);font-size:11px}
+
+/* ---------- forms ---------- */
+.field{display:flex;flex-direction:column;gap:7px}
+.field label{font-size:12px;font-weight:500;color:var(--text-secondary)}
+.input{height:46px;padding:0 14px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-sm);
+  color:var(--text);font-family:var(--font-mono);font-size:13px;width:100%;transition:border-color var(--dur) var(--ease)}
+.input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-ring)}
+.input::placeholder{color:var(--text-muted)}
+select.input{font-family:var(--font-sans);font-size:14px;cursor:pointer}
+.check{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border:1px solid var(--border);border-radius:var(--r-sm);
+  background:var(--surface-2);cursor:pointer;transition:all var(--dur) var(--ease);text-align:left}
+.check.on{background:rgba(255,138,34,.06);border-color:var(--accent)}
+.check .box{width:17px;height:17px;margin-top:2px;border-radius:5px;border:1.5px solid var(--border-strong);flex:none;
+  display:grid;place-items:center;transition:all var(--dur) var(--ease)}
+.check.on .box{background:var(--accent-fill);border-color:var(--accent-fill)}
+.check .box svg{opacity:0;transition:opacity var(--dur) var(--ease)}
+.check.on .box svg{opacity:1}
+.check b{display:block;font-size:14px;font-weight:600}
+.check span{display:block;font-size:12px;color:var(--text-muted)}
+.switch{width:38px;height:22px;border-radius:999px;background:var(--surface-3);border:1px solid var(--border-strong);
+  position:relative;cursor:pointer;flex:none;transition:all var(--dur) var(--ease)}
+.switch::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--text-muted);transition:all var(--dur) var(--ease)}
+.switch.on{background:var(--accent-fill);border-color:var(--accent-fill)}
+.switch.on::after{left:18px;background:var(--accent-fg)}
+
+/* ---------- tables ---------- */
+.tbl{width:100%;border-collapse:collapse}
+.tbl th{text-align:left;padding:11px 16px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--text-muted);border-bottom:1px solid var(--border);white-space:nowrap}
+.tbl td{padding:13px 16px;border-bottom:1px solid var(--border);font-size:14px;vertical-align:middle}
+.tbl tbody tr{transition:background var(--dur) var(--ease)}
+.tbl tbody tr:hover{background:var(--surface-2)}
+.tbl tbody tr:last-child td{border-bottom:0}
+.tbl .num{font-family:var(--font-mono);font-size:13px}
+.bar{height:6px;border-radius:999px;background:var(--surface-3);overflow:hidden;min-width:90px;flex:1}
+.bar>i{display:block;height:100%;border-radius:999px}
+
+/* ---------- app shell ---------- */
+.shell{display:grid;grid-template-columns:var(--sidebar-w) minmax(0,1fr);min-height:100vh}
+.sidebar{border-right:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;
+  position:sticky;top:0;height:100vh;overflow-y:auto}
+.sb-brand{display:flex;align-items:center;gap:11px;padding:0 18px;height:var(--topbar-h);border-bottom:1px solid var(--border);flex:none}
+.logo{width:28px;height:28px;border-radius:8px;background:var(--grad-hero);display:grid;place-items:center;
+  color:#1A1207;font-weight:700;font-size:14px;flex:none}
+.sb-nav{padding:14px 10px;display:flex;flex-direction:column;gap:2px;flex:1}
+.sb-group{font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);padding:14px 10px 6px}
+.sb-item{display:flex;align-items:center;gap:11px;padding:9px 10px;border-radius:var(--r-sm);color:var(--text-secondary);
+  font-size:14px;font-weight:500;cursor:pointer;border:none;background:none;width:100%;text-align:left;transition:all var(--dur) var(--ease)}
+.sb-item:hover{background:var(--surface-2);color:var(--text)}
+.sb-item.on{background:var(--accent-subtle);color:var(--accent)}
+.ic{width:16px;height:16px;flex:none}
+.sb-item .ic{opacity:.9}
+.sb-item .cnt{margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--text-muted)}
+.sb-foot{padding:14px;border-top:1px solid var(--border);display:flex;align-items:center;gap:10px;flex:none}
+.avatar{width:30px;height:30px;border-radius:var(--r-pill);background:var(--grad-cool);display:grid;place-items:center;
+  font-size:12px;font-weight:700;color:#0f0a1c;flex:none}
+
+.topbar{height:var(--topbar-h);display:flex;align-items:center;gap:16px;padding:0 28px;border-bottom:1px solid var(--border);
+  background:rgba(19,18,23,.86);backdrop-filter:blur(12px);position:sticky;top:0;z-index:20}
+.topbar h1{font-size:17px;font-weight:600;letter-spacing:-.01em}
+.crumb{font-family:var(--font-mono);font-size:11px;color:var(--text-muted)}
+.content{padding:28px;max-width:1360px}
+.page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;flex-wrap:wrap;margin-bottom:22px}
+.page-head h2{font-size:24px;font-weight:700;letter-spacing:-.02em}
+.page-head p{font-size:14px;color:var(--text-secondary);margin-top:5px;max-width:640px}
+
+/* ---------- layout helpers ---------- */
+.grid{display:grid;gap:14px}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.g5{grid-template-columns:repeat(5,minmax(0,1fr))}
+.row{display:flex;align-items:center;gap:12px}
+.col{display:flex;flex-direction:column;gap:12px}
+.between{justify-content:space-between}
+.wrap{flex-wrap:wrap}
+.grow{flex:1;min-width:0}
+.trunc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sep{height:1px;background:var(--border)}
+
+/* ---------- KPI ---------- */
+.kpi{padding:18px 20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md)}
+.kpi .v{font-size:28px;font-weight:700;letter-spacing:-.02em;line-height:1.1}
+.kpi .l{font-size:12px;color:var(--text-secondary);margin-top:4px}
+.kpi .d{font-family:var(--font-mono);font-size:11px;margin-top:8px}
+
+/* ---------- tabs ---------- */
+.tabs{display:inline-flex;gap:4px;padding:4px;background:var(--surface);border:1px solid var(--border);border-radius:10px}
+.tab{border:none;background:transparent;color:var(--text-secondary);font-size:13px;font-weight:600;padding:8px 16px;
+  border-radius:8px;cursor:pointer;transition:all var(--dur) var(--ease)}
+.tab:hover{color:var(--text)}
+.tab.on{background:var(--surface-3);color:var(--text)}
+
+/* ---------- accordion ---------- */
+.acc{border:1px solid var(--border);border-radius:var(--r-md);background:var(--surface);overflow:hidden;transition:border-color var(--dur) var(--ease)}
+.acc.open{border-color:var(--border-strong)}
+.acc-h{display:flex;align-items:center;gap:14px;padding:15px 20px;background:none;border:none;width:100%;cursor:pointer;text-align:left;color:var(--text)}
+.acc-h .car{color:var(--text-muted);font-size:12px;transition:transform var(--dur) var(--ease)}
+.acc.open .acc-h .car{transform:rotate(90deg)}
+.acc-b{padding:0 20px 20px}
+.codebox{padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:var(--bg);
+  font-family:var(--font-mono);font-size:12px;line-height:1.7;color:var(--text-secondary);white-space:pre-wrap;overflow-x:auto}
+
+/* ---------- misc ---------- */
+.dot{width:7px;height:7px;border-radius:50%;flex:none}
+.drop{border:1.5px dashed var(--border-strong);border-radius:var(--r-md);padding:28px;text-align:center;background:var(--bg);
+  cursor:pointer;transition:border-color var(--dur) var(--ease)}
+.drop:hover{border-color:var(--accent)}
+.empty{padding:48px 24px;text-align:center;color:var(--text-muted)}
+.side-panel{position:fixed;top:0;right:0;bottom:0;width:520px;background:var(--surface);border-left:1px solid var(--border);
+  z-index:60;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;transform:translateX(0)}
+.scrim{position:fixed;inset:0;background:var(--overlay);z-index:50}
+.trend{display:flex;align-items:flex-end;gap:5px;height:96px}
+.trend i{flex:1;border-radius:3px 3px 0 0;background:var(--grad-warm);opacity:.85;transition:opacity var(--dur) var(--ease)}
+.trend i:hover{opacity:1}
+.donut{--p:0;width:96px;height:96px;border-radius:50%;flex:none;
+  background:conic-gradient(var(--accent-fill) calc(var(--p)*1%),var(--surface-3) 0);display:grid;place-items:center}
+.donut>span{width:70px;height:70px;border-radius:50%;background:var(--surface);display:grid;place-items:center;
+  font-family:var(--font-mono);font-size:16px;font-weight:600}
+.ref-id{font-family:var(--font-mono);font-size:11px;color:var(--accent);background:var(--accent-subtle);
+  padding:2px 7px;border-radius:var(--r-xs)}
+
+/* ---------- marketing ---------- */
+.mk-header{position:sticky;top:0;z-index:30;display:flex;align-items:center;justify-content:space-between;gap:24px;
+  padding:0 40px;height:68px;background:rgba(19,18,23,.86);backdrop-filter:blur(12px);border-bottom:1px solid var(--border)}
+.mk-nav{display:flex;gap:4px;padding:4px;background:var(--surface);border:1px solid var(--border);border-radius:999px}
+.mk-sec{padding:72px 40px;max-width:1240px;margin:0 auto}
+.mk-alt{background:var(--surface);border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+.mk-h1{font-size:54px;line-height:1.06;letter-spacing:-.03em;font-weight:700;max-width:820px}
+.mk-lede{font-size:18px;line-height:1.6;color:var(--text-secondary);max-width:700px}
+
+@media (max-width:1100px){
+  .g5,.g4{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .g3{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:820px){
+  .shell{grid-template-columns:1fr}
+  .sidebar{display:none}
+  .g5,.g4,.g3,.g2{grid-template-columns:1fr}
+  .mk-h1{font-size:38px}
+  .content{padding:20px}
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+/* ============================================================
+   DATA
+   ============================================================ */
+const DB = {
+  runs:[
+    {id:'1042',env:'staging',branch:'main',when:'24 Jul 2026, 21:14',dur:'6m 12s',cases:218,pass:211,fail:7,cov:86,status:'failed'},
+    {id:'1041',env:'staging',branch:'main',when:'24 Jul 2026, 09:02',dur:'5m 58s',cases:214,pass:214,fail:0,cov:84,status:'passed'},
+    {id:'1040',env:'ci',branch:'feat/orders-v2',when:'23 Jul 2026, 17:41',dur:'6m 40s',cases:221,pass:209,fail:12,cov:83,status:'failed'},
+    {id:'1039',env:'staging',branch:'main',when:'22 Jul 2026, 21:10',dur:'5m 44s',cases:207,pass:207,fail:0,cov:81,status:'passed'},
+    {id:'1038',env:'uat',branch:'release/3.2',when:'21 Jul 2026, 14:22',dur:'7m 03s',cases:230,pass:222,fail:8,cov:80,status:'failed'},
+    {id:'1037',env:'staging',branch:'main',when:'20 Jul 2026, 20:55',dur:'5m 31s',cases:201,pass:198,fail:3,cov:78,status:'failed'}
+  ],
+  reqs:[
+    {id:'REQ-008',t:'User can sign in with national ID',type:'functional',pri:'high',src:'BRD §4.1',tests:14,pass:14,fail:0,cov:100,
+     crit:['National ID must be 10 digits','ID starting with 1 or 2 only','Lockout after 5 failed attempts']},
+    {id:'REQ-014',t:'Mobile number validation (05 prefix, 10 digits)',type:'functional',pri:'high',src:'BRD §4.3',tests:11,pass:9,fail:2,cov:82,
+     crit:['Number must start with 05','Exactly 10 digits, numeric only','Reject with 422 and field-level error']},
+    {id:'REQ-019',t:'Order can be cancelled before dispatch',type:'business rule',pri:'high',src:'BRD §5.2',tests:9,pass:6,fail:3,cov:67,
+     crit:['Cancellation allowed while status = pending|confirmed','Dispatched orders return 409','Refund job queued on cancel']},
+    {id:'REQ-021',t:'Arabic invoice renders right-to-left',type:'localisation',pri:'medium',src:'BRD §7.1',tests:0,pass:0,fail:0,cov:0,
+     crit:['Invoice direction is RTL when locale = ar','Arabic name renders without mojibake','Amounts stay LTR inside RTL text']},
+    {id:'REQ-027',t:'Payment retries on gateway timeout',type:'non-functional',pri:'high',src:'BRD §6.4',tests:7,pass:5,fail:2,cov:71,
+     crit:['3 attempts with exponential backoff','Order never left in pending > 60s','Idempotency key reused across retries']},
+    {id:'REQ-033',t:'Audit log retained for 90 days',type:'compliance',pri:'medium',src:'BRD §8.2',tests:0,pass:0,fail:0,cov:0,
+     crit:['Every write operation logged','Log entries immutable','Retention exactly 90 days']}
+  ],
+  endpoints:[
+    {m:'POST',p:'/auth/login',seen:4,tests:14,cov:100,src:'traffic'},
+    {m:'GET',p:'/orders',seen:12,tests:22,cov:92,src:'traffic'},
+    {m:'POST',p:'/orders',seen:3,tests:18,cov:88,src:'traffic'},
+    {m:'PATCH',p:'/orders/{id}',seen:2,tests:9,cov:67,src:'traffic'},
+    {m:'POST',p:'/customers',seen:6,tests:11,cov:82,src:'traffic'},
+    {m:'GET',p:'/invoices/{id}',seen:2,tests:4,cov:40,src:'dom-crawl'},
+    {m:'POST',p:'/payments',seen:5,tests:7,cov:71,src:'traffic'},
+    {m:'GET',p:'/audit',seen:0,tests:0,cov:0,src:'not found'}
+  ],
+  cases:[
+    {id:'TC-102',t:'Phone with 11 digits is rejected',req:'REQ-014',ep:'POST /customers',tech:'boundary',res:'fail',ms:188},
+    {id:'TC-103',t:'Phone with exactly 10 digits is accepted',req:'REQ-014',ep:'POST /customers',tech:'boundary',res:'pass',ms:121},
+    {id:'TC-104',t:'Phone not starting with 05 is rejected',req:'REQ-014',ep:'POST /customers',tech:'equivalence',res:'fail',ms:143},
+    {id:'TC-155',t:'Cancel dispatched order returns 409',req:'REQ-019',ep:'PATCH /orders/{id}',tech:'decision table',res:'fail',ms:96},
+    {id:'TC-156',t:'Cancel pending order returns 200',req:'REQ-019',ep:'PATCH /orders/{id}',tech:'decision table',res:'pass',ms:88},
+    {id:'TC-198',t:'Gateway timeout triggers 3 retries',req:'REQ-027',ep:'POST /payments',tech:'negative',res:'fail',ms:60120},
+    {id:'TC-211',t:'Arabic name survives round-trip',req:'REQ-021',ep:'GET /invoices/{id}',tech:'localisation',res:'fail',ms:74},
+    {id:'TC-060',t:'Login with valid national ID',req:'REQ-008',ep:'POST /auth/login',tech:'happy path',res:'pass',ms:210},
+    {id:'TC-061',t:'Login locks out after 5 failures',req:'REQ-008',ep:'POST /auth/login',tech:'negative',res:'pass',ms:980}
+  ],
+  bugs:[
+    {id:'BUG-141',t:'Phone with 11 digits accepted — returns 201 instead of 422',req:'REQ-014',tc:'TC-102',sev:'critical',
+     steps:['POST /customers with phone "05000000000" (11 digits).','Observe response status 201 and a created record.','Expected 422 with errors[0].field == "phone".'],
+     tags:['POST /customers','boundary','TC-102'],
+     ev:'status: 201 Created  (expected 422)\nlatency: 188ms\nbody: { "id": 9182, "phone": "05000000000" }\nassert failed: schema.errors expected non-empty'},
+    {id:'BUG-142',t:'Cancelling a dispatched order still succeeds',req:'REQ-019',tc:'TC-155',sev:'critical',
+     steps:['Create an order and move it to state "dispatched".','PATCH /orders/{id} with { "status": "cancelled" }.','Expected 409 conflict; got 200 and the order was cancelled.'],
+     tags:['PATCH /orders/{id}','decision table','TC-155'],
+     ev:'status: 200 OK  (expected 409)\nbody.status: "cancelled"\nbusiness rule: dispatched → cancelled is not allowed'},
+    {id:'BUG-143',t:'Gateway timeout is not retried — order left in pending',req:'REQ-027',tc:'TC-198',sev:'major',
+     steps:['Force the payment gateway stub to time out after 30s.','POST /payments once.','Expected 2 retry attempts; observed 0, order stuck in "pending".'],
+     tags:['POST /payments','negative','TC-198'],
+     ev:'attempts: 1  (expected 3)\nstatus: 504 Gateway Timeout\norder.status: "pending" after 60s'},
+    {id:'BUG-144',t:'Arabic customer name returned mojibake in invoice payload',req:'REQ-021',tc:'TC-211',sev:'major',
+     steps:['Create a customer named "محمد الشمري".','GET /invoices/{id}.','Name comes back garbled — encoding lost.'],
+     tags:['GET /invoices/{id}','localisation','TC-211'],
+     ev:'content-type: application/json (no charset)\nexpected: "محمد الشمري"\nactual:   "Ù…Ø­Ù…Ø¯ Ø§Ù„Ø´Ù…Ø±ÙŠ"'}
+  ],
+  integrations:[
+    {n:'Jira / Xray',d:'Push failures as issues, sync test execution results.',cat:'Issue tracking',on:true,c:'--c-blue',ref:'FR-070'},
+    {n:'GitHub Actions',d:'Run Traceo on every pull request and block merge on regressions.',cat:'CI/CD',on:true,c:'--c-violet',ref:'FR-061'},
+    {n:'GitLab CI',d:'Same gate, self-managed runners supported.',cat:'CI/CD',on:false,c:'--c-pink',ref:'FR-061'},
+    {n:'Confluence',d:'Pull requirement pages directly instead of uploading files.',cat:'Requirements',on:true,c:'--c-cyan',ref:'FR-011'},
+    {n:'Slack',d:'Post run summaries and failure alerts to a channel.',cat:'Notifications',on:false,c:'--c-green',ref:'FR-072'},
+    {n:'Azure DevOps',d:'Work items and pipeline integration.',cat:'Issue tracking',on:false,c:'--c-amber',ref:'FR-070'}
+  ],
+  features:[
+    {id:'FR-010',n:'Requirements ingestion',s:'New run',g:'Layer 1 — Parser',d:'Upload PDF, DOCX or Markdown; requirements are extracted with ID, description, type and priority.',pri:'P0',st:'Built'},
+    {id:'FR-011',n:'Confluence import',s:'Integrations',g:'Layer 1 — Parser',d:'Pull requirement pages from a Confluence space instead of uploading a file.',pri:'P1',st:'Built'},
+    {id:'FR-012',n:'Arabic requirement parsing',s:'Requirements',g:'Layer 1 — Parser',d:'Arabic RFPs and BRDs are parsed with the same fidelity as English, including RTL text and mixed-direction content.',pri:'P0',st:'Built'},
+    {id:'FR-013',n:'Acceptance-criteria extraction',s:'Requirements',g:'Layer 1 — Parser',d:'Each requirement is decomposed into atomic, testable acceptance criteria.',pri:'P0',st:'Built'},
+    {id:'FR-014',n:'Source traceback',s:'Requirements',g:'Layer 1 — Parser',d:'Every requirement keeps a link back to its source document and paragraph.',pri:'P1',st:'Built'},
+    {id:'FR-020',n:'OpenAPI discovery',s:'API surface',g:'Layer 2 — Discovery',d:'When a spec exists, endpoints, params and schemas are read directly.',pri:'P0',st:'Built'},
+    {id:'FR-021',n:'Traffic-capture discovery',s:'API surface',g:'Layer 2 — Discovery',d:'Headless browser drives the app; the endpoint map is built from observed network traffic.',pri:'P0',st:'Built'},
+    {id:'FR-022',n:'DOM crawl',s:'API surface',g:'Layer 2 — Discovery',d:'Forms, inputs, buttons and client-side validation rules are collected from the rendered DOM.',pri:'P1',st:'Built'},
+    {id:'FR-023',n:'Postman import',s:'New run',g:'Layer 2 — Discovery',d:'An existing collection can be imported and treated as the discovered surface.',pri:'P2',st:'Built'},
+    {id:'FR-024',n:'Endpoint coverage map',s:'API surface',g:'Layer 2 — Discovery',d:'Every discovered endpoint shows how many tests hit it and how much of it is covered.',pri:'P1',st:'Built'},
+    {id:'FR-030',n:'Boundary value analysis',s:'New run',g:'Layer 3 — Generator',d:'Min, max and one past each edge are generated for every bounded field.',pri:'P0',st:'Built'},
+    {id:'FR-031',n:'Equivalence partitioning',s:'New run',g:'Layer 3 — Generator',d:'One representative case per valid and invalid class.',pri:'P0',st:'Built'},
+    {id:'FR-032',n:'Decision tables',s:'New run',g:'Layer 3 — Generator',d:'State and rule combinations are enumerated for business-rule requirements.',pri:'P1',st:'Built'},
+    {id:'FR-033',n:'Negative & auth cases',s:'New run',g:'Layer 3 — Generator',d:'Missing token, wrong role, malformed body and injection-shaped payloads.',pri:'P0',st:'Built'},
+    {id:'FR-034',n:'RTL / localisation checks',s:'New run',g:'Layer 3 — Generator',d:'Arabic payloads, encoding round-trips and right-to-left rendering assertions.',pri:'P1',st:'Built'},
+    {id:'FR-035',n:'Grounded generation',s:'Test cases',g:'Layer 3 — Generator',d:'Generation is restricted to discovered endpoints; every case is schema-validated before it can run.',pri:'P0',st:'Built'},
+    {id:'FR-036',n:'Test case library',s:'Test cases',g:'Layer 3 — Generator',d:'All generated cases are browsable, filterable and editable; manual edits survive regeneration.',pri:'P1',st:'Built'},
+    {id:'FR-040',n:'HTTP execution engine',s:'Report',g:'Layer 4 — Execution',d:'Isolated container per run, configurable concurrency, session reuse after one auth.',pri:'P0',st:'Built'},
+    {id:'FR-041',n:'Schema assertions',s:'Report',g:'Layer 4 — Execution',d:'Response body validated against the discovered or declared schema.',pri:'P0',st:'Built'},
+    {id:'FR-042',n:'Business-rule assertions',s:'Report',g:'Layer 4 — Execution',d:'Assertions derived from acceptance criteria, not just status codes.',pri:'P0',st:'Built'},
+    {id:'FR-043',n:'Test data lifecycle',s:'Report',g:'Layer 4 — Execution',d:'Fixtures are created before the suite and torn down after, per run.',pri:'P1',st:'Built'},
+    {id:'FR-044',n:'Performance capture',s:'Report',g:'Layer 4 — Execution',d:'Latency recorded per case; p95 reported per endpoint.',pri:'P2',st:'Planned'},
+    {id:'FR-050',n:'Traceability matrix',s:'Report',g:'Layer 5 — Reporting',d:'Requirement → test cases → verdict, always current, exportable.',pri:'P0',st:'Built'},
+    {id:'FR-051',n:'Coverage gap detection',s:'Report',g:'Layer 5 — Reporting',d:'Requirements with zero tests are surfaced with a reason.',pri:'P0',st:'Built'},
+    {id:'FR-052',n:'Reproducible bug reports',s:'Report',g:'Layer 5 — Reporting',d:'Steps, request log, response body and diff — enough for a developer to reproduce without asking.',pri:'P0',st:'Built'},
+    {id:'FR-053',n:'Run comparison',s:'Runs',g:'Layer 5 — Reporting',d:'Diff two runs: new failures, fixed failures, coverage delta.',pri:'P1',st:'Built'},
+    {id:'FR-054',n:'Coverage trend',s:'Dashboard',g:'Layer 5 — Reporting',d:'Requirement coverage over time, per project and per branch.',pri:'P1',st:'Built'},
+    {id:'FR-060',n:'Scheduled runs',s:'Settings',g:'Automation',d:'Cron-style scheduling per environment.',pri:'P1',st:'Built'},
+    {id:'FR-061',n:'CI/CD gate',s:'Integrations',g:'Automation',d:'Fail the pipeline when coverage drops or a P0 requirement regresses.',pri:'P0',st:'Built'},
+    {id:'FR-062',n:'Regression watch',s:'Dashboard',g:'Automation',d:'Alert when a previously passing requirement starts failing.',pri:'P1',st:'Built'},
+    {id:'FR-070',n:'Jira / Xray export',s:'Integrations',g:'Integrations',d:'Push failures as issues and sync executions to Xray test runs.',pri:'P0',st:'Built'},
+    {id:'FR-071',n:'PDF / XLSX report export',s:'Report',g:'Integrations',d:'Client-ready traceability report in one click.',pri:'P1',st:'Built'},
+    {id:'FR-072',n:'Slack notifications',s:'Integrations',g:'Integrations',d:'Run summaries and failure alerts to a channel.',pri:'P2',st:'Planned'},
+    {id:'FR-080',n:'Role-based access',s:'Settings',g:'Platform',d:'Owner, QA lead, engineer and viewer roles.',pri:'P1',st:'Built'},
+    {id:'FR-081',n:'On-premise deployment',s:'Settings',g:'Platform',d:'Full stack runs inside the customer network; no data leaves the Kingdom.',pri:'P0',st:'Built'},
+    {id:'FR-082',n:'Audit log',s:'Settings',g:'Platform',d:'Every configuration change and run is logged and immutable.',pri:'P1',st:'Built'},
+    {id:'FR-083',n:'Secrets vault',s:'Settings',g:'Platform',d:'Credentials for the system under test are encrypted at rest and never logged.',pri:'P0',st:'Built'}
+  ]
+};
+DB.trend=[62,64,63,68,71,70,74,77,76,79,81,80,84,86];
+</script>
+<script>
+/* ============================================================
+   HELPERS
+   ============================================================ */
+const $ = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const ref = id => `<span class="ref-id" title="Feature reference — open Feature reference">${id}</span>`;
+const covColor = p => p >= 85 ? 'var(--success)' : p >= 60 ? 'var(--warning)' : 'var(--error)';
+const bar = p => `<span class="bar"><i style="width:${Math.max(2,p)}%;background:${covColor(p)}"></i></span>`;
+const sevBadge = s => ({critical:'badge-error', major:'badge-warning', minor:'badge-info'}[s] || 'badge-neutral');
+const methodColor = m => ({GET:'--c-blue', POST:'--c-green', PATCH:'--c-yellow', PUT:'--c-violet', DELETE:'--c-coral'}[m] || '--c-blue');
+
+const IC = {
+  grid:'<path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/>',
+  play:'<path d="M5 3l14 9-14 9z"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  doc:'<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/>',
+  flask:'<path d="M9 3h6M10 3v6L4 20a1 1 0 001 1h14a1 1 0 001-1l-6-11V3"/>',
+  api:'<path d="M4 7h16M4 12h16M4 17h10"/>',
+  plug:'<path d="M9 2v6M15 2v6M6 8h12v4a6 6 0 01-12 0zM12 18v4"/>',
+  cog:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>',
+  book:'<path d="M4 4h11a3 3 0 013 3v13H7a3 3 0 01-3-3z"/><path d="M4 17a3 3 0 013-3h11"/>',
+  check:'<path d="M20 6L9 17l-5-5"/>',
+  x:'<path d="M18 6L6 18M6 6l12 12"/>',
+  bolt:'<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>'
+};
+const ico = (k, cls) => `<svg class="${cls||'ic'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${IC[k]}</svg>`;
+
+/* ============================================================
+   APP SHELL
+   ============================================================ */
+const NAV = [
+  {g:'Workspace', items:[
+    {r:'dashboard', n:'Dashboard', i:'grid'},
+    {r:'runs',      n:'Runs',      i:'play', cnt:DB.runs.length},
+    {r:'new',       n:'New run',   i:'plus'}
+  ]},
+  {g:'Analysis', items:[
+    {r:'requirements', n:'Requirements', i:'doc',   cnt:DB.reqs.length},
+    {r:'testcases',    n:'Test cases',   i:'flask', cnt:218},
+    {r:'api',          n:'API surface',  i:'api',   cnt:DB.endpoints.length}
+  ]},
+  {g:'Configure', items:[
+    {r:'integrations', n:'Integrations', i:'plug'},
+    {r:'settings',     n:'Settings',     i:'cog'}
+  ]},
+  {g:'Docs', items:[
+    {r:'reference', n:'Feature reference', i:'book', cnt:DB.features.length}
+  ]}
+];
+
+function shell(route, title, crumb, body, actions){
+  const nav = NAV.map(sec => `
+    <div class="sb-group">${sec.g}</div>
+    ${sec.items.map(it => `<a class="sb-item ${it.r===route?'on':''}" href="#/${it.r}">
+        ${ico(it.i)}<span>${it.n}</span>${it.cnt!=null?`<span class="cnt">${it.cnt}</span>`:''}</a>`).join('')}
+  `).join('');
+  return `<div class="shell">
+    <aside class="sidebar">
+      <div class="sb-brand">
+        <div class="logo">${ico('bolt','')}</div>
+        <div><div style="font-weight:700;letter-spacing:-.01em">Traceo</div>
+        <div class="crumb">v2.4 · on-prem</div></div>
+      </div>
+      <nav class="sb-nav">${nav}</nav>
+      <div class="sb-foot">
+        <div class="avatar">NA</div>
+        <div class="grow trunc"><div style="font-size:13px;font-weight:600">Nouf A.</div>
+        <div class="crumb">QA Lead · Riyadh</div></div>
+      </div>
+    </aside>
+    <main>
+      <div class="topbar">
+        <h1>${title}</h1><span class="crumb">${crumb}</span>
+        <span class="grow"></span>
+        ${actions||''}
+        <a class="btn btn-ghost btn-sm" href="#/overview">Marketing site</a>
+      </div>
+      <div class="content">${body}</div>
+    </main>
+  </div>`;
+}
+
+/* ============================================================
+   1 · OVERVIEW (marketing)
+   ============================================================ */
+function vOverview(){
+  const pipeline = [
+    ['01','Read the requirement','Upload a BRD, SRS or Confluence page. Traceo extracts every requirement with its acceptance criteria.','FR-010'],
+    ['02','Discover the surface','OpenAPI, live traffic capture or DOM crawl — Traceo learns what the system actually exposes.','FR-021'],
+    ['03','Generate grounded tests','Boundary, equivalence, decision tables, negative, auth and RTL cases — tied to real endpoints.','FR-035'],
+    ['04','Execute and assert','Isolated container, schema and business-rule assertions, full request/response capture.','FR-042'],
+    ['05','Trace the result','Requirement → test → verdict. Gaps surfaced, bugs reproducible, report exportable.','FR-050']
+  ];
+  const problems = [
+    ['Requirements and tests drift apart','A requirement changes in the BRD, the suite does not. Nobody finds out until UAT.'],
+    ['Coverage is a claim, not a fact','“We tested it” is an opinion until you can point at the requirement and the case that proves it.'],
+    ['Arabic is an afterthought','RTL rendering, encoding round-trips and Hijri dates break in production because nobody generated a case for them.'],
+    ['Bug reports cost a second cycle','Half the tickets come back as “cannot reproduce” because the evidence was never captured.']
+  ];
+  const pricing = [
+    ['Team','SAR 4,900','per month','Up to 3 projects', ['5 QA seats','200 runs / month','Jira & GitHub Actions','Cloud region: KSA','Email support'], false],
+    ['Business','SAR 12,500','per month','Up to 12 projects', ['20 QA seats','Unlimited runs','All integrations','On-premise option','Named CSM','SLA 99.9%'], true],
+    ['Enterprise','Custom','annual','Unlimited', ['Unlimited seats','Air-gapped deployment','Custom techniques','Security review support','24/7 support'], false]
+  ];
+  return `
+  <header class="mk-header">
+    <div class="row" style="gap:11px">
+      <div class="logo">${ico('bolt','')}</div><b style="letter-spacing:-.01em">Traceo</b>
+    </div>
+    <nav class="mk-nav">
+      <a class="tab on" href="#/overview">Overview</a>
+      <a class="tab" href="#/reference">Features</a>
+      <a class="tab" href="#/dashboard">Product</a>
+    </nav>
+    <div class="row">
+      <a class="btn btn-ghost btn-sm" href="#/dashboard">Sign in</a>
+      <a class="btn btn-primary btn-sm" href="#/new">Book a pilot</a>
+    </div>
+  </header>
+
+  <section class="mk-sec">
+    <span class="badge badge-accent" style="margin-bottom:20px">Built for Saudi delivery teams · data stays in the Kingdom</span>
+    <h1 class="mk-h1">Every requirement, tested. Every test, traced back to the requirement.</h1>
+    <p class="mk-lede" style="margin-top:20px">Traceo reads your BRD, discovers the real API surface, generates grounded test cases, runs them, and gives you a traceability matrix that a client can sign.</p>
+    <div class="row wrap" style="margin-top:30px">
+      <a class="btn btn-primary btn-lg" href="#/new">Start a run</a>
+      <a class="btn btn-secondary btn-lg" href="#/runs/1042">See a real report</a>
+    </div>
+    <div class="grid g4" style="margin-top:44px">
+      ${[['86%','Requirement coverage after one run'],['6m 12s','Median suite runtime'],['218','Cases generated from 6 requirements'],['0','Bytes leaving your network']]
+        .map(([v,l]) => `<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('')}
+    </div>
+  </section>
+
+  <section class="mk-sec mk-alt">
+    <span class="eyebrow">The problem</span>
+    <h2 style="font-size:32px;letter-spacing:-.02em;margin:10px 0 26px">Testing tools test code. Nothing tests the requirement.</h2>
+    <div class="grid g2">
+      ${problems.map(([t,d]) => `<div class="card card-pad">
+        <div class="row" style="align-items:flex-start;gap:12px">
+          <span class="dot" style="background:var(--error);margin-top:8px"></span>
+          <div><b style="font-size:15px">${t}</b><p class="sec" style="font-size:14px;margin-top:6px">${d}</p></div>
+        </div></div>`).join('')}
+    </div>
+  </section>
+
+  <section class="mk-sec">
+    <span class="eyebrow">How it works</span>
+    <h2 style="font-size:32px;letter-spacing:-.02em;margin:10px 0 26px">Five layers, one thread.</h2>
+    <div class="col" style="gap:10px">
+      ${pipeline.map(([n,t,d,r]) => `<div class="card card-pad row" style="gap:20px;align-items:flex-start">
+        <b class="mono" style="font-size:22px;color:var(--accent);flex:none;width:38px">${n}</b>
+        <div class="grow"><div class="row between wrap" style="gap:10px"><b style="font-size:16px">${t}</b>${ref(r)}</div>
+        <p class="sec" style="font-size:14px;margin-top:6px">${d}</p></div>
+      </div>`).join('')}
+    </div>
+  </section>
+
+  <section class="mk-sec mk-alt">
+    <span class="eyebrow">Live traceability</span>
+    <h2 style="font-size:32px;letter-spacing:-.02em;margin:10px 0 8px">This is the artefact you hand the client.</h2>
+    <p class="mk-lede" style="margin-bottom:24px">Not a screenshot folder. A matrix that regenerates itself on every run.</p>
+    <div class="card" style="overflow:hidden">
+      <table class="tbl">
+        <thead><tr><th>Requirement</th><th>Type</th><th>Tests</th><th>Result</th><th style="width:200px">Coverage</th></tr></thead>
+        <tbody>${DB.reqs.map(r => `<tr>
+          <td><div class="mono" style="font-size:12px;color:var(--accent)">${r.id}</div>
+              <div class="trunc" style="max-width:340px">${esc(r.t)}</div></td>
+          <td><span class="badge badge-neutral">${r.type}</span></td>
+          <td class="num">${r.tests}</td>
+          <td>${r.tests===0 ? '<span class="badge badge-warning">no coverage</span>'
+                : r.fail ? `<span class="badge badge-error">${r.fail} failed</span>`
+                : '<span class="badge badge-success">passed</span>'}</td>
+          <td><div class="row">${bar(r.cov)}<span class="num" style="width:38px;text-align:right">${r.cov}%</span></div></td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="mk-sec">
+    <span class="eyebrow">Pricing</span>
+    <h2 style="font-size:32px;letter-spacing:-.02em;margin:10px 0 26px">Priced per project, not per test.</h2>
+    <div class="grid g3">
+      ${pricing.map(([n,p,per,sub,feats,hot]) => `<div class="card card-pad col" style="gap:14px;${hot?'border-color:var(--accent);box-shadow:var(--shadow-md)':''}">
+        <div class="row between"><b style="font-size:16px">${n}</b>${hot?'<span class="badge badge-accent">Most chosen</span>':''}</div>
+        <div><span style="font-size:32px;font-weight:700;letter-spacing:-.02em">${p}</span>
+             <span class="muted" style="font-size:13px"> ${per}</span></div>
+        <div class="sec" style="font-size:13px">${sub}</div>
+        <div class="sep"></div>
+        <div class="col" style="gap:9px">${feats.map(f => `<div class="row" style="gap:9px;font-size:14px">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">${IC.check}</svg>
+          <span>${f}</span></div>`).join('')}</div>
+        <a class="btn ${hot?'btn-primary':'btn-secondary'} btn-block" href="#/new" style="margin-top:auto">${n==='Enterprise'?'Talk to us':'Start a pilot'}</a>
+      </div>`).join('')}
+    </div>
+  </section>
+
+  <section class="mk-sec">
+    <div class="card card-pad row between wrap" style="gap:20px;background:var(--grad-hero);border:none">
+      <div style="color:#1A1207">
+        <h3 style="font-size:26px;letter-spacing:-.02em">Bring one requirement document. We will show you the gaps in 20 minutes.</h3>
+        <p style="font-size:15px;margin-top:6px;opacity:.82">Pilot runs on your environment, on your terms.</p>
+      </div>
+      <a class="btn btn-lg" href="#/new" style="background:#1A1207;color:#FFD9AE">Book a pilot</a>
+    </div>
+  </section>
+
+  <footer style="border-top:1px solid var(--border);padding:26px 40px">
+    <div class="row between wrap" style="max-width:1240px;margin:0 auto;gap:16px">
+      <div class="row" style="gap:10px"><div class="logo">${ico('bolt','')}</div>
+        <span class="sec" style="font-size:13px">Traceo — requirement → test → result</span></div>
+      <div class="crumb">Riyadh, Saudi Arabia · © 2026</div>
+    </div>
+  </footer>`;
+}
+
+/* ============================================================
+   2 · DASHBOARD
+   ============================================================ */
+function vDashboard(){
+  const last = DB.runs[0];
+  const gaps = DB.reqs.filter(r => r.tests === 0);
+  const openBugs = DB.bugs.length;
+  const kpis = [
+    ['86%','Requirement coverage','+2 pts vs last run','var(--success)'],
+    ['218','Cases in the suite','+4 generated','var(--text-muted)'],
+    [String(openBugs),'Open defects','2 critical','var(--error)'],
+    [String(gaps.length),'Requirements with no tests','needs input','var(--warning)'],
+    ['6m 12s','Median runtime','−14s','var(--success)']
+  ];
+  const body = `
+  <div class="page-head">
+    <div><h2>Dashboard</h2><p>Coverage, regressions and gaps across the <b>Orders Platform</b> project.</p></div>
+    <div class="row"><a class="btn btn-secondary btn-sm" href="#/runs">All runs</a>
+      <a class="btn btn-primary btn-sm" href="#/new">New run</a></div>
+  </div>
+
+  <div class="grid g5">${kpis.map(([v,l,d,c]) =>
+    `<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div><div class="d" style="color:${c}">${d}</div></div>`).join('')}</div>
+
+  <div class="grid g2" style="margin-top:14px;align-items:start;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)">
+    <div class="card">
+      <div class="card-head"><h3>Coverage trend</h3>${ref('FR-054')}<span class="crumb">last 14 runs</span></div>
+      <div class="card-pad">
+        <div class="trend">${DB.trend.map(v => `<i style="height:${Math.round((v-55)/(90-55)*88+12)}%" title="${v}%"></i>`).join('')}</div>
+        <div class="row between" style="margin-top:10px"><span class="crumb">#1029</span><span class="crumb">#1042</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3>Latest run</h3><span class="badge badge-error">failed</span></div>
+      <div class="card-pad row" style="gap:20px">
+        <div class="donut" style="--p:${last.cov}"><span><b style="font-size:19px">${last.cov}%</b></span></div>
+        <div class="col grow" style="gap:7px">
+          <div class="row between"><span class="sec" style="font-size:13px">Run</span><b class="mono" style="font-size:13px">#${last.id}</b></div>
+          <div class="row between"><span class="sec" style="font-size:13px">Passed</span><b class="mono" style="font-size:13px;color:var(--success)">${last.pass}</b></div>
+          <div class="row between"><span class="sec" style="font-size:13px">Failed</span><b class="mono" style="font-size:13px;color:var(--error)">${last.fail}</b></div>
+          <div class="row between"><span class="sec" style="font-size:13px">Duration</span><b class="mono" style="font-size:13px">${last.dur}</b></div>
+          <a class="btn btn-secondary btn-sm btn-block" href="#/runs/${last.id}" style="margin-top:6px">Open report</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid g2" style="margin-top:14px;align-items:start">
+    <div class="card">
+      <div class="card-head"><h3>Regression watch</h3>${ref('FR-062')}</div>
+      <div class="col" style="gap:0">
+        ${DB.bugs.map(b => `<div class="row" style="gap:12px;padding:13px 20px;border-bottom:1px solid var(--border)">
+          <span class="dot" style="background:${b.sev==='critical'?'var(--error)':'var(--warning)'}"></span>
+          <div class="grow"><div class="trunc" style="font-size:14px">${esc(b.t)}</div>
+            <div class="crumb">${b.id} · ${b.req} · ${b.tc}</div></div>
+          <span class="badge ${sevBadge(b.sev)}">${b.sev}</span>
+        </div>`).join('')}
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3>Coverage gaps</h3>${ref('FR-051')}<span class="badge badge-warning">${gaps.length}</span></div>
+      <div class="card-pad col" style="gap:12px">
+        ${gaps.map(g => `<div class="card card-pad" style="background:var(--surface-2)">
+          <div class="row between wrap" style="gap:8px"><b class="mono" style="font-size:12px;color:var(--accent)">${g.id}</b>
+            <span class="badge badge-neutral">${g.type}</span></div>
+          <div style="font-size:14px;margin-top:5px">${esc(g.t)}</div>
+          <p class="muted" style="font-size:12px;margin-top:6px">No endpoint in the discovered surface serves this requirement — supply a spec or a sample request.</p>
+          <a class="btn btn-secondary btn-sm" href="#/api" style="margin-top:10px;width:fit-content">Resolve in API surface</a>
+        </div>`).join('')}
+      </div>
+    </div>
+  </div>`;
+  return shell('dashboard','Dashboard','Orders Platform / staging', body);
+}
+
+/* ============================================================
+   3 · RUNS
+   ============================================================ */
+function vRuns(){
+  const body = `
+  <div class="page-head">
+    <div><h2>Runs</h2><p>Every execution, with its environment, branch and coverage delta. Compare any two runs ${ref('FR-053')}</p></div>
+    <a class="btn btn-primary btn-sm" href="#/new">New run</a>
+  </div>
+  <div class="row wrap" style="margin-bottom:14px">
+    <button class="chip on">All</button><button class="chip">Failed</button>
+    <button class="chip">Passed</button><button class="chip">staging</button><button class="chip">ci</button>
+    <span class="grow"></span><button class="btn btn-secondary btn-sm">Compare selected</button>
+  </div>
+  <div class="card" style="overflow:hidden">
+    <table class="tbl">
+      <thead><tr><th>Run</th><th>Environment</th><th>Branch</th><th>When</th><th>Duration</th>
+        <th>Cases</th><th>Result</th><th style="width:190px">Coverage</th><th></th></tr></thead>
+      <tbody>${DB.runs.map(r => `<tr>
+        <td class="num" style="color:var(--accent)">#${r.id}</td>
+        <td><span class="badge badge-neutral">${r.env}</span></td>
+        <td class="num">${r.branch}</td>
+        <td class="sec" style="font-size:13px">${r.when}</td>
+        <td class="num">${r.dur}</td>
+        <td class="num">${r.cases}</td>
+        <td>${r.fail ? `<span class="badge badge-error">${r.fail} failed</span>` : '<span class="badge badge-success">all passed</span>'}</td>
+        <td><div class="row">${bar(r.cov)}<span class="num" style="width:36px;text-align:right">${r.cov}%</span></div></td>
+        <td><a class="btn btn-ghost btn-sm" href="#/runs/${r.id}">Open</a></td>
+      </tr>`).join('')}</tbody>
+    </table>
+  </div>`;
+  return shell('runs','Runs','Orders Platform / all environments', body);
+}
+
+/* ============================================================
+   4 · NEW RUN
+   ============================================================ */
+function vNewRun(){
+  const techniques = [
+    ['Boundary value analysis','Min, max and one past each edge','FR-030',true],
+    ['Equivalence partitioning','One case per valid and invalid class','FR-031',true],
+    ['Decision tables','State and rule combinations','FR-032',true],
+    ['Negative & auth','Missing token, wrong role, malformed body','FR-033',true],
+    ['RTL / localisation','Arabic payloads and encoding round-trips','FR-034',true],
+    ['Performance probe','Latency sampling per endpoint','FR-044',false]
+  ];
+  const body = `
+  <div class="page-head">
+    <div><h2>New run</h2><p>Point Traceo at a requirement document and an environment. Everything after that is generated.</p></div>
+    <span class="crumb">draft · not saved</span>
+  </div>
+  <div class="grid g2" style="grid-template-columns:minmax(0,1.7fr) minmax(0,1fr)">
+    <div class="col" style="gap:14px">
+
+      <div class="card">
+        <div class="card-head"><h3>1 · Requirements source</h3>${ref('FR-010')}</div>
+        <div class="card-pad col" style="gap:14px">
+          <div class="drop">
+            <div style="font-size:15px;font-weight:600">Drop a BRD, SRS or test plan</div>
+            <div class="muted" style="font-size:13px;margin-top:5px">PDF, DOCX, MD or XLSX — Arabic and English ${ref('FR-012')}</div>
+            <button class="btn btn-secondary btn-sm" style="margin-top:14px">Browse files</button>
+          </div>
+          <div class="row" style="gap:10px"><span class="sep grow"></span><span class="muted" style="font-size:12px">or</span><span class="sep grow"></span></div>
+          <div class="row wrap">
+            <button class="chip">Import from Confluence ${ref('FR-011')}</button>
+            <button class="chip">Import Postman collection ${ref('FR-023')}</button>
+            <button class="chip">Paste requirements</button>
+          </div>
+          <div class="card card-pad row between" style="background:var(--surface-2)">
+            <div class="row" style="gap:11px">${ico('doc')}
+              <div><b style="font-size:14px">BRD_OrdersPlatform_v3.2.pdf</b>
+                <div class="crumb">2.4 MB · 6 requirements extracted · 21 acceptance criteria ${ref('FR-013')}</div></div></div>
+            <button class="btn btn-ghost btn-sm">Replace</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>2 · System under test</h3>${ref('FR-021')}</div>
+        <div class="card-pad grid g2">
+          <div class="field"><label>Base URL</label><input class="input mono" value="https://staging.orders.internal/api"></div>
+          <div class="field"><label>Environment</label><select class="input"><option>staging</option><option>ci</option><option>uat</option></select></div>
+          <div class="field"><label>Auth method</label><select class="input"><option>Bearer token</option><option>OAuth2 client credentials</option><option>Session cookie</option></select></div>
+          <div class="field"><label>Credential</label><input class="input mono" type="password" value="••••••••••••••••" placeholder="from vault"><span class="crumb">Stored in the vault, never logged ${ref('FR-083')}</span></div>
+          <div class="field" style="grid-column:1/-1"><label>Discovery mode</label>
+            <div class="row wrap">
+              <button class="chip on">Traffic capture ${ref('FR-021')}</button>
+              <button class="chip">OpenAPI spec ${ref('FR-020')}</button>
+              <button class="chip">DOM crawl ${ref('FR-022')}</button>
+            </div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>3 · Generation techniques</h3>${ref('FR-035')}</div>
+        <div class="card-pad grid g2">
+          ${techniques.map(([n,d,r,on]) => `<button class="check ${on?'on':''}">
+            <span class="box"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--accent-fg)" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">${IC.check}</svg></span>
+            <span class="grow" style="text-align:left"><b>${n}</b><span>${d}</span></span>${ref(r)}</button>`).join('')}
+        </div>
+      </div>
+    </div>
+
+    <div class="col" style="gap:14px">
+      <div class="card">
+        <div class="card-head"><h3>Run summary</h3></div>
+        <div class="card-pad col" style="gap:10px">
+          ${[['Requirements','6'],['Acceptance criteria','21'],['Endpoints discovered','8'],['Estimated cases','~218'],['Estimated runtime','6–7 min']]
+            .map(([k,v]) => `<div class="row between"><span class="sec" style="font-size:13px">${k}</span><b class="mono" style="font-size:13px">${v}</b></div>`).join('')}
+          <div class="sep"></div>
+          <div class="row between"><span class="sec" style="font-size:13px">Concurrency ${ref('FR-040')}</span><b class="mono" style="font-size:13px">8</b></div>
+          <div class="row between"><span class="sec" style="font-size:13px">Fixture teardown ${ref('FR-043')}</span><span class="switch on"></span></div>
+          <div class="row between"><span class="sec" style="font-size:13px">Fail pipeline on regression ${ref('FR-061')}</span><span class="switch on"></span></div>
+          <button class="btn btn-primary btn-block btn-lg" style="margin-top:8px">Generate & run</button>
+          <button class="btn btn-ghost btn-block btn-sm">Generate only, do not execute</button>
+        </div>
+      </div>
+      <div class="card card-pad">
+        <span class="eyebrow">Data residency ${ref('FR-081')}</span>
+        <p class="sec" style="font-size:13px;margin-top:8px">This workspace runs on-premise. Requirement documents, credentials and captured traffic never leave your network.</p>
+      </div>
+      <div class="card card-pad">
+        <span class="eyebrow">Schedule ${ref('FR-060')}</span>
+        <div class="row between" style="margin-top:10px"><span class="sec" style="font-size:13px">Repeat nightly at 02:00</span><span class="switch"></span></div>
+      </div>
+    </div>
+  </div>`;
+  return shell('new','New run','Orders Platform / new', body);
+}
+
+/* ============================================================
+   5 · RUN REPORT
+   ============================================================ */
+let reportTab = 'failures';
+function vReport(runId){
+  const run = DB.runs.find(r => r.id === runId) || DB.runs[0];
+  const gaps = DB.reqs.filter(r => r.tests === 0);
+  const kpis = [[run.cases,'Cases run','var(--text)'],[run.pass,'Passed','var(--success)'],
+    [run.fail,'Failed','var(--error)'],[run.cov+'%','Requirement coverage','var(--text)'],
+    [gaps.length,'Coverage gaps','var(--warning)']];
+
+  const failures = DB.bugs.map((b,i) => `
+    <div class="acc ${i===0?'open':''}" data-acc>
+      <button class="acc-h" data-acc-h>
+        <span class="car">▶</span>
+        <span class="badge ${sevBadge(b.sev)}">${b.sev}</span>
+        <span class="grow"><b style="font-size:14px">${esc(b.t)}</b>
+          <span class="crumb" style="display:block">${b.id} · ${b.req} · ${b.tc}</span></span>
+        <span class="btn btn-ghost btn-sm">Export to Jira ${ref('FR-070')}</span>
+      </button>
+      <div class="acc-b" ${i===0?'':'hidden'}>
+        <div class="sep" style="margin-bottom:16px"></div>
+        <span class="eyebrow">Steps to reproduce ${ref('FR-052')}</span>
+        <ol class="sec" style="font-size:14px;margin:8px 0 16px;padding-left:20px">
+          ${b.steps.map(s => `<li style="margin-bottom:4px">${esc(s)}</li>`).join('')}</ol>
+        <span class="eyebrow">Evidence</span>
+        <pre class="codebox" style="margin:8px 0 16px;white-space:pre-wrap">${esc(b.ev)}</pre>
+        <div class="row wrap">${b.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
+      </div>
+    </div>`).join('');
+
+  const matrix = `<div class="card" style="overflow:hidden">
+    <table class="tbl">
+      <thead><tr><th>Requirement</th><th>Criteria</th><th>Cases</th><th>Passed</th><th>Failed</th><th style="width:180px">Coverage</th><th>Verdict</th></tr></thead>
+      <tbody>${DB.reqs.map(r => `<tr>
+        <td><div class="mono" style="font-size:12px;color:var(--accent)">${r.id}</div>
+            <div class="trunc" style="max-width:320px">${esc(r.t)}</div>
+            <div class="crumb">${r.src}</div></td>
+        <td class="num">${r.crit.length}</td>
+        <td class="num">${r.tests}</td>
+        <td class="num" style="color:var(--success)">${r.pass}</td>
+        <td class="num" style="color:${r.fail?'var(--error)':'var(--text-muted)'}">${r.fail}</td>
+        <td><div class="row">${bar(r.cov)}<span class="num" style="width:36px;text-align:right">${r.cov}%</span></div></td>
+        <td>${r.tests===0?'<span class="badge badge-warning">not verified</span>'
+             :r.fail?'<span class="badge badge-error">failed</span>':'<span class="badge badge-success">verified</span>'}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>`;
+
+  const gapsView = `<div class="grid g2">${gaps.map(g => `
+    <div class="card card-pad">
+      <div class="row between wrap" style="gap:8px">
+        <b class="mono" style="font-size:12px;color:var(--accent)">${g.id}</b>
+        <span class="badge badge-warning">0 tests</span></div>
+      <div style="font-size:15px;font-weight:600;margin-top:6px">${esc(g.t)}</div>
+      <p class="sec" style="font-size:13px;margin-top:8px">${g.id==='REQ-021'
+        ? 'The invoice rendering path is not reachable through the discovered API surface — only <span class="mono">GET /invoices/{id}</span> was captured, and it returns JSON, not the rendered document.'
+        : 'No endpoint writes to an audit store in the captured traffic. Supply the audit service spec or a sample request to generate retention cases.'}</p>
+      <div class="sep" style="margin:12px 0"></div>
+      <span class="eyebrow">Acceptance criteria awaiting coverage</span>
+      <div class="col" style="gap:6px;margin-top:8px">${g.crit.map(c => `<div class="row" style="gap:8px;font-size:13px">
+        <span class="dot" style="background:var(--warning)"></span><span class="sec">${esc(c)}</span></div>`).join('')}</div>
+      <button class="btn btn-secondary btn-sm" style="margin-top:14px">Supply a spec</button>
+    </div>`).join('')}</div>`;
+
+  const body = `
+  <div class="page-head">
+    <div class="row wrap" style="gap:12px">
+      <h2>Run #${run.id}</h2>
+      ${run.fail?`<span class="badge badge-error">${run.fail} failed</span>`:'<span class="badge badge-success">all passed</span>'}
+      <span class="crumb">${run.env} · ${run.branch} · ${run.when} · ${run.dur}</span>
+    </div>
+    <div class="row">
+      <button class="btn btn-secondary btn-sm">Export PDF / XLSX ${ref('FR-071')}</button>
+      <button class="btn btn-primary btn-sm">Re-run failed</button>
+    </div>
+  </div>
+
+  <div class="grid g5">${kpis.map(([v,l,c]) =>
+    `<div class="kpi"><div class="v" style="color:${c}">${v}</div><div class="l">${l}</div></div>`).join('')}</div>
+
+  <div class="tabs" style="margin:20px 0 14px">
+    <button class="tab ${reportTab==='failures'?'on':''}" data-tab="failures">Failures (${DB.bugs.length})</button>
+    <button class="tab ${reportTab==='matrix'?'on':''}" data-tab="matrix">Traceability ${ref('FR-050')}</button>
+    <button class="tab ${reportTab==='gaps'?'on':''}" data-tab="gaps">Coverage gaps (${gaps.length})</button>
+  </div>
+  <div class="col" style="gap:10px">${reportTab==='failures'?failures:reportTab==='matrix'?matrix:gapsView}</div>`;
+  return shell('runs',`Run #${run.id}`,`Orders Platform / ${run.env}`, body);
+}
+
+/* ============================================================
+   6 · REQUIREMENTS
+   ============================================================ */
+function vRequirements(){
+  const body = `
+  <div class="page-head">
+    <div><h2>Requirements</h2><p>Extracted from <b class="mono">BRD_OrdersPlatform_v3.2.pdf</b>. Every requirement keeps a link to its source paragraph ${ref('FR-014')}</p></div>
+    <div class="row"><button class="btn btn-secondary btn-sm">Re-parse source</button>
+      <button class="btn btn-primary btn-sm">Add requirement</button></div>
+  </div>
+  <div class="row wrap" style="margin-bottom:14px">
+    <button class="chip on">All (${DB.reqs.length})</button>
+    <button class="chip">High priority</button><button class="chip">Uncovered (2)</button>
+    <button class="chip">Failing (3)</button><button class="chip">Compliance</button>
+    <span class="grow"></span><input class="input" placeholder="Search requirements…" style="max-width:260px;height:36px">
+  </div>
+  <div class="col" style="gap:10px">
+    ${DB.reqs.map((r,i) => `<div class="acc ${i===0?'open':''}" data-acc>
+      <button class="acc-h" data-acc-h>
+        <span class="car">▶</span>
+        <span class="mono" style="font-size:12px;color:var(--accent);flex:none">${r.id}</span>
+        <span class="grow"><b style="font-size:14px">${esc(r.t)}</b>
+          <span class="crumb" style="display:block">${r.src} · ${r.type} · ${r.pri} priority</span></span>
+        <span class="row" style="flex:none;width:170px">${bar(r.cov)}<span class="num" style="width:36px;text-align:right;font-size:12px">${r.cov}%</span></span>
+        ${r.tests===0?'<span class="badge badge-warning">no tests</span>'
+          :r.fail?`<span class="badge badge-error">${r.fail} failed</span>`:'<span class="badge badge-success">verified</span>'}
+      </button>
+      <div class="acc-b" ${i===0?'':'hidden'}>
+        <div class="sep" style="margin-bottom:16px"></div>
+        <div class="grid g2" style="gap:20px">
+          <div>
+            <span class="eyebrow">Acceptance criteria ${ref('FR-013')}</span>
+            <div class="col" style="gap:8px;margin-top:10px">${r.crit.map((c,j) => `<div class="row" style="gap:9px;align-items:flex-start">
+              <span class="mono muted" style="font-size:11px;margin-top:2px">AC${j+1}</span>
+              <span class="sec" style="font-size:14px">${esc(c)}</span></div>`).join('')}</div>
+          </div>
+          <div>
+            <span class="eyebrow">Linked test cases</span>
+            <div class="col" style="gap:6px;margin-top:10px">
+              ${DB.cases.filter(c => c.req===r.id).map(c => `<div class="row" style="gap:9px;font-size:13px">
+                <span class="dot" style="background:${c.res==='pass'?'var(--success)':'var(--error)'}"></span>
+                <span class="mono" style="font-size:12px;color:var(--text-secondary)">${c.id}</span>
+                <span class="grow trunc">${esc(c.t)}</span>
+                <span class="tag">${c.tech}</span></div>`).join('') || '<div class="muted" style="font-size:13px">No cases generated yet — this requirement is a coverage gap.</div>'}
+            </div>
+            <div class="row" style="margin-top:14px">
+              <a class="btn btn-secondary btn-sm" href="#/testcases">Open in test cases</a>
+              <button class="btn btn-ghost btn-sm">View source paragraph</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`).join('')}
+  </div>`;
+  return shell('requirements','Requirements','Orders Platform / BRD v3.2', body);
+}
+
+/* ============================================================
+   7 · TEST CASES
+   ============================================================ */
+function vTestcases(){
+  const techs = [...new Set(DB.cases.map(c => c.tech))];
+  const body = `
+  <div class="page-head">
+    <div><h2>Test cases</h2><p>Every case is generated against a discovered endpoint and schema-validated before it can run ${ref('FR-035')}. Manual edits survive regeneration ${ref('FR-036')}</p></div>
+    <div class="row"><button class="btn btn-secondary btn-sm">Export</button>
+      <button class="btn btn-primary btn-sm">Regenerate</button></div>
+  </div>
+  <div class="row wrap" style="margin-bottom:14px">
+    <button class="chip on">All</button><button class="chip">Failed (4)</button>
+    ${techs.map(t => `<button class="chip">${t}</button>`).join('')}
+    <span class="grow"></span><input class="input" placeholder="Search cases…" style="max-width:240px;height:36px">
+  </div>
+  <div class="card" style="overflow:hidden">
+    <table class="tbl">
+      <thead><tr><th>Case</th><th>Requirement</th><th>Endpoint</th><th>Technique</th><th>Result</th><th>Latency</th><th></th></tr></thead>
+      <tbody>${DB.cases.map(c => `<tr>
+        <td><div class="mono" style="font-size:12px;color:var(--accent)">${c.id}</div>
+            <div class="trunc" style="max-width:320px">${esc(c.t)}</div></td>
+        <td class="num" style="font-size:12px">${c.req}</td>
+        <td class="num" style="font-size:12px">${esc(c.ep)}</td>
+        <td><span class="tag">${c.tech}</span></td>
+        <td>${c.res==='pass'?'<span class="badge badge-success">pass</span>':'<span class="badge badge-error">fail</span>'}</td>
+        <td class="num" style="color:${c.ms>1000?'var(--warning)':'var(--text-secondary)'}">${c.ms.toLocaleString()} ms</td>
+        <td><button class="btn btn-ghost btn-sm">Edit</button></td>
+      </tr>`).join('')}</tbody>
+    </table>
+  </div>
+  <p class="muted" style="font-size:12px;margin-top:12px">Showing 9 of 218 generated cases · sorted by requirement</p>`;
+  return shell('testcases','Test cases','Orders Platform / run #1042', body);
+}
+
+/* ============================================================
+   8 · API SURFACE
+   ============================================================ */
+function vApi(){
+  const body = `
+  <div class="page-head">
+    <div><h2>API surface</h2><p>What Traceo found in your system, how it found it, and how much of it the suite touches ${ref('FR-024')}</p></div>
+    <div class="row"><button class="btn btn-secondary btn-sm">Upload OpenAPI ${ref('FR-020')}</button>
+      <button class="btn btn-primary btn-sm">Re-discover</button></div>
+  </div>
+  <div class="grid g4" style="margin-bottom:14px">
+    ${[['8','Endpoints discovered'],['6','From traffic capture'],['1','From DOM crawl'],['1','Declared but never seen']]
+      .map(([v,l]) => `<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('')}
+  </div>
+  <div class="card" style="overflow:hidden">
+    <div class="card-head"><h3>Discovered endpoints</h3>
+      <span class="grow"></span><span class="crumb">discovery: traffic capture ${ref('FR-021')}</span></div>
+    <table class="tbl">
+      <thead><tr><th style="width:80px">Method</th><th>Path</th><th>Times seen</th><th>Tests</th><th style="width:190px">Coverage</th><th>Source</th></tr></thead>
+      <tbody>${DB.endpoints.map(e => `<tr>
+        <td><span class="badge" style="background:color-mix(in srgb, var(${methodColor(e.m)}) 16%, transparent);color:var(${methodColor(e.m)})">${e.m}</span></td>
+        <td class="num">${esc(e.p)}</td>
+        <td class="num">${e.seen}</td>
+        <td class="num">${e.tests}</td>
+        <td><div class="row">${bar(e.cov)}<span class="num" style="width:36px;text-align:right">${e.cov}%</span></div></td>
+        <td>${e.src==='not found'?'<span class="badge badge-warning">not found</span>':`<span class="badge badge-neutral">${e.src}</span>`}</td>
+      </tr>`).join('')}</tbody>
+    </table>
+  </div>
+  <div class="grid g2" style="margin-top:14px">
+    <div class="card card-pad">
+      <span class="eyebrow">DOM crawl findings ${ref('FR-022')}</span>
+      <div class="col" style="gap:9px;margin-top:10px">
+        ${[['checkout form','7 inputs · 4 client-side rules'],['customer signup','5 inputs · phone pattern 05\\d{8}'],['invoice view','RTL container detected — locale switch present']]
+          .map(([a,b]) => `<div class="row between"><b style="font-size:13px">${a}</b><span class="sec" style="font-size:12px">${b}</span></div>`).join('')}
+      </div>
+    </div>
+    <div class="card card-pad">
+      <span class="eyebrow">Unreachable requirements</span>
+      <p class="sec" style="font-size:13px;margin-top:8px">Two requirements have no endpoint in the discovered surface. Upload a spec for the audit and invoice-render services to close the gap.</p>
+      <div class="row wrap" style="margin-top:12px"><span class="tag">REQ-021</span><span class="tag">REQ-033</span></div>
+    </div>
+  </div>`;
+  return shell('api','API surface','Orders Platform / staging', body);
+}
+
+/* ============================================================
+   9 · INTEGRATIONS
+   ============================================================ */
+function vIntegrations(){
+  const cats = [...new Set(DB.integrations.map(i => i.cat))];
+  const body = `
+  <div class="page-head">
+    <div><h2>Integrations</h2><p>Traceo writes results where your team already works. Each integration maps to a feature reference.</p></div>
+    <button class="btn btn-secondary btn-sm">Request an integration</button>
+  </div>
+  ${cats.map(cat => `
+    <div style="margin-bottom:20px">
+      <span class="eyebrow">${cat}</span>
+      <div class="grid g3" style="margin-top:10px">
+        ${DB.integrations.filter(i => i.cat===cat).map(i => `<div class="card card-pad col" style="gap:10px">
+          <div class="row between">
+            <div class="row" style="gap:11px">
+              <div style="width:32px;height:32px;border-radius:9px;background:color-mix(in srgb, var(${i.c}) 18%, transparent);
+                   display:grid;place-items:center;color:var(${i.c});font-weight:700;font-size:13px">${i.n[0]}</div>
+              <b style="font-size:15px">${i.n}</b>
+            </div>
+            <span class="switch ${i.on?'on':''}"></span>
+          </div>
+          <p class="sec" style="font-size:13px">${i.d}</p>
+          <div class="row between" style="margin-top:auto">
+            ${ref(i.ref)}
+            ${i.on?'<span class="badge badge-success">connected</span>':'<span class="badge badge-neutral">not connected</span>'}
+          </div>
+        </div>`).join('')}
+      </div>
+    </div>`).join('')}
+
+  <div class="card">
+    <div class="card-head"><h3>Pipeline gate</h3>${ref('FR-061')}</div>
+    <div class="card-pad col" style="gap:12px">
+      <p class="sec" style="font-size:14px">Traceo fails the build when coverage drops or a P0 requirement regresses. Configure the thresholds that block a merge.</p>
+      <div class="grid g3">
+        <div class="field"><label>Minimum requirement coverage</label><input class="input mono" value="80%"></div>
+        <div class="field"><label>Maximum new failures</label><input class="input mono" value="0"></div>
+        <div class="field"><label>Block on</label><select class="input"><option>P0 regressions only</option><option>Any regression</option><option>Coverage drop only</option></select></div>
+      </div>
+      <pre class="codebox" style="white-space:pre-wrap;margin-top:4px">- name: Traceo gate
+  uses: traceo/action@v2
+  with:
+    project: orders-platform
+    environment: ci
+    min-coverage: 80
+    fail-on: p0-regression</pre>
+    </div>
+  </div>`;
+  return shell('integrations','Integrations','Workspace / connections', body);
+}
+
+/* ============================================================
+   10 · SETTINGS
+   ============================================================ */
+function vSettings(){
+  const roles = [['Owner','Billing, workspace and all projects'],['QA Lead','Create runs, edit cases, export reports'],
+    ['Engineer','Run suites, view reports, cannot edit requirements'],['Viewer','Read-only access to reports']];
+  const audit = [['21:14','Nouf A.','Started run #1042 on staging'],['20:52','CI bot','Updated pipeline gate threshold to 80%'],
+    ['18:30','Nouf A.','Edited TC-102 assertion'],['17:05','Sultan K.','Connected Confluence space ORD'],
+    ['09:02','Scheduler','Nightly run #1041 completed']];
+  const body = `
+  <div class="page-head">
+    <div><h2>Settings</h2><p>Workspace, deployment, access and retention.</p></div>
+    <button class="btn btn-primary btn-sm">Save changes</button>
+  </div>
+  <div class="grid g2" style="grid-template-columns:minmax(0,1.4fr) minmax(0,1fr)">
+    <div class="col" style="gap:14px">
+      <div class="card">
+        <div class="card-head"><h3>Workspace</h3></div>
+        <div class="card-pad grid g2">
+          <div class="field"><label>Workspace name</label><input class="input" value="Orders Platform"></div>
+          <div class="field"><label>Default environment</label><select class="input"><option>staging</option><option>ci</option><option>uat</option></select></div>
+          <div class="field"><label>Interface language</label><select class="input"><option>English</option><option>العربية</option></select></div>
+          <div class="field"><label>Report language</label><select class="input"><option>Bilingual (AR + EN)</option><option>English</option><option>العربية</option></select></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>Deployment</h3>${ref('FR-081')}</div>
+        <div class="card-pad col" style="gap:12px">
+          <div class="row between"><div><b style="font-size:14px">On-premise mode</b>
+            <div class="crumb">All services run inside your network. No outbound calls.</div></div><span class="switch on"></span></div>
+          <div class="sep"></div>
+          <div class="row between"><div><b style="font-size:14px">Air-gapped model runtime</b>
+            <div class="crumb">Requirement parsing runs on a local model.</div></div><span class="switch on"></span></div>
+          <div class="sep"></div>
+          <div class="row between"><div><b style="font-size:14px">Telemetry</b>
+            <div class="crumb">Anonymous usage metrics.</div></div><span class="switch"></span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>Access & roles</h3>${ref('FR-080')}</div>
+        <table class="tbl">
+          <thead><tr><th>Role</th><th>Permissions</th><th>Members</th></tr></thead>
+          <tbody>${roles.map(([r,p],i) => `<tr><td><b>${r}</b></td><td class="sec" style="font-size:13px">${p}</td>
+            <td class="num">${[1,3,8,4][i]}</td></tr>`).join('')}</tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>Scheduled runs</h3>${ref('FR-060')}</div>
+        <div class="card-pad grid g3">
+          <div class="field"><label>Frequency</label><select class="input"><option>Nightly</option><option>Hourly</option><option>Weekly</option></select></div>
+          <div class="field"><label>Time (AST)</label><input class="input mono" value="02:00"></div>
+          <div class="field"><label>Environment</label><select class="input"><option>staging</option><option>uat</option></select></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col" style="gap:14px">
+      <div class="card">
+        <div class="card-head"><h3>Secrets vault</h3>${ref('FR-083')}</div>
+        <div class="card-pad col" style="gap:10px">
+          ${[['ORDERS_API_TOKEN','rotated 4 days ago'],['PAYMENT_STUB_KEY','rotated 21 days ago'],['JIRA_PAT','rotated 2 days ago']]
+            .map(([k,v]) => `<div class="row between"><span class="mono" style="font-size:12px">${k}</span>
+              <span class="crumb">${v}</span></div>`).join('')}
+          <button class="btn btn-secondary btn-sm btn-block" style="margin-top:6px">Add secret</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Retention</h3>${ref('FR-082')}</div>
+        <div class="card-pad col" style="gap:12px">
+          <div class="field"><label>Run artefacts</label><select class="input"><option>90 days</option><option>180 days</option><option>1 year</option></select></div>
+          <div class="field"><label>Audit log</label><select class="input"><option>90 days (immutable)</option><option>1 year (immutable)</option></select></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Audit log</h3><span class="crumb">today</span></div>
+        <div class="col" style="gap:0">
+          ${audit.map(([t,w,a]) => `<div class="row" style="gap:12px;padding:11px 20px;border-bottom:1px solid var(--border)">
+            <span class="mono muted" style="font-size:11px;flex:none">${t}</span>
+            <div class="grow"><div style="font-size:13px">${a}</div><div class="crumb">${w}</div></div></div>`).join('')}
+        </div>
+      </div>
+    </div>
+  </div>`;
+  return shell('settings','Settings','Workspace / configuration', body);
+}
+
+/* ============================================================
+   11 · FEATURE REFERENCE
+   ============================================================ */
+let refFilter = 'All';
+function vReference(){
+  const groups = [...new Set(DB.features.map(f => f.g))];
+  const list = refFilter === 'All' ? DB.features : DB.features.filter(f => f.g === refFilter || f.pri === refFilter || f.st === refFilter);
+  const shown = [...new Set(list.map(f => f.g))];
+  const stats = [
+    [DB.features.length,'Features documented'],
+    [DB.features.filter(f => f.st==='Built').length,'Built'],
+    [DB.features.filter(f => f.st==='Planned').length,'Planned'],
+    [DB.features.filter(f => f.pri==='P0').length,'P0 — must ship'],
+    [groups.length,'Capability groups']
+  ];
+  const chips = ['All', ...groups, 'P0','P1','P2','Built','Planned'];
+  const body = `
+  <div class="page-head">
+    <div><h2>Feature reference</h2><p>Every capability in Traceo carries a stable reference ID. The same ID appears next to the feature in the interface, in the BRD, and in the acceptance criteria — so a conversation about <b class="mono">FR-035</b> means one thing everywhere.</p></div>
+    <div class="row"><button class="btn btn-secondary btn-sm">Export CSV</button>
+      <button class="btn btn-primary btn-sm">Download BRD</button></div>
+  </div>
+
+  <div class="grid g5">${stats.map(([v,l]) =>
+    `<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('')}</div>
+
+  <div class="row wrap" style="margin:20px 0 14px">
+    ${chips.map(c => `<button class="chip ${refFilter===c?'on':''}" data-ref-filter="${c}">${c}</button>`).join('')}
+  </div>
+
+  ${shown.map(g => `
+    <div style="margin-bottom:20px">
+      <div class="row" style="margin-bottom:10px">
+        <span class="eyebrow">${g}</span>
+        <span class="sep grow"></span>
+        <span class="crumb">${list.filter(f => f.g===g).length} features</span>
+      </div>
+      <div class="card" style="overflow:hidden">
+        <table class="tbl">
+          <thead><tr><th style="width:92px">Ref</th><th style="width:210px">Feature</th><th>Description</th>
+            <th style="width:130px">Screen</th><th style="width:70px">Priority</th><th style="width:90px">Status</th></tr></thead>
+          <tbody>${list.filter(f => f.g===g).map(f => `<tr>
+            <td><span class="ref-id">${f.id}</span></td>
+            <td><b style="font-size:14px">${esc(f.n)}</b></td>
+            <td class="sec" style="font-size:13px">${esc(f.d)}</td>
+            <td><span class="tag">${f.s}</span></td>
+            <td><span class="badge ${f.pri==='P0'?'badge-error':f.pri==='P1'?'badge-warning':'badge-neutral'}">${f.pri}</span></td>
+            <td>${f.st==='Built'?'<span class="badge badge-success">Built</span>':'<span class="badge badge-info">Planned</span>'}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>`).join('')}
+
+  ${list.length===0?'<div class="empty">No features match this filter.</div>':''}`;
+  return shell('reference','Feature reference','Docs / FR catalogue', body);
+}
+
+/* ============================================================
+   ROUTER
+   ============================================================ */
+function render(){
+  const hash = location.hash.replace(/^#\/?/, '') || 'overview';
+  const parts = hash.split('/');
+  const app = document.getElementById('app');
+  let html;
+  switch(parts[0]){
+    case 'dashboard':    html = vDashboard(); break;
+    case 'runs':         html = parts[1] ? vReport(parts[1]) : vRuns(); break;
+    case 'new':          html = vNewRun(); break;
+    case 'requirements': html = vRequirements(); break;
+    case 'testcases':    html = vTestcases(); break;
+    case 'api':          html = vApi(); break;
+    case 'integrations': html = vIntegrations(); break;
+    case 'settings':     html = vSettings(); break;
+    case 'reference':    html = vReference(); break;
+    default:             html = vOverview();
+  }
+  app.innerHTML = html;
+  window.scrollTo(0,0);
+}
+
+document.addEventListener('click', e => {
+  const accH = e.target.closest('[data-acc-h]');
+  if (accH){
+    const acc = accH.closest('[data-acc]');
+    const open = acc.classList.toggle('open');
+    const b = acc.querySelector('.acc-b');
+    if (b) b.hidden = !open;
+    return;
+  }
+  const tab = e.target.closest('[data-tab]');
+  if (tab){ reportTab = tab.dataset.tab; render(); return; }
+
+  const rf = e.target.closest('[data-ref-filter]');
+  if (rf){ refFilter = rf.dataset.refFilter; render(); return; }
+
+  const sw = e.target.closest('.switch');
+  if (sw){ sw.classList.toggle('on'); return; }
+
+  const chk = e.target.closest('.check');
+  if (chk){ chk.classList.toggle('on'); return; }
+
+  const chip = e.target.closest('.chip');
+  if (chip && !chip.dataset.refFilter){
+    const sibs = chip.parentElement.querySelectorAll('.chip');
+    sibs.forEach(c => c.classList.remove('on'));
+    chip.classList.add('on');
+  }
+});
+
+window.addEventListener('hashchange', render);
+render();
+
+</script>
+</body>
+</html>

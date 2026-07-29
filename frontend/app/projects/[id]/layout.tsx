@@ -30,7 +30,16 @@ const NAV_GROUPS: { ar: string; en: string; items: { seg: string; ar: string; en
   {
     ar: "الإعداد",
     en: "Configure",
-    items: [{ seg: "environments", ar: "البيئات", en: "Environments" }],
+    items: [
+      { seg: "environments", ar: "البيئات", en: "Environments" },
+      { seg: "settings", ar: "الإعدادات", en: "Settings" },
+      { seg: "integrations", ar: "التكاملات", en: "Integrations" },
+    ],
+  },
+  {
+    ar: "المرجع",
+    en: "Reference",
+    items: [{ seg: "reference", ar: "المرجع", en: "Reference" }],
   },
 ];
 
