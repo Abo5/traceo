@@ -1,0 +1,13 @@
+.git
+.DS_Store
+.venv/
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+*.db
+*.db-journal
+storage/
+tests/
+Dockerfile
+# migrations/ and alembic.ini are deliberately NOT ignored — the container runs
+# `alembic upgrade head` before serving.

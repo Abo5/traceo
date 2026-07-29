@@ -1,0 +1,155 @@
+# Traceo CI — every release gate must pass before merge.
+#
+# The gates are not ordinary unit tests: grounding (no fabricated endpoint may be
+# persisted) and tenant isolation (no cross-organisation read) are the two
+# guarantees the product is sold on, so a red build here blocks the merge.
+#
+# The image builds matter because Docker is not available on every developer
+# machine — CI is where the deployment artefacts are actually proven to build.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-python:
+    name: Backend · Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+      - name: Release gates (grounding · isolation · flow · integrations · config)
+        working-directory: backend
+        run: python -m pytest tests -q
+
+  backend-go:
+    name: Backend · Go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: backend-go/go.sum
+      - name: Formatting
+        working-directory: backend-go
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt needed on:"; echo "$unformatted"; exit 1
+          fi
+      - name: Vet
+        working-directory: backend-go
+        run: go vet ./...
+      - name: Release gates
+        working-directory: backend-go
+        # -race catches the execution engine's worker-pool and the scheduler
+        # goroutine racing on shared run state.
+        run: go test -race ./...
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Typecheck
+        working-directory: frontend
+        run: npx tsc --noEmit
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+  images:
+    name: Deployment images (FR-081)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build Go backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend-go
+          push: false
+          load: true
+          tags: traceo/backend-go:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build Python backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          load: true
+          tags: traceo/backend-python:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: false
+          load: true
+          tags: traceo/frontend:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Go image serves /health
+        run: |
+          docker run -d --name traceo-go -p 8000:8000 traceo/backend-go:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health; then echo; ok=1; break; fi
+            sleep 1
+          done
+          docker logs traceo-go
+          docker rm -f traceo-go
+          [ "$ok" = "1" ] || { echo "::error::Go image did not become healthy"; exit 1; }
+
+      - name: Python image migrates a fresh database and serves
+        # Proves docker-entrypoint.sh: db_adopt + `alembic upgrade head` must run
+        # to completion before uvicorn binds, on a volume with no database yet.
+        run: |
+          docker run -d --name traceo-py -p 8001:8000 traceo/backend-python:ci
+          for i in $(seq 1 45); do
+            if curl -fsS http://localhost:8001/health; then echo; ok=1; break; fi
+            sleep 1
+          done
+          docker logs traceo-py
+          docker logs traceo-py 2>&1 | grep -q "schema up to date" \
+            || { echo "::error::entrypoint did not report a migrated schema"; exit 1; }
+          docker rm -f traceo-py
+          [ "$ok" = "1" ] || { echo "::error::Python image did not become healthy"; exit 1; }
+
+      - name: Production mode refuses the published dev secret
+        # The guard is the reason an operator cannot accidentally ship a
+        # forgeable signing key; if it ever stops refusing, that is a critical
+        # regression and must fail the build.
+        run: |
+          if docker run --rm -e TRACEO_ENV=production traceo/backend-go:ci; then
+            echo "::error::backend started in production mode without TRACEO_SECRET_KEY"
+            exit 1
+          fi
+          echo "refused as expected"

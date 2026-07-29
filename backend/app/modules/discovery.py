@@ -305,6 +305,10 @@ def _endpoint_dict(e: Endpoint) -> dict:
         "summary": e.summary, "parameters": e.parameters,
         "request_schema": e.request_schema, "response_schemas": e.response_schemas,
         "security": e.security, "tags": e.tags, "excluded": e.excluded,
+        # Which discovery mode found this endpoint, and how many times traffic
+        # capture observed it — shown on the coverage map (FR-024) once the
+        # non-spec modes land (FR-021/022/023).
+        "source": e.source, "observed_count": e.observed_count,
     }
 
 
