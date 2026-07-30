@@ -62,6 +62,91 @@ def normalize_digits(text: str) -> str:
     return text.translate(_DIGIT_TRANS)
 
 
+# --- Hijri dates (FR-012 AC4) -------------------------------------------------------
+#
+# Saudi requirement documents date obligations in Hijri: "يبدأ سريان الغرامة في
+# 1447/03/15هـ". A test that has to assert a deadline needs a Gregorian equivalent, and
+# a reviewer needs to see the original untouched — so recognised Hijri dates are
+# ANNOTATED in place rather than replaced.
+#
+# The conversion is the tabular (civil) Islamic calendar. It can differ from the
+# Umm al-Qura calendar by a day around month boundaries because Umm al-Qura follows
+# observation; that limitation is stated on the annotation itself, so nobody mistakes
+# an approximation for an authority.
+
+_HIJRI_MONTHS = {
+    "محرم": 1, "المحرم": 1, "صفر": 2, "ربيع الأول": 3, "ربيع اول": 3,
+    "ربيع الآخر": 4, "ربيع الثاني": 4, "جمادى الأولى": 5, "جمادى الاولى": 5,
+    "جمادى الآخرة": 6, "جمادى الثانية": 6, "رجب": 7, "شعبان": 8, "رمضان": 9,
+    "شوال": 10, "ذو القعدة": 11, "ذي القعدة": 11, "ذو الحجة": 12, "ذي الحجة": 12,
+}
+
+# 1447/03/15 هـ  ·  15-03-1447هـ  ·  1447-03-15 هجري
+_HIJRI_NUMERIC_RE = re.compile(
+    r"(?<![\d/-])(\d{1,4})[/\-](\d{1,2})[/\-](\d{1,4})\s*(هـ|هجري|هجرية|ھ)(?![\w])")
+# 15 رمضان 1446 هـ
+_HIJRI_NAMED_RE = re.compile(
+    r"(?<!\d)(\d{1,2})\s+(" + "|".join(sorted(_HIJRI_MONTHS, key=len, reverse=True)) +
+    r")\s+(\d{3,4})\s*(?:هـ|هجري|هجرية|ھ)?(?!\d)")
+
+# Julian day of 1 Muharram 1 AH. The civil epoch (Friday 16 July 622 CE) tracks
+# Umm al-Qura more closely than the astronomical one for the years this product sees.
+_HIJRI_EPOCH_JD = 1948440
+
+
+def hijri_to_gregorian(year: int, month: int, day: int) -> tuple[int, int, int] | None:
+    """Tabular Islamic calendar -> (y, m, d) Gregorian. None when out of range."""
+    if not (1 <= month <= 12 and 1 <= day <= 30 and 1 <= year <= 2000):
+        return None
+    jd = (day + ((month - 1) * 29) + (month // 2)
+          + ((month - 1) // 2 if month % 2 == 0 else 0)
+          + (year - 1) * 354 + (3 + 11 * year) // 30 + _HIJRI_EPOCH_JD - 1)
+    # Julian day -> Gregorian (Fliegel–Van Flandern)
+    l = jd + 68569
+    n = (4 * l) // 146097
+    l -= (146097 * n + 3) // 4
+    i = (4000 * (l + 1)) // 1461001
+    l = l - (1461 * i) // 4 + 31
+    j = (80 * l) // 2447
+    d = l - (2447 * j) // 80
+    l = j // 11
+    m = j + 2 - 12 * l
+    y = 100 * (n - 49) + i + l
+    return y, m, d
+
+
+def annotate_hijri_dates(text: str) -> str:
+    """Append `(≈ YYYY-MM-DD م)` after each recognised Hijri date. Idempotent: a date
+    already carrying an annotation is skipped, so re-parsing a document does not
+    stack annotations and change its content hash."""
+    if not text:
+        return text
+
+    def _fmt(y: int, m: int, d: int) -> str:
+        return f"{y:04d}-{m:02d}-{d:02d}"
+
+    def _numeric(match: re.Match) -> str:
+        a, b, cc = int(match.group(1)), int(match.group(2)), int(match.group(3))
+        # Year first when the leading group is 3-4 digits, else day first.
+        year, month, day = (a, b, cc) if a > 31 else (cc, b, a)
+        converted = hijri_to_gregorian(year, month, day)
+        if not converted:
+            return match.group(0)
+        return f"{match.group(0)} (≈ {_fmt(*converted)} م)"
+
+    def _named(match: re.Match) -> str:
+        day, month_name, year = int(match.group(1)), match.group(2), int(match.group(3))
+        converted = hijri_to_gregorian(year, _HIJRI_MONTHS[month_name], day)
+        if not converted:
+            return match.group(0)
+        return f"{match.group(0)} (≈ {_fmt(*converted)} م)"
+
+    if "(≈" in text:
+        return text
+    text = _HIJRI_NUMERIC_RE.sub(_numeric, text)
+    return _HIJRI_NAMED_RE.sub(_named, text)
+
+
 # Requirement-ID openers: REQ-1 / FR-01 / BR_2 / NFR 3 / م-1 / numbered clauses "3.1.2"
 REQ_ID_LINE = re.compile(
     r"^\s*(?:"
@@ -361,7 +446,10 @@ def _run_ingest(job, document_id: str, project_id: str, org_id: str, actor_id: s
             db.commit()
             raise
 
-        pages = [(page_no, normalize_digits(text)) for page_no, text in pages]
+        # Arabic-Indic digits first, so a Hijri date written ١٤٤٧/٠٣/١٥ is recognised
+        # by the same patterns as its ASCII form (FR-012 AC2/AC4).
+        pages = [(page_no, annotate_hijri_dates(normalize_digits(text)))
+                 for page_no, text in pages]
         segments = segment_pages(pages)
         job.message = f"Segmented document into {len(segments)} candidate requirements"
 

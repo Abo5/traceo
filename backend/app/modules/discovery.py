@@ -226,6 +226,13 @@ def _collect_params(raw_params: list, fmt: str) -> tuple[list, dict | None]:
 
 
 def _response_schemas(op: dict, fmt: str) -> dict:
+    """Every DECLARED status becomes a key, whether or not it carries a body schema.
+
+    A `422 Validation error` with only a description is still a documented branch of
+    the endpoint, and FR-024 AC2 measures branches exercised — dropping the schema-less
+    ones would quietly report an endpoint as fully covered while its rejection path
+    was never asserted. A branch with no schema is stored as `{}`, which validates
+    anything, so it adds a coverage obligation without inventing an assertion."""
     out = {}
     for status, robj in (op.get("responses") or {}).items():
         if not isinstance(robj, dict):
@@ -235,8 +242,7 @@ def _response_schemas(op: dict, fmt: str) -> dict:
             schema = schema if isinstance(schema, dict) else None
         else:
             schema = _json_media_schema(robj)
-        if schema is not None:
-            out[str(status)] = schema
+        out[str(status)] = schema if schema is not None else {}
     return out
 
 
@@ -451,15 +457,23 @@ async def import_api_spec(project_id: str, request: Request,
 
 def _endpoint_coverage(db: Session, project_id: str, org_id: str,
                        endpoints: list[Endpoint]) -> dict[str, dict]:
-    """FR-024 endpoint coverage map, computed at read time from approved-case steps:
-    test_count, covered_params_pct (100 when the endpoint has no params), last_outcome."""
-    out = {e.id: {"test_count": 0, "covered_params_pct": 100.0, "last_outcome": None}
+    """FR-024 endpoint coverage map, computed at read time from approved-case steps.
+
+    AC2: coverage is what the suite EXERCISES, not how many requests it sends — so it
+    is the mean of two things, parameters referenced and declared response branches
+    asserted. Ten cases that all assert 200 leave a documented 404 branch uncovered,
+    and this number says so."""
+    out = {e.id: {"test_count": 0, "covered_params_pct": 100.0,
+                  "covered_responses_pct": 100.0, "coverage_pct": 100.0,
+                  "covered_statuses": [], "uncovered_statuses": [],
+                  "last_outcome": None}
            for e in endpoints}
     ep_ids = list(out)
     if not ep_ids:
         return out
 
-    step_rows = (db.query(TestStep.endpoint_id, TestStep.test_case_id, TestStep.request)
+    step_rows = (db.query(TestStep.endpoint_id, TestStep.test_case_id, TestStep.request,
+                          TestStep.assertions)
                  .join(TestCase, TestCase.id == TestStep.test_case_id)
                  .filter(TestStep.endpoint_id.in_(ep_ids),
                          TestCase.state == "approved",
@@ -469,20 +483,50 @@ def _endpoint_coverage(db: Session, project_id: str, org_id: str,
     cases_by_ep: dict[str, set] = {}
     eps_by_case: dict[str, set] = {}
     referenced: dict[str, set] = {}
-    for ep_id, case_id, request in step_rows:
+    asserted_status: dict[str, set] = {}
+    for ep_id, case_id, request, assertions in step_rows:
         cases_by_ep.setdefault(ep_id, set()).add(case_id)
         eps_by_case.setdefault(case_id, set()).add(ep_id)
         req = request or {}
         names = set(req.get("params") or {}) | set(req.get("headers") or {})
+        body = req.get("body")
+        if isinstance(body, dict):
+            names |= set(body)
         referenced.setdefault(ep_id, set()).update(str(n).lower() for n in names)
+
+        statuses = asserted_status.setdefault(ep_id, set())
+        for assertion in assertions or []:
+            if not isinstance(assertion, dict) or assertion.get("type") != "status_code":
+                continue
+            expected = assertion.get("expected")
+            if isinstance(expected, int):
+                statuses.add(expected)
+            for alternative in assertion.get("expected_any") or []:
+                if isinstance(alternative, int):
+                    statuses.add(alternative)
 
     for e in endpoints:
         out[e.id]["test_count"] = len(cases_by_ep.get(e.id, ()))
+
         params = [p for p in (e.parameters or []) if isinstance(p, dict) and p.get("name")]
         if params:
             refs = referenced.get(e.id, set())
             covered = sum(1 for p in params if str(p["name"]).lower() in refs)
             out[e.id]["covered_params_pct"] = round(covered / len(params) * 100, 1)
+
+        declared = sorted({int(code) for code in (e.response_schemas or {})
+                           if str(code).isdigit()})
+        if declared:
+            hit = asserted_status.get(e.id, set())
+            covered_codes = [c for c in declared if c in hit]
+            out[e.id]["covered_responses_pct"] = round(
+                len(covered_codes) / len(declared) * 100, 1)
+            out[e.id]["covered_statuses"] = covered_codes
+            out[e.id]["uncovered_statuses"] = [c for c in declared if c not in hit]
+
+        # A single headline number, so the map can sort by "least covered".
+        out[e.id]["coverage_pct"] = round(
+            (out[e.id]["covered_params_pct"] + out[e.id]["covered_responses_pct"]) / 2, 1)
 
     case_ids = list(eps_by_case)
     if case_ids:

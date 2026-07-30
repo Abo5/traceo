@@ -63,6 +63,11 @@ from ..llm import get_provider               # get_provider().complete_json(prom
 ### modules/ingestion.py  (Requirements Parser, TRD §4.1)
 - POST /projects/{id}/documents (multipart file: pdf/docx/xlsx/md/txt, ≤50MB) -> 202 {job_id, document_id}
   An encrypted or image-only PDF is rejected by name — OCR is out of scope (SRS §4.1).
+  Hijri dates are ANNOTATED in place, never replaced: `1447/03/15هـ (≈ 2025-09-08 م)`.
+  The conversion is the tabular Islamic calendar and can differ from Umm al-Qura by a
+  day at a month boundary; the annotation is marked `≈` for exactly that reason.
+  `annotate_hijri_dates` is idempotent so re-parsing does not restack annotations and
+  spuriously re-version every requirement (FR-012 AC4).
 - POST /projects/{id}/requirements/paste {text, title?} -> 202 — the fallback the zero-requirements
   empty state offers (FR-010 AC4). Same pipeline, so re-pasting the same title diffs and re-versions.
   Pipeline: extract text (pymupdf for pdf, python-docx for docx, plain read otherwise; guard imports),
@@ -89,6 +94,11 @@ from ..llm import get_provider               # get_provider().complete_json(prom
 - GET /projects/{id}/endpoints ; PATCH /endpoints/{eid} {excluded: bool}
   Each endpoint also reports `discovery_source` (openapi|traffic|dom|postman), `times_seen`,
   `inferred`, `dom_fields` and `declared_never_seen` (FR-020 AC3).
+  COVERAGE (FR-024 AC2) is what the suite EXERCISES, not what it sends: `coverage_pct` is
+  the mean of `covered_params_pct` and `covered_responses_pct`, and `uncovered_statuses`
+  names the declared branches nothing asserts. Every declared status is a key of
+  `response_schemas` — a `422` documented without a body is stored as `{}` so it still
+  carries a coverage obligation while validating anything.
   A spec re-import replaces ONLY the openapi-sourced slice; endpoints another source contributed
   survive, and their observation counts survive even when the spec re-asserts ownership.
 
@@ -117,7 +127,12 @@ from ..llm import get_provider               # get_provider().complete_json(prom
     * EP: one invalid-class case per constrained input (FR-GEN-03)
     * BVA: min/min+1/max-1/max cases per bounded numeric/string-length input (FR-GEN-04) [standard+]
     * negative: missing required param, wrong type, unauthenticated on secured op, malformed body (FR-GEN-08)
-    * exhaustive adds enum sweeps + decision-table combos when 2+ constraints interact (FR-GEN-05)
+    * exhaustive adds enum sweeps + decision tables when 2+ constraints interact (FR-GEN-05).
+      An input with no derivable invalid value cannot vary, so its invalid half is
+      UNREACHABLE — excluded and disclosed, never generated (FR-032 AC2). Past
+      `DECISION_TABLE_MAX_COMBOS`, `pairwise_combinations()` produces an all-pairs
+      covering set (10 conditions: 12 cases instead of 1024) and every case it produces
+      says so in its description (FR-032 AC3).
   Every case: title, description, preconditions, steps[{order, endpoint_id, method, path, request{headers,params,body}, assertions, extractions}], type, priority, technique, generated=True, model, prompt_version, links to requirement (RequirementTestCase with requirement_version_at_link).
   Assertions format (list): {"type": "status_code", "expected": 200|422|...} | {"type": "json_field", "path": "a.b[0].c", "op": "eq|ne|gt|lt|contains|regex|exists|absent", "expected": ...} | {"type": "response_time_ms", "max": 2000} | {"type": "header", "name": "...", "op": "eq|contains", "expected": "..."} | {"type": "json_schema"} (validate against endpoint response schema).
   GROUNDING GATE (FR-GEN-06, BR-09 — hard gate): before persisting, validate every step against the
@@ -141,6 +156,9 @@ from ..llm import get_provider               # get_provider().complete_json(prom
 - POST /test-cases/{id}/reject {reason_code, reason_text} (approve_reject)
 - POST /test-cases/bulk {ids, action: approve|reject, reason_code?} (FR-REV-04)
 - POST /projects/{id}/test-cases (manual authoring, requirement_ids required — FR-REV-07, FR-GEN-02)
+  Steps are bound to the endpoint they target by (method, path) when no endpoint_id is
+  supplied, so a hand-written case counts in the endpoint coverage map like a generated
+  one (FR-036 AC4). A path outside the inventory stays unbound rather than being refused.
 - POST /test-cases/{id}/links {requirement_id} / DELETE .../links/{requirement_id} (FR-TRC-05)
 
 ### modules/execution.py  (Execution Engine, TRD §4.6)
@@ -179,7 +197,11 @@ from ..llm import get_provider               # get_provider().complete_json(prom
 - GET /runs/{id}/report -> JSON summary {run, counts, cases: [{test_case, outcome, duration_ms, failure_reason, requirements}]} (FR-RPT-01/02/03 defect view data)
 - GET /runs/{id}/report.html?lang=en|ar|both — self-contained printable HTML; serves as the PDF
   deliverable via browser print (FR-RPT-05, FR-071). A fixed page-stamp repeats the run identity.
-- GET /runs/{id}/compare/{other_id} -> {newly_failing: [...], newly_passing: [...]} (FR-RPT-06)
+- GET /runs/{id}/compare/{other_id} -> {newly_failing, newly_passing, unchanged,
+  coverage_delta, requirement_delta, endpoint_delta} (FR-RPT-06, FR-053).
+  The two deltas answer "what moved", not "did a number move": each entry carries
+  `previous_verdict`, `verdict` and a `direction` of regressed|recovered, sorted
+  regressions first.
 
 ### modules/automation.py  (FR-060 schedules · FR-061 CI gate)
 - GET /projects/{id}/gate (view) / PUT /projects/{id}/gate {enabled, min_coverage_pct,
@@ -233,6 +255,10 @@ stays usable across upgrades.
   regression comparison, CI token auth + scoping + revocation, schedule firing and deferral.
 - test_integrations.py — Jira create-then-update dedupe, Xray sync, Slack alert levels, Confluence
   import + stale re-import, secrets never echoed, on-premise egress refusal.
+- test_techniques.py — Hijri conversion against published Umm al-Qura dates (±1 day, the
+  stated limit) and annotation idempotence; pairwise completeness and determinism for
+  2..10 conditions plus the disclosure text; coverage counting response branches rather
+  than requests; run comparison naming the requirement AND endpoint that moved.
 - test_lifecycle.py — fixtures created/torn down against a real in-process HTTP server, including
   teardown when every case fails and the orphan report when a DELETE fails; per-run concurrency
   bounds; manual edits surviving regeneration; XLSX + paste ingestion; bilingual export sheets;

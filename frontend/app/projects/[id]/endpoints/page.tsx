@@ -144,6 +144,8 @@ export default function EndpointsPage() {
           importCapture: "استيراد",
           baseUrl: "الرابط الأساسي (اختياري)",
           invalidJson: "المحتوى ليس JSON صالحاً",
+          uncovered: "فروع غير مغطّاة",
+          coverageHint: "متوسط المعاملات المستخدمة وفروع الاستجابة المُتحقَّق منها — لا عدد الطلبات",
         }
       : {
           title: "Endpoints",
@@ -191,6 +193,8 @@ export default function EndpointsPage() {
           importCapture: "Import",
           baseUrl: "Base URL (optional)",
           invalidJson: "That is not valid JSON",
+          uncovered: "Uncovered branches",
+          coverageHint: "Mean of parameters exercised and declared response branches asserted — not request count",
         };
 
   const [tab, setTab] = useState<"url" | "file" | "traffic" | "postman" | "dom">("url");
@@ -457,7 +461,12 @@ export default function EndpointsPage() {
               const params = Array.isArray(ep.parameters) ? ep.parameters.length : 0;
               const secured = Array.isArray(ep.security) ? ep.security.length > 0 : !!ep.security;
               const testCount = ep.test_count ?? 0;
-              const covPct = ep.covered_params_pct ?? null;
+              // FR-024 AC2 — the headline number blends parameters and response
+              // branches; falling back keeps older payloads rendering.
+              const covPct = ep.coverage_pct ?? ep.covered_params_pct ?? null;
+              const uncovered: number[] = Array.isArray(ep.uncovered_statuses)
+                ? ep.uncovered_statuses
+                : [];
               return (
                 <tr
                   key={ep.id}
@@ -511,11 +520,18 @@ export default function EndpointsPage() {
                     {covPct == null ? (
                       <span style={{ color: "var(--text-muted)" }}>—</span>
                     ) : (
-                      <div className="row" style={{ gap: 6, alignItems: "center" }}>
-                        <div style={{ width: 52 }}>
-                          <Progress pct={covPct} tone={covPct >= 80 ? "success" : covPct >= 40 ? "warning" : "error"} />
+                      <div title={L.coverageHint}>
+                        <div className="row" style={{ gap: 6, alignItems: "center" }}>
+                          <div style={{ width: 52 }}>
+                            <Progress pct={covPct} tone={covPct >= 80 ? "success" : covPct >= 40 ? "warning" : "error"} />
+                          </div>
+                          <M style={{ fontSize: 10.5, color: "var(--text-secondary)" }}>{covPct}%</M>
                         </div>
-                        <M style={{ fontSize: 10.5, color: "var(--text-secondary)" }}>{covPct}%</M>
+                        {uncovered.length > 0 && (
+                          <M style={{ fontSize: 10, color: "var(--warning)" }}>
+                            {L.uncovered}: {uncovered.join(", ")}
+                          </M>
+                        )}
                       </div>
                     )}
                   </td>

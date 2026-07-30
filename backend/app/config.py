@@ -28,6 +28,10 @@ class Settings:
 
     RUN_CONCURRENCY_MAX = int(os.getenv("TRACEO_RUN_CONCURRENCY_MAX", "32"))  # FR-040 AC2
 
+    # FR-032 AC3: beyond this many decision-table combinations, pairwise reduction is
+    # applied and disclosed on every case it produces.
+    DECISION_TABLE_MAX_COMBOS = int(os.getenv("TRACEO_DECISION_TABLE_MAX_COMBOS", "8"))
+
     CORS_ORIGINS = os.getenv("TRACEO_CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
 
     SEED_DEMO = os.getenv("TRACEO_SEED_DEMO", "1") == "1"

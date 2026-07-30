@@ -143,6 +143,11 @@ export default function RunReportPage() {
           perfEndpoint: "الواجهة",
           perfCalls: "النداءات",
           coverageDelta: "فرق التغطية",
+          reqDelta: "متطلبات تغيّر حكمها",
+          epDelta: "واجهات تغيّر حكمها",
+          regressed: "انحدر",
+          recovered: "تعافى",
+          noMove: "لم يتغيّر حكم أي متطلب أو واجهة",
           unchanged: "دون تغيير",
           pts: "نقطة",
         }
@@ -215,6 +220,11 @@ export default function RunReportPage() {
           perfEndpoint: "Endpoint",
           perfCalls: "Calls",
           coverageDelta: "Coverage delta",
+          reqDelta: "Requirements that moved",
+          epDelta: "Endpoints that moved",
+          regressed: "regressed",
+          recovered: "recovered",
+          noMove: "No requirement or endpoint changed verdict",
           unchanged: "Unchanged",
           pts: "pts",
         };
@@ -405,6 +415,9 @@ export default function RunReportPage() {
   const compareRuns = projRuns.filter((r) => r.id !== runId);
   const newlyFailing: any[] = Array.isArray(compare?.newly_failing) ? compare.newly_failing : [];
   const newlyPassing: any[] = Array.isArray(compare?.newly_passing) ? compare.newly_passing : [];
+  // FR-053 AC3 — a pass-rate delta says a number moved; these say what moved.
+  const reqDelta: any[] = Array.isArray(compare?.requirement_delta) ? compare.requirement_delta : [];
+  const epDelta: any[] = Array.isArray(compare?.endpoint_delta) ? compare.endpoint_delta : [];
 
   function compareItemLabel(x: any): string {
     if (typeof x === "string") return x;
@@ -956,6 +969,54 @@ export default function RunReportPage() {
                       {newlyPassing.map((x, i) => (
                         <div key={i} style={{ fontSize: 13, color: "var(--text)" }}>
                           {compareItemLabel(x)}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {compare && !compareLoading && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
+                    {L.reqDelta} ({reqDelta.length})
+                  </div>
+                  {reqDelta.length === 0 ? (
+                    <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{L.noDiff}</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {reqDelta.map((r: any) => (
+                        <div key={r.requirement_id} className="row" style={{ gap: 8, alignItems: "center" }}>
+                          <RefChip id={r.external_id || r.requirement_id.slice(0, 8)} />
+                          <Badge tone={r.direction === "regressed" ? "error" : "success"}>
+                            {r.direction === "regressed" ? L.regressed : L.recovered}
+                          </Badge>
+                          <M style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                            {r.previous_verdict} → {r.verdict}
+                          </M>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
+                    {L.epDelta} ({epDelta.length})
+                  </div>
+                  {epDelta.length === 0 ? (
+                    <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{L.noDiff}</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {epDelta.map((e: any) => (
+                        <div key={e.endpoint_id} className="row" style={{ gap: 8, alignItems: "center" }}>
+                          <M style={{ fontWeight: 700 }}>{e.method}</M>
+                          <M>{e.path}</M>
+                          <Badge tone={e.direction === "regressed" ? "error" : "success"}>
+                            {e.direction === "regressed" ? L.regressed : L.recovered}
+                          </Badge>
                         </div>
                       ))}
                     </div>

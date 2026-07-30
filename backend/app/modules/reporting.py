@@ -16,8 +16,8 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import get_project_scoped, require
-from ..models import (Environment, Project, Requirement, RequirementTestCase,
-                      Run, TestCase, TestResult, User)
+from ..models import (Endpoint, Environment, Project, Requirement,
+                      RequirementTestCase, Run, TestCase, TestResult, TestStep, User)
 from .traceability import (GAP_NEXT_ACTIONS, derive_severity, gap_reason,
                            is_high_priority, run_display_id)
 
@@ -709,4 +709,78 @@ def compare_runs(run_id: str, other_id: str, user: User = Depends(require("view"
     return {"run_id": run.id, "other_id": other.id,
             "newly_failing": newly_failing, "newly_passing": newly_passing,
             "unchanged": unchanged,
-            "coverage_delta": round(_coverage(run) - _coverage(other), 1)}
+            "coverage_delta": round(_coverage(run) - _coverage(other), 1),
+            # FR-053 AC3 — a pass-rate delta says a number moved; these say WHAT moved.
+            "requirement_delta": _requirement_delta(db, current, baseline),
+            "endpoint_delta": _endpoint_delta(db, current, baseline)}
+
+
+def _verdict_of(outcomes: list[str]) -> str:
+    """A requirement or endpoint is only 'passing' when nothing under it failed."""
+    if not outcomes:
+        return "not_run"
+    if any(o in ("failed", "errored") for o in outcomes):
+        return "failing"
+    return "passing"
+
+
+def _requirement_delta(db: Session, current: dict, baseline: dict) -> list[dict]:
+    """Per-requirement verdict change between two runs."""
+    case_ids = list(set(current) | set(baseline))
+    if not case_ids:
+        return []
+    rows = (db.query(RequirementTestCase, Requirement)
+            .join(Requirement, Requirement.id == RequirementTestCase.requirement_id)
+            .filter(RequirementTestCase.test_case_id.in_(case_ids)).all())
+
+    by_req: dict[str, dict] = {}
+    for link, req in rows:
+        entry = by_req.setdefault(req.id, {
+            "requirement_id": req.id, "external_id": req.external_id,
+            "priority": req.priority, "_now": [], "_then": []})
+        if link.test_case_id in current:
+            entry["_now"].append(current[link.test_case_id].outcome)
+        if link.test_case_id in baseline:
+            entry["_then"].append(baseline[link.test_case_id].outcome)
+
+    delta = []
+    for entry in by_req.values():
+        now, then = _verdict_of(entry.pop("_now")), _verdict_of(entry.pop("_then"))
+        if now == then:
+            continue
+        entry.update({"verdict": now, "previous_verdict": then,
+                      "direction": "regressed" if now == "failing"
+                      else "recovered" if then == "failing" else "changed"})
+        delta.append(entry)
+    return sorted(delta, key=lambda d: (d["direction"] != "regressed",
+                                        d["external_id"] or d["requirement_id"]))
+
+
+def _endpoint_delta(db: Session, current: dict, baseline: dict) -> list[dict]:
+    """Per-endpoint verdict change — the same question asked of the API surface."""
+    case_ids = list(set(current) | set(baseline))
+    if not case_ids:
+        return []
+    rows = (db.query(TestStep.test_case_id, Endpoint.id, Endpoint.method, Endpoint.path)
+            .join(Endpoint, Endpoint.id == TestStep.endpoint_id)
+            .filter(TestStep.test_case_id.in_(case_ids)).all())
+
+    by_ep: dict[str, dict] = {}
+    for case_id, ep_id, method, path in rows:
+        entry = by_ep.setdefault(ep_id, {"endpoint_id": ep_id, "method": method,
+                                         "path": path, "_now": [], "_then": []})
+        if case_id in current:
+            entry["_now"].append(current[case_id].outcome)
+        if case_id in baseline:
+            entry["_then"].append(baseline[case_id].outcome)
+
+    delta = []
+    for entry in by_ep.values():
+        now, then = _verdict_of(entry.pop("_now")), _verdict_of(entry.pop("_then"))
+        if now == then:
+            continue
+        entry.update({"verdict": now, "previous_verdict": then,
+                      "direction": "regressed" if now == "failing"
+                      else "recovered" if then == "failing" else "changed"})
+        delta.append(entry)
+    return sorted(delta, key=lambda d: (d["direction"] != "regressed", d["path"], d["method"]))

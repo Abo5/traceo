@@ -80,6 +80,7 @@ cd backend && .venv/bin/python -m pytest
 | `TRACEO_SCHEDULER` | `1` | خيط الجدولة داخل العملية (FR-060) |
 | `TRACEO_RUN_CONCURRENCY_MAX` | `32` | سقف التزامن لكل تشغيل (FR-040) |
 | `TRACEO_AUDIT_RETENTION_DAYS` | `90` | مدة الاحتفاظ الافتراضية بسجل التدقيق (FR-082) |
+| `TRACEO_DECISION_TABLE_MAX_COMBOS` | `8` | سقف تركيبات جدول القرار — بعده يُطبَّق التخفيض الثنائي (pairwise) ويُفصح عنه (FR-032) |
 
 كامل الإعدادات في `backend/app/config.py` — كلها قابلة للتهيئة عبر متغيرات البيئة (NFR-POR-03).
 

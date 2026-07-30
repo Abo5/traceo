@@ -16,7 +16,8 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import audit, get_project_scoped, require
-from ..models import Requirement, RequirementTestCase, TestCase, TestStep, User
+from ..models import (Endpoint, Requirement, RequirementTestCase, TestCase,
+                      TestStep, User)
 
 router = APIRouter()
 
@@ -118,6 +119,28 @@ def _clean_steps(raw_steps: list) -> list[dict]:
         cleaned.append({"order": i, "endpoint_id": s.get("endpoint_id"),
                         "method": method, "path": path, "request": request,
                         "assertions": assertions, "extractions": extractions})
+    return cleaned
+
+
+def _resolve_endpoint_ids(db: Session, project_id: str, org_id: str,
+                          cleaned: list[dict]) -> list[dict]:
+    """Bind each hand-authored step to the endpoint it targets.
+
+    A person writing a case types a method and a path, not an internal endpoint id —
+    so without this the case would never appear in the endpoint coverage map, and
+    FR-036 AC4 ("a case added by hand participates like a generated one") would be
+    false in the one place it is measurable. A step whose path is not in the
+    inventory keeps `endpoint_id = None`: manual authoring is deliberately allowed
+    to go beyond the discovered surface, it just does not count as coverage of it."""
+    needs = [s for s in cleaned if not s.get("endpoint_id")]
+    if not needs:
+        return cleaned
+    inventory = {(e.method.upper(), e.path): e.id for e in db.query(Endpoint).filter(
+        Endpoint.project_id == project_id, Endpoint.organisation_id == org_id).all()}
+    if not inventory:
+        return cleaned
+    for step in needs:
+        step["endpoint_id"] = inventory.get((step["method"].upper(), step["path"]))
     return cleaned
 
 
@@ -244,7 +267,8 @@ def update_test_case(case_id: str, body: CasePatch,
         tc.priority = str(body.priority)
         changed.append("priority")
     if body.steps is not None:
-        _replace_steps(tc, _clean_steps(body.steps))
+        _replace_steps(tc, _resolve_endpoint_ids(
+            db, tc.project_id, tc.organisation_id, _clean_steps(body.steps)))
         changed.append("steps")
 
     if changed:
@@ -375,7 +399,8 @@ def create_test_case(project_id: str, body: CaseCreate,
         model="", prompt_version="", technique="manual",
     )
     if body.steps is not None:
-        _replace_steps(tc, _clean_steps(body.steps))
+        _replace_steps(tc, _resolve_endpoint_ids(
+            db, project_id, user.organisation_id, _clean_steps(body.steps)))
     db.add(tc)
     db.flush()
     for rid in wanted:

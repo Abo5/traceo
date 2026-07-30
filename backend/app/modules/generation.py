@@ -30,7 +30,6 @@ router = APIRouter()
 DEPTHS = ("smoke", "standard", "exhaustive")
 MIN_MAP_CONFIDENCE = 0.3
 MAX_CANDIDATES = 10
-MAX_COMBOS = 8          # decision-table cap
 MAX_ENUM_SWEEP = 8
 
 # FR-034 localisation probes (Arabic round-trip) + FR-033 injection-shaped strings
@@ -468,6 +467,51 @@ def grounding_validate(case: dict, endpoints_by_key: dict) -> list[str]:
 # Case builders (deterministic, techniques per ISTQB)
 # ---------------------------------------------------------------------------
 
+def pairwise_combinations(n: int) -> list[tuple[bool, ...]]:
+    """All-pairs covering set over `n` binary conditions (valid / invalid).
+
+    Exhaustive coverage costs 2^n; every pair of conditions appearing together in
+    both states costs a few dozen tests at most, and catches the interaction defects
+    that motivate a decision table in the first place. Greedy set-cover, fully
+    deterministic — the same endpoint always yields the same suite (FR-032 AC3).
+    """
+    if n < 2:
+        return [(True,) * n]
+
+    # A pair is (i, j, value_i, value_j) with i < j.
+    uncovered = {(i, j, vi, vj)
+                 for i in range(n) for j in range(i + 1, n)
+                 for vi in (True, False) for vj in (True, False)}
+
+    def key(a: int, b: int, va: bool, vb: bool):
+        return (a, b, va, vb) if a < b else (b, a, vb, va)
+
+    tests: list[tuple[bool, ...]] = []
+    while uncovered:
+        # Seed with the lowest uncovered pair so the result never depends on set order.
+        i, j, vi, vj = min(uncovered)
+        combo: list[bool | None] = [None] * n
+        combo[i], combo[j] = vi, vj
+
+        for k in range(n):
+            if combo[k] is not None:
+                continue
+            best_value, best_gain = True, -1
+            for value in (True, False):
+                gain = sum(1 for m in range(n)
+                           if m != k and combo[m] is not None
+                           and key(m, k, combo[m], value) in uncovered)
+                if gain > best_gain:
+                    best_value, best_gain = value, gain
+            combo[k] = best_value
+
+        final = tuple(bool(v) for v in combo)
+        for a in range(n):
+            for b in range(a + 1, n):
+                uncovered.discard((a, b, final[a], final[b]))
+        tests.append(final)
+    return tests
+
 def _apply_input(inp: dict, value, params: dict, body):
     p2 = dict(params)
     b2 = copy.deepcopy(body)
@@ -666,26 +710,44 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str) -> list[dict]:
                 cases.append(mk(f"EP: enum sweep {inp['name']}={val} — {suffix}", "ep", "positive",
                                 _step(ep, p2, headers, b2, _positive_assertions(ep))))
 
-    # -- Decision tables: valid/invalid combinations when ≥2 constrained inputs interact
-    if len(inputs) >= 2:
-        combos = itertools.islice(itertools.product([True, False], repeat=len(inputs)), MAX_COMBOS)
+    # -- Decision tables (FR-032): valid/invalid combinations across interacting inputs.
+    #    An input with no invalid representative cannot vary, so its "invalid" half of
+    #    the table is UNREACHABLE — it is reported on the cases, never generated (AC2).
+    variable_inputs = [i for i in inputs if _invalid_for(i["schema"])[0] is not None]
+    fixed_inputs = [i for i in inputs if _invalid_for(i["schema"])[0] is None]
+
+    if len(variable_inputs) >= 2:
+        total = 2 ** len(variable_inputs)
+        ceiling = max(2, settings.DECISION_TABLE_MAX_COMBOS)
+        if total <= ceiling:
+            combos = list(itertools.product([True, False], repeat=len(variable_inputs)))
+            disclosure = ""
+        else:
+            # AC3: pairwise reduction, and the reviewer is told it happened.
+            combos = pairwise_combinations(len(variable_inputs))
+            disclosure = (f" Pairwise reduction applied: {len(combos)} of {total} "
+                          f"combinations, covering every pair of conditions.")
+        if fixed_inputs:
+            disclosure += (" Held constant (no invalid value derivable): "
+                           + ", ".join(i["name"] for i in fixed_inputs) + ".")
+
         for ci, combo in enumerate(combos):
             p2, b2, labels = dict(params), copy.deepcopy(body), []
-            for inp, ok in zip(inputs, combo):
+            for inp, ok in zip(variable_inputs, combo):
                 if ok:
                     labels.append(f"{inp['name']}=valid")
-                else:
-                    bad, _c = _invalid_for(inp["schema"])
-                    if bad is None:
-                        labels.append(f"{inp['name']}=valid")
-                        continue
-                    p2, b2 = _apply_input(inp, bad, p2, b2)
-                    labels.append(f"{inp['name']}=invalid")
+                    continue
+                bad, _c = _invalid_for(inp["schema"])
+                p2, b2 = _apply_input(inp, bad, p2, b2)
+                labels.append(f"{inp['name']}=invalid")
             all_valid = all(combo)
             assertions = _positive_assertions(ep) if all_valid else [_error_assertion(ep)]
-            cases.append(mk(f"Decision table {ci + 1}: {', '.join(labels)} — {suffix}",
-                            "decision_table", "positive" if all_valid else "negative",
-                            _step(ep, p2, headers, b2, assertions)))
+            case = mk(f"Decision table {ci + 1}: {', '.join(labels)} — {suffix}",
+                      "decision_table", "positive" if all_valid else "negative",
+                      _step(ep, p2, headers, b2, assertions))
+            if disclosure:
+                case["description"] = case["description"] + disclosure
+            cases.append(case)
     return cases
 
 
