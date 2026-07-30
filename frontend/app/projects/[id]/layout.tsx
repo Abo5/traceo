@@ -30,7 +30,10 @@ const NAV_GROUPS: { ar: string; en: string; items: { seg: string; ar: string; en
   {
     ar: "الإعداد",
     en: "Configure",
-    items: [{ seg: "environments", ar: "البيئات", en: "Environments" }],
+    items: [
+      { seg: "environments", ar: "البيئات", en: "Environments" },
+      { seg: "integrations", ar: "التكاملات", en: "Integrations" },
+    ],
   },
 ];
 

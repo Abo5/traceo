@@ -1,6 +1,6 @@
 # Feature Reference — Traceo
 
-**Version 2.0 · 26 July 2026 · 37 features · 8 capability groups**
+**Version 2.0 · 37 features · 8 capability groups · all 37 shipped**
 
 Every capability in Traceo carries a stable reference ID. The same ID appears beside the feature in the interface, in the BRD, in the SRS and in acceptance criteria — so a conversation about **FR-035** means one thing everywhere.
 
@@ -12,7 +12,7 @@ Every capability in Traceo carries a stable reference ID. The same ID appears be
 | **Group** | Which layer of the pipeline the feature belongs to. |
 | **Screen** | Where the feature is exercised in the interface. |
 | **Priority** | P0 must ship · P1 should ship · P2 may ship |
-| **Status** | Built (in the 2.0 design) · Planned (deferred) |
+| **Status** | Shipped (implemented and tested in the codebase) |
 | **Satisfies** | The business requirement in `01-BRD-Traceo.md` this feature serves. |
 | **Depends on** | Features that must exist for this one to function. |
 
@@ -33,43 +33,43 @@ Every capability in Traceo carries a stable reference ID. The same ID appears be
 
 | Ref | Feature | Group | Screen | Pri | Status |
 |---|---|---|---|---|---|
-| FR-010 | Requirements ingestion | Parser | New run | P0 | Built |
-| FR-011 | Confluence import | Parser | Integrations | P1 | Built |
-| FR-012 | Arabic requirement parsing | Parser | Requirements | P0 | Built |
-| FR-013 | Acceptance-criteria extraction | Parser | Requirements | P0 | Built |
-| FR-014 | Source traceback | Parser | Requirements | P1 | Built |
-| FR-020 | OpenAPI discovery | Discovery | API surface | P0 | Built |
-| FR-021 | Traffic-capture discovery | Discovery | API surface | P0 | Built |
-| FR-022 | DOM crawl | Discovery | API surface | P1 | Built |
-| FR-023 | Postman import | Discovery | New run | P2 | Built |
-| FR-024 | Endpoint coverage map | Discovery | API surface | P1 | Built |
-| FR-030 | Boundary value analysis | Generator | New run | P0 | Built |
-| FR-031 | Equivalence partitioning | Generator | New run | P0 | Built |
-| FR-032 | Decision tables | Generator | New run | P1 | Built |
-| FR-033 | Negative & auth cases | Generator | New run | P0 | Built |
-| FR-034 | RTL / localisation checks | Generator | New run | P1 | Built |
-| FR-035 | Grounded generation | Generator | Test cases | P0 | Built |
-| FR-036 | Test case library | Generator | Test cases | P1 | Built |
-| FR-040 | HTTP execution engine | Execution | Report | P0 | Built |
-| FR-041 | Schema assertions | Execution | Report | P0 | Built |
-| FR-042 | Business-rule assertions | Execution | Report | P0 | Built |
-| FR-043 | Test data lifecycle | Execution | Report | P1 | Built |
-| FR-044 | Performance capture | Execution | Report | P2 | Planned |
-| FR-050 | Traceability matrix | Reporting | Report | P0 | Built |
-| FR-051 | Coverage gap detection | Reporting | Report | P0 | Built |
-| FR-052 | Reproducible bug reports | Reporting | Report | P0 | Built |
-| FR-053 | Run comparison | Reporting | Runs | P1 | Built |
-| FR-054 | Coverage trend | Reporting | Dashboard | P1 | Built |
-| FR-060 | Scheduled runs | Automation | Settings | P1 | Built |
-| FR-061 | CI/CD gate | Automation | Integrations | P0 | Built |
-| FR-062 | Regression watch | Automation | Dashboard | P1 | Built |
-| FR-070 | Jira / Xray export | Integrations | Integrations | P0 | Built |
-| FR-071 | PDF / XLSX report export | Integrations | Report | P1 | Built |
-| FR-072 | Slack notifications | Integrations | Integrations | P2 | Planned |
-| FR-080 | Role-based access | Platform | Settings | P1 | Built |
-| FR-081 | On-premise deployment | Platform | Settings | P0 | Built |
-| FR-082 | Audit log | Platform | Settings | P1 | Built |
-| FR-083 | Secrets vault | Platform | Settings | P0 | Built |
+| FR-010 | Requirements ingestion | Parser | New run | P0 | Shipped |
+| FR-011 | Confluence import | Parser | Integrations | P1 | Shipped |
+| FR-012 | Arabic requirement parsing | Parser | Requirements | P0 | Shipped |
+| FR-013 | Acceptance-criteria extraction | Parser | Requirements | P0 | Shipped |
+| FR-014 | Source traceback | Parser | Requirements | P1 | Shipped |
+| FR-020 | OpenAPI discovery | Discovery | API surface | P0 | Shipped |
+| FR-021 | Traffic-capture discovery | Discovery | API surface | P0 | Shipped |
+| FR-022 | DOM crawl | Discovery | API surface | P1 | Shipped |
+| FR-023 | Postman import | Discovery | New run | P2 | Shipped |
+| FR-024 | Endpoint coverage map | Discovery | API surface | P1 | Shipped |
+| FR-030 | Boundary value analysis | Generator | New run | P0 | Shipped |
+| FR-031 | Equivalence partitioning | Generator | New run | P0 | Shipped |
+| FR-032 | Decision tables | Generator | New run | P1 | Shipped |
+| FR-033 | Negative & auth cases | Generator | New run | P0 | Shipped |
+| FR-034 | RTL / localisation checks | Generator | New run | P1 | Shipped |
+| FR-035 | Grounded generation | Generator | Test cases | P0 | Shipped |
+| FR-036 | Test case library | Generator | Test cases | P1 | Shipped |
+| FR-040 | HTTP execution engine | Execution | Report | P0 | Shipped |
+| FR-041 | Schema assertions | Execution | Report | P0 | Shipped |
+| FR-042 | Business-rule assertions | Execution | Report | P0 | Shipped |
+| FR-043 | Test data lifecycle | Execution | Report | P1 | Shipped |
+| FR-044 | Performance capture | Execution | Report | P2 | Shipped |
+| FR-050 | Traceability matrix | Reporting | Report | P0 | Shipped |
+| FR-051 | Coverage gap detection | Reporting | Report | P0 | Shipped |
+| FR-052 | Reproducible bug reports | Reporting | Report | P0 | Shipped |
+| FR-053 | Run comparison | Reporting | Runs | P1 | Shipped |
+| FR-054 | Coverage trend | Reporting | Dashboard | P1 | Shipped |
+| FR-060 | Scheduled runs | Automation | Settings | P1 | Shipped |
+| FR-061 | CI/CD gate | Automation | Integrations | P0 | Shipped |
+| FR-062 | Regression watch | Automation | Dashboard | P1 | Shipped |
+| FR-070 | Jira / Xray export | Integrations | Integrations | P0 | Shipped |
+| FR-071 | PDF / XLSX report export | Integrations | Report | P1 | Shipped |
+| FR-072 | Slack notifications | Integrations | Integrations | P2 | Shipped |
+| FR-080 | Role-based access | Platform | Settings | P1 | Shipped |
+| FR-081 | On-premise deployment | Platform | Settings | P0 | Shipped |
+| FR-082 | Audit log | Platform | Settings | P1 | Shipped |
+| FR-083 | Secrets vault | Platform | Settings | P0 | Shipped |
 
 ---
 
@@ -77,7 +77,7 @@ Every capability in Traceo carries a stable reference ID. The same ID appears be
 
 ## FR-010 · Requirements ingestion
 
-**Screen:** New run · **Priority:** P0 · **Status:** Built · **Satisfies:** BR-01
+**Screen:** New run · **Priority:** P0 · **Status:** Shipped · **Satisfies:** BR-01
 
 Upload a PDF, DOCX, Markdown or XLSX requirement document. Traceo extracts each requirement with an ID, description, type and priority.
 
@@ -92,7 +92,7 @@ Upload a PDF, DOCX, Markdown or XLSX requirement document. Traceo extracts each 
 
 ## FR-011 · Confluence import
 
-**Screen:** Integrations · **Priority:** P1 · **Status:** Built · **Satisfies:** BR-01, BR-09
+**Screen:** Integrations · **Priority:** P1 · **Status:** Shipped · **Satisfies:** BR-01, BR-09
 
 Pull requirement pages from a Confluence space instead of uploading a file.
 
@@ -106,7 +106,7 @@ Pull requirement pages from a Confluence space instead of uploading a file.
 
 ## FR-012 · Arabic requirement parsing
 
-**Screen:** Requirements · **Priority:** P0 · **Status:** Built · **Satisfies:** BR-01, BR-05
+**Screen:** Requirements · **Priority:** P0 · **Status:** Shipped · **Satisfies:** BR-01, BR-05
 
 Arabic RFPs and BRDs are parsed with the same fidelity as English, including RTL text and mixed-direction content.
 
@@ -121,7 +121,7 @@ Arabic RFPs and BRDs are parsed with the same fidelity as English, including RTL
 
 ## FR-013 · Acceptance-criteria extraction
 
-**Screen:** Requirements · **Priority:** P0 · **Status:** Built · **Satisfies:** BR-01, BR-03
+**Screen:** Requirements · **Priority:** P0 · **Status:** Shipped · **Satisfies:** BR-01, BR-03
 
 Each requirement is decomposed into atomic, testable acceptance criteria.
 
@@ -136,7 +136,7 @@ Each requirement is decomposed into atomic, testable acceptance criteria.
 
 ## FR-014 · Source traceback
 
-**Screen:** Requirements · **Priority:** P1 · **Status:** Built · **Satisfies:** BR-01
+**Screen:** Requirements · **Priority:** P1 · **Status:** Shipped · **Satisfies:** BR-01
 
 Every requirement keeps a link back to its source document and paragraph.
 
@@ -154,7 +154,7 @@ Every requirement keeps a link back to its source document and paragraph.
 
 ## FR-020 · OpenAPI discovery
 
-**Screen:** API surface · **Priority:** P0 · **Status:** Built · **Satisfies:** BR-02
+**Screen:** API surface · **Priority:** P0 · **Status:** Shipped · **Satisfies:** BR-02
 
 When a specification exists, endpoints, parameters and schemas are read directly.
 
@@ -168,7 +168,7 @@ When a specification exists, endpoints, parameters and schemas are read directly
 
 ## FR-021 · Traffic-capture discovery
 
-**Screen:** API surface · **Priority:** P0 · **Status:** Built · **Satisfies:** BR-02
+**Screen:** API surface · **Priority:** P0 · **Status:** Shipped · **Satisfies:** BR-02
 
 A headless browser drives the application; the endpoint map is built from observed network traffic.
 
@@ -183,7 +183,7 @@ A headless browser drives the application; the endpoint map is built from observ
 
 ## FR-022 · DOM crawl
 
-**Screen:** API surface · **Priority:** P1 · **Status:** Built · **Satisfies:** BR-02
+**Screen:** API surface · **Priority:** P1 · **Status:** Shipped · **Satisfies:** BR-02
 
 Forms, inputs, buttons and client-side validation rules are collected from the rendered DOM.
 
@@ -197,7 +197,7 @@ Forms, inputs, buttons and client-side validation rules are collected from the r
 
 ## FR-023 · Postman import
 
-**Screen:** New run · **Priority:** P2 · **Status:** Built · **Satisfies:** BR-02
+**Screen:** New run · **Priority:** P2 · **Status:** Shipped · **Satisfies:** BR-02
 
 An existing collection can be imported and treated as the discovered surface.
 
@@ -211,7 +211,7 @@ An existing collection can be imported and treated as the discovered surface.
 
 ## FR-024 · Endpoint coverage map
 
-**Screen:** API surface · **Priority:** P1 · **Status:** Built · **Satisfies:** BR-02, BR-03
+**Screen:** API surface · **Priority:** P1 · **Status:** Shipped · **Satisfies:** BR-02, BR-03
 
 Every discovered endpoint shows how many tests hit it and how much of it is covered.
 
@@ -229,7 +229,7 @@ Every discovered endpoint shows how many tests hit it and how much of it is cove
 
 ## FR-030 · Boundary value analysis
 
-**Screen:** New run · **Priority:** P0 · **Status:** Built · **Satisfies:** BR-02
+**Screen:** New run · **Priority:** P0 · **Status:** Shipped · **Satisfies:** BR-02
 
 Minimum, maximum and one past each edge are generated for every bounded field.
 
@@ -243,7 +243,7 @@ Minimum, maximum and one past each edge are generated for every bounded field.
 
 ## FR-031 · Equivalence partitioning
 
-**Screen:** New run · **Priority:** P0 · **Status:** Built · **Satisfies:** BR-02
+**Screen:** New run · **Priority:** P0 · **Status:** Shipped · **Satisfies:** BR-02
 
 One representative case per valid and invalid class.
 
@@ -257,7 +257,7 @@ One representative case per valid and invalid class.
 
 ## FR-032 · Decision tables
 
-**Screen:** New run · **Priority:** P1 · **Status:** Built · **Satisfies:** BR-02
+**Screen:** New run · **Priority:** P1 · **Status:** Shipped · **Satisfies:** BR-02
 
 State and rule combinations are enumerated for business-rule requirements.
 
@@ -271,7 +271,7 @@ State and rule combinations are enumerated for business-rule requirements.
 
 ## FR-033 · Negative & auth cases
 
-**Screen:** New run · **Priority:** P0 · **Status:** Built · **Satisfies:** BR-02
+**Screen:** New run · **Priority:** P0 · **Status:** Shipped · **Satisfies:** BR-02
 
 Missing token, wrong role, malformed body and injection-shaped payloads.
 
@@ -285,7 +285,7 @@ Missing token, wrong role, malformed body and injection-shaped payloads.
 
 ## FR-034 · RTL / localisation checks
 
-**Screen:** New run · **Priority:** P1 · **Status:** Built · **Satisfies:** BR-05
+**Screen:** New run · **Priority:** P1 · **Status:** Shipped · **Satisfies:** BR-05
 
 Arabic payloads, encoding round-trips and right-to-left rendering assertions.
 
@@ -300,7 +300,7 @@ Arabic payloads, encoding round-trips and right-to-left rendering assertions.
 
 ## FR-035 · Grounded generation
 
-**Screen:** Test cases · **Priority:** P0 · **Status:** Built · **Satisfies:** BR-02, BR-10
+**Screen:** Test cases · **Priority:** P0 · **Status:** Shipped · **Satisfies:** BR-02, BR-10
 
 Generation is restricted to discovered endpoints; every case is schema-validated before it can run.
 
@@ -315,7 +315,7 @@ Generation is restricted to discovered endpoints; every case is schema-validated
 
 ## FR-036 · Test case library
 
-**Screen:** Test cases · **Priority:** P1 · **Status:** Built · **Satisfies:** BR-10
+**Screen:** Test cases · **Priority:** P1 · **Status:** Shipped · **Satisfies:** BR-10
 
 All generated cases are browsable, filterable and editable; manual edits survive regeneration.
 
@@ -334,7 +334,7 @@ All generated cases are browsable, filterable and editable; manual edits survive
 
 ## FR-040 · HTTP execution engine
 
-**Screen:** Report · **Priority:** P0 · **Status:** Built · **Satisfies:** BR-04
+**Screen:** Report · **Priority:** P0 · **Status:** Shipped · **Satisfies:** BR-04
 
 Isolated container per run, configurable concurrency, session reuse after one authentication.
 
@@ -349,7 +349,7 @@ Isolated container per run, configurable concurrency, session reuse after one au
 
 ## FR-041 · Schema assertions
 
-**Screen:** Report · **Priority:** P0 · **Status:** Built · **Satisfies:** BR-04
+**Screen:** Report · **Priority:** P0 · **Status:** Shipped · **Satisfies:** BR-04
 
 The response body is validated against the discovered or declared schema.
 
@@ -363,7 +363,7 @@ The response body is validated against the discovered or declared schema.
 
 ## FR-042 · Business-rule assertions
 
-**Screen:** Report · **Priority:** P0 · **Status:** Built · **Satisfies:** BR-04, BR-03
+**Screen:** Report · **Priority:** P0 · **Status:** Shipped · **Satisfies:** BR-04, BR-03
 
 Assertions derived from acceptance criteria, not just status codes.
 
@@ -377,7 +377,7 @@ Assertions derived from acceptance criteria, not just status codes.
 
 ## FR-043 · Test data lifecycle
 
-**Screen:** Report · **Priority:** P1 · **Status:** Built · **Satisfies:** BR-04
+**Screen:** Report · **Priority:** P1 · **Status:** Shipped · **Satisfies:** BR-04
 
 Fixtures are created before the suite and torn down after, per run.
 
@@ -391,7 +391,7 @@ Fixtures are created before the suite and torn down after, per run.
 
 ## FR-044 · Performance capture
 
-**Screen:** Report · **Priority:** P2 · **Status:** Planned · **Satisfies:** —
+**Screen:** Report · **Priority:** P2 · **Status:** Shipped · **Satisfies:** BR-04
 
 Latency recorded per case; p95 reported per endpoint.
 
@@ -409,7 +409,7 @@ Latency recorded per case; p95 reported per endpoint.
 
 ## FR-050 · Traceability matrix
 
-**Screen:** Report · **Priority:** P0 · **Status:** Built · **Satisfies:** BR-03
+**Screen:** Report · **Priority:** P0 · **Status:** Shipped · **Satisfies:** BR-03
 
 Requirement → test cases → verdict, always current, exportable.
 
@@ -424,7 +424,7 @@ Requirement → test cases → verdict, always current, exportable.
 
 ## FR-051 · Coverage gap detection
 
-**Screen:** Report · **Priority:** P0 · **Status:** Built · **Satisfies:** BR-03
+**Screen:** Report · **Priority:** P0 · **Status:** Shipped · **Satisfies:** BR-03
 
 Requirements with zero tests are surfaced with a reason.
 
@@ -439,7 +439,7 @@ Requirements with zero tests are surfaced with a reason.
 
 ## FR-052 · Reproducible bug reports
 
-**Screen:** Report · **Priority:** P0 · **Status:** Built · **Satisfies:** BR-04
+**Screen:** Report · **Priority:** P0 · **Status:** Shipped · **Satisfies:** BR-04
 
 Steps, request log, response body and diff — enough for a developer to reproduce without asking.
 
@@ -454,7 +454,7 @@ Steps, request log, response body and diff — enough for a developer to reprodu
 
 ## FR-053 · Run comparison
 
-**Screen:** Runs · **Priority:** P1 · **Status:** Built · **Satisfies:** BR-06
+**Screen:** Runs · **Priority:** P1 · **Status:** Shipped · **Satisfies:** BR-06
 
 Diff two runs: new failures, fixed failures, coverage delta.
 
@@ -468,7 +468,7 @@ Diff two runs: new failures, fixed failures, coverage delta.
 
 ## FR-054 · Coverage trend
 
-**Screen:** Dashboard · **Priority:** P1 · **Status:** Built · **Satisfies:** BR-06
+**Screen:** Dashboard · **Priority:** P1 · **Status:** Shipped · **Satisfies:** BR-06
 
 Requirement coverage over time, per project and per branch.
 
@@ -486,7 +486,7 @@ Requirement coverage over time, per project and per branch.
 
 ## FR-060 · Scheduled runs
 
-**Screen:** Settings · **Priority:** P1 · **Status:** Built · **Satisfies:** BR-06
+**Screen:** Settings · **Priority:** P1 · **Status:** Shipped · **Satisfies:** BR-06
 
 Cron-style scheduling per environment.
 
@@ -500,7 +500,7 @@ Cron-style scheduling per environment.
 
 ## FR-061 · CI/CD gate
 
-**Screen:** Integrations · **Priority:** P0 · **Status:** Built · **Satisfies:** BR-06
+**Screen:** Integrations · **Priority:** P0 · **Status:** Shipped · **Satisfies:** BR-06
 
 Fail the pipeline when coverage drops or a P0 requirement regresses.
 
@@ -515,7 +515,7 @@ Fail the pipeline when coverage drops or a P0 requirement regresses.
 
 ## FR-062 · Regression watch
 
-**Screen:** Dashboard · **Priority:** P1 · **Status:** Built · **Satisfies:** BR-06
+**Screen:** Dashboard · **Priority:** P1 · **Status:** Shipped · **Satisfies:** BR-06
 
 Alert when a previously passing requirement starts failing.
 
@@ -533,7 +533,7 @@ Alert when a previously passing requirement starts failing.
 
 ## FR-070 · Jira / Xray export
 
-**Screen:** Integrations · **Priority:** P0 · **Status:** Built · **Satisfies:** BR-09
+**Screen:** Integrations · **Priority:** P0 · **Status:** Shipped · **Satisfies:** BR-09
 
 Push failures as issues and sync executions to Xray test runs.
 
@@ -548,7 +548,7 @@ Push failures as issues and sync executions to Xray test runs.
 
 ## FR-071 · PDF / XLSX report export
 
-**Screen:** Report · **Priority:** P1 · **Status:** Built · **Satisfies:** BR-03, BR-09
+**Screen:** Report · **Priority:** P1 · **Status:** Shipped · **Satisfies:** BR-03, BR-09
 
 A client-ready traceability report in one action.
 
@@ -563,7 +563,7 @@ A client-ready traceability report in one action.
 
 ## FR-072 · Slack notifications
 
-**Screen:** Integrations · **Priority:** P2 · **Status:** Planned · **Satisfies:** —
+**Screen:** Integrations · **Priority:** P2 · **Status:** Shipped · **Satisfies:** BR-09
 
 Run summaries and failure alerts to a channel.
 
@@ -581,7 +581,7 @@ Run summaries and failure alerts to a channel.
 
 ## FR-080 · Role-based access
 
-**Screen:** Settings · **Priority:** P1 · **Status:** Built · **Satisfies:** BR-08
+**Screen:** Settings · **Priority:** P1 · **Status:** Shipped · **Satisfies:** BR-08
 
 Owner, QA lead, engineer and viewer roles.
 
@@ -596,7 +596,7 @@ Owner, QA lead, engineer and viewer roles.
 
 ## FR-081 · On-premise deployment
 
-**Screen:** Settings · **Priority:** P0 · **Status:** Built · **Satisfies:** BR-07
+**Screen:** Settings · **Priority:** P0 · **Status:** Shipped · **Satisfies:** BR-07
 
 The full stack runs inside the customer network; no data leaves the Kingdom.
 
@@ -611,7 +611,7 @@ The full stack runs inside the customer network; no data leaves the Kingdom.
 
 ## FR-082 · Audit log
 
-**Screen:** Settings · **Priority:** P1 · **Status:** Built · **Satisfies:** BR-08
+**Screen:** Settings · **Priority:** P1 · **Status:** Shipped · **Satisfies:** BR-08
 
 Every configuration change and run is logged and immutable.
 
@@ -626,7 +626,7 @@ Every configuration change and run is logged and immutable.
 
 ## FR-083 · Secrets vault
 
-**Screen:** Settings · **Priority:** P0 · **Status:** Built · **Satisfies:** BR-07, BR-08
+**Screen:** Settings · **Priority:** P0 · **Status:** Shipped · **Satisfies:** BR-07, BR-08
 
 Credentials for the system under test are encrypted at rest and never logged.
 

@@ -34,5 +34,18 @@ BR-03  (business requirement)
 
 - **37** features documented across **8** capability groups
 - **19** P0 · **13** P1 · **5** P2
-- **35** built in the 2.0 design · **2** planned
+- **37** shipped — implemented in the codebase and covered by the test suite
 - **10** business requirements · **11** screens · **8** user flows
+
+## Implementation status
+
+Every FR in this set is implemented. Two notes on how a capability is delivered rather
+than whether it is:
+
+- **FR-021 / FR-022** — the endpoint surface is built from a HAR capture and DOM form
+  descriptors, which a proxy, browser devtools or Traceo's own Playwright driver can
+  produce. The driver is an optional dependency so an air-gapped install still gets
+  traffic-based discovery by importing a capture.
+- **FR-071** — the PDF deliverable is a self-contained printable HTML report (print to
+  PDF); XLSX is generated natively. Both are bilingual and carry the run identity on
+  every page.

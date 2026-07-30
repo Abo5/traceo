@@ -13,6 +13,7 @@ import {
   Mono,
   PageHeader,
   RefChip,
+  Select,
   SeverityBadge,
   StatCard,
   StatusDot,
@@ -41,7 +42,12 @@ type Dashboard = {
     passed?: number;
     failed?: number;
     errored?: number;
+    branch?: string;
+    dropped?: boolean;
+    delta?: number | null;
   }[];
+  branches?: string[];
+  drop_threshold?: number;
   regression_watch?: {
     test_case_id: string;
     title: string;
@@ -92,6 +98,8 @@ export default function ProjectDashboardPage() {
         criticalOf: "حرجة",
         medianDur: "وسيط مدة التشغيل",
         trendTitle: "اتجاه التغطية",
+        allBranches: "كل الفروع",
+        coverageDrop: "انخفاض تغطية يتجاوز ",
         regTitle: "مراقبة الانحدار",
         regEmpty: "لا انحدارات — كل ما نجح سابقاً ما زال ينجح",
         gapsTitle: "فجوات التغطية",
@@ -148,6 +156,8 @@ export default function ProjectDashboardPage() {
         criticalOf: "critical",
         medianDur: "Median run duration",
         trendTitle: "Coverage trend",
+        allBranches: "All branches",
+        coverageDrop: "Coverage drop beyond ",
         regTitle: "Regression watch",
         regEmpty: "No regressions — everything that passed still passes",
         gapsTitle: "Coverage gaps",
@@ -193,12 +203,14 @@ export default function ProjectDashboardPage() {
   const [dash, setDash] = useState<Dashboard | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [branch, setBranch] = useState("");
 
   async function load() {
     setLoading(true);
     setError(null);
     try {
-      setDash(await api<Dashboard>(`/projects/${id}/dashboard`));
+      const qs = branch ? `?branch=${encodeURIComponent(branch)}` : "";
+      setDash(await api<Dashboard>(`/projects/${id}/dashboard${qs}`));
     } catch (e: any) {
       setError(e?.message || String(e));
     } finally {
@@ -209,7 +221,7 @@ export default function ProjectDashboardPage() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, branch]);
 
   const base = `/projects/${id}`;
   const totalCases = dash
@@ -279,10 +291,39 @@ export default function ProjectDashboardPage() {
           <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 16 }}>
             <Card
               title={L.trendTitle}
-              action={<RefChip id="FR-054" />}
+              action={
+                <div className="row" style={{ gap: 8, alignItems: "center" }}>
+                  {(dash?.branches?.length ?? 0) > 0 && (
+                    <Select
+                      value={branch}
+                      onChange={(e) => setBranch(e.target.value)}
+                      style={{ height: 30, fontSize: 12, minWidth: 120 }}
+                    >
+                      <option value="">{L.allBranches}</option>
+                      {(dash?.branches ?? []).map((b) => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
+                    </Select>
+                  )}
+                  <RefChip id="FR-054" />
+                </div>
+              }
             >
               {trend.length > 0 ? (
-                <TrendBars data={trend} height={130} />
+                <>
+                  <TrendBars data={trend} height={130} />
+                  {trend.some((t) => t.dropped) && (
+                    <div style={{ marginTop: 8, fontSize: 12, color: "var(--warning)" }}>
+                      ⚠ {L.coverageDrop}
+                      {(dash?.drop_threshold ?? 5)}%
+                      {" — "}
+                      {trend
+                        .filter((t) => t.dropped)
+                        .map((t) => `#${t.display_id ?? ""} (${t.delta}%)`)
+                        .join(", ")}
+                    </div>
+                  )}
+                </>
               ) : (
                 <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{L.noRuns}</div>
               )}

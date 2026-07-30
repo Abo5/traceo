@@ -116,6 +116,22 @@ export default function RunReportPage() {
           sevCritical: "حرج",
           sevMajor: "كبير",
           sevMinor: "طفيف",
+          gate: "بوابة التسليم",
+          gatePassed: "اجتازت البوابة",
+          gateFailed: "أخفقت البوابة",
+          gateCoverage: "تغطية المتطلبات",
+          gateNewFailures: "إخفاقات جديدة",
+          gateExit: "رمز الخروج",
+          fixtures: "بيانات الاختبار",
+          fxCreated: "أُنشئت",
+          fxRemoved: "أُزيلت",
+          fxOrphans: "تعذّرت إزالتها",
+          exportJira: "تصدير إلى Jira",
+          exporting: "جارٍ التصدير…",
+          exported: "صُدِّر",
+          noJira: "لا يوجد تكامل Jira مهيّأ لهذا المشروع",
+          branch: "الفرع",
+          source: "المصدر",
           perf: "الأداء",
           perfEndpoint: "الواجهة",
           perfCalls: "النداءات",
@@ -165,6 +181,22 @@ export default function RunReportPage() {
           sevCritical: "Critical",
           sevMajor: "Major",
           sevMinor: "Minor",
+          gate: "Delivery gate",
+          gatePassed: "Gate passed",
+          gateFailed: "Gate failed",
+          gateCoverage: "Requirement coverage",
+          gateNewFailures: "New failures",
+          gateExit: "Exit code",
+          fixtures: "Test data",
+          fxCreated: "Created",
+          fxRemoved: "Removed",
+          fxOrphans: "Could not be removed",
+          exportJira: "Export to Jira",
+          exporting: "Exporting…",
+          exported: "Exported",
+          noJira: "No Jira integration configured for this project",
+          branch: "Branch",
+          source: "Source",
           perf: "Performance",
           perfEndpoint: "Endpoint",
           perfCalls: "Calls",
@@ -193,6 +225,11 @@ export default function RunReportPage() {
   const [compareLoading, setCompareLoading] = useState(false);
   const [compareError, setCompareError] = useState<string | null>(null);
 
+  const [gate, setGate] = useState<any | null>(null);
+  const [jira, setJira] = useState<any | null>(null);
+  const [exports, setExports] = useState<Record<string, any>>({});
+  const [exporting, setExporting] = useState<string | null>(null);
+
   function load() {
     setLoading(true);
     setError(null);
@@ -200,14 +237,39 @@ export default function RunReportPage() {
       api(`/runs/${runId}/report`),
       api(`/runs/${runId}/results`).catch(() => null),
       api(`/projects/${id}/runs`).catch(() => null),
+      api(`/runs/${runId}/gate`).catch(() => null),
+      api(`/integrations?project_id=${id}`).catch(() => null),
+      api(`/runs/${runId}/exports`).catch(() => null),
     ])
-      .then(([rep, res, pr]) => {
+      .then(([rep, res, pr, gateVerdict, ints, exp]) => {
         setReport(rep ?? {});
         setResults(res ? asList(res) : []);
         setProjRuns(pr ? asList(pr) : []);
+        setGate(gateVerdict);
+        setJira((ints?.integrations ?? []).find((i: any) => i.type === "jira") ?? null);
+        const byCase: Record<string, any> = {};
+        for (const e of exp?.exports ?? []) byCase[e.test_case_id] = e;
+        setExports(byCase);
       })
       .catch((e) => setError(e?.message || String(e)))
       .finally(() => setLoading(false));
+  }
+
+  /** FR-070 — push one failure to Jira; a repeat export updates that same issue. */
+  async function exportToJira(caseIdValue: string) {
+    const result = resultByCase[caseIdValue];
+    if (!jira || !result?.id) return;
+    setExporting(caseIdValue);
+    try {
+      const res = await api(`/runs/${runId}/results/${result.id}/export`, {
+        body: { integration_id: jira.id },
+      });
+      setExports((prev) => ({ ...prev, [caseIdValue]: { ...res, test_case_id: caseIdValue } }));
+    } catch (e: any) {
+      setError(e?.message || String(e));
+    } finally {
+      setExporting(null);
+    }
   }
 
   useEffect(() => {
@@ -384,6 +446,99 @@ export default function RunReportPage() {
         <StatCard value={fmtDur(durationMs)} label={L.duration} />
       </div>
 
+      {/* Delivery gate verdict (FR-061) */}
+      {gate && (
+        <Card
+          title={
+            <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+              {L.gate} <RefChip id="FR-061" />
+              <Badge tone={gate.passed ? "success" : "error"}>
+                {gate.passed ? L.gatePassed : L.gateFailed}
+              </Badge>
+            </span>
+          }
+        >
+          <div style={{ display: "flex", gap: 18, flexWrap: "wrap", fontSize: 13 }}>
+            <span>
+              {L.gateCoverage}:{" "}
+              <strong>{gate.coverage_pct}%</strong>{" "}
+              <span style={{ color: "var(--text-muted)" }}>
+                ({gate.covered_requirements}/{gate.total_requirements})
+              </span>
+            </span>
+            <span>
+              {L.gateNewFailures}: <strong>{gate.new_failures}</strong>
+            </span>
+            <span>
+              {L.gateExit}: <M>{gate.exit_code}</M>
+            </span>
+            {gate.branch && (
+              <span>
+                {L.branch}: <M>{gate.branch}</M>
+              </span>
+            )}
+            <span>
+              {L.source}: <Badge tone="muted">{gate.source}</Badge>
+            </span>
+          </div>
+          {gate.breaches?.length > 0 && (
+            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+              {gate.breaches.map((b: any) => (
+                <div
+                  key={b.code}
+                  style={{
+                    border: "1px solid var(--error)",
+                    borderRadius: 10,
+                    padding: "10px 14px",
+                  }}
+                >
+                  <div style={{ fontSize: 13, color: "var(--error)" }}>{b.message}</div>
+                  {b.requirements?.length > 0 && (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                      {b.requirements.map((r: any) => (
+                        <RefChip key={r.requirement_id} id={r.external_id || r.requirement_id.slice(0, 8)} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
+
+      {/* Test-data lifecycle (FR-043) */}
+      {run.fixtures && (run.fixtures.created?.length || run.fixtures.orphans?.length) ? (
+        <Card
+          title={
+            <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+              {L.fixtures} <RefChip id="FR-043" />
+            </span>
+          }
+        >
+          <div style={{ display: "flex", gap: 18, flexWrap: "wrap", fontSize: 13 }}>
+            <span>
+              {L.fxCreated}: <M>{(run.fixtures.created ?? []).join(", ") || "—"}</M>
+            </span>
+            <span>
+              {L.fxRemoved}: <M>{(run.fixtures.removed ?? []).join(", ") || "—"}</M>
+            </span>
+          </div>
+          {run.fixtures.orphans?.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <Badge tone="warning">{L.fxOrphans}</Badge>
+              <ul style={{ margin: "6px 0 0", paddingInlineStart: 18 }}>
+                {run.fixtures.orphans.map((o: any, i: number) => (
+                  <li key={i} style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                    <M>{o.name}</M> — {o.reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </Card>
+      ) : null}
+
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         <Pill active={tab === "failures"} onClick={() => setTab("failures")}>
           {L.tabFailures} ({failures.length})
@@ -493,6 +648,44 @@ export default function RunReportPage() {
                           {renderFailureReason(c.failure_reason)}
                         </div>
                       )}
+
+                      {/* FR-070 — one action sends this defect to Jira */}
+                      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                        {exports[cid] ? (
+                          <>
+                            <Badge tone="success">{L.exported}</Badge>
+                            <a
+                              href={exports[cid].external_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{ color: "var(--accent)", fontSize: 12 }}
+                            >
+                              <M>{exports[cid].external_key}</M>
+                            </a>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={!jira || exporting === cid}
+                              onClick={() => exportToJira(cid)}
+                            >
+                              {exporting === cid ? L.exporting : L.exportJira}
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={!jira || exporting === cid}
+                            onClick={() => exportToJira(cid)}
+                            title={jira ? undefined : L.noJira}
+                          >
+                            {exporting === cid ? L.exporting : L.exportJira}
+                          </Button>
+                        )}
+                        {!jira && (
+                          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{L.noJira}</span>
+                        )}
+                      </div>
 
                       {reproSteps.length > 0 && (
                         <div>

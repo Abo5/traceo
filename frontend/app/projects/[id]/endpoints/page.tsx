@@ -130,6 +130,20 @@ export default function EndpointsPage() {
           updated: "محدَّثة",
           removed: "محذوفة",
           total: "الإجمالي",
+          source: "المصدر",
+          seen: "مرات الرصد",
+          neverSeen: "معلن ولم يُرصد",
+          inferred: "مستنتج",
+          tabTraffic: "حركة مرور (HAR)",
+          tabPostman: "مجموعة Postman",
+          tabDom: "نماذج DOM",
+          harHint: "الصق ملف HAR من أدوات المطوّر أو من وسيط — تُنقّح بيانات الاعتماد قبل الحفظ",
+          postmanHint: "الصق مجموعة Postman v2.1 — المجلدات تصبح وسوماً",
+          domHint: "الصق وصف النماذج [{action, method, fields:[…]}]",
+          pastePh: "{ … }",
+          importCapture: "استيراد",
+          baseUrl: "الرابط الأساسي (اختياري)",
+          invalidJson: "المحتوى ليس JSON صالحاً",
         }
       : {
           title: "Endpoints",
@@ -163,10 +177,26 @@ export default function EndpointsPage() {
           updated: "Updated",
           removed: "Removed",
           total: "Total",
+          source: "Source",
+          seen: "Seen",
+          neverSeen: "Declared, never seen",
+          inferred: "Inferred",
+          tabTraffic: "Traffic (HAR)",
+          tabPostman: "Postman collection",
+          tabDom: "DOM forms",
+          harHint: "Paste a HAR from devtools or a proxy — credentials are redacted before storage",
+          postmanHint: "Paste a Postman v2.1 collection — folders become tags",
+          domHint: "Paste form descriptors [{action, method, fields:[…]}]",
+          pastePh: "{ … }",
+          importCapture: "Import",
+          baseUrl: "Base URL (optional)",
+          invalidJson: "That is not valid JSON",
         };
 
-  const [tab, setTab] = useState<"url" | "file">("url");
+  const [tab, setTab] = useState<"url" | "file" | "traffic" | "postman" | "dom">("url");
   const [url, setUrl] = useState("");
+  const [captureText, setCaptureText] = useState("");
+  const [captureBase, setCaptureBase] = useState("");
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [result, setResult] = useState<any | null>(null);
@@ -217,6 +247,37 @@ export default function EndpointsPage() {
     }
   }
 
+  /** FR-021/022/023 — a capture produced elsewhere becomes part of the surface. */
+  async function importCapture(kind: "traffic" | "postman" | "dom") {
+    setImporting(true);
+    setImportError(null);
+    setResult(null);
+    let parsed: any;
+    try {
+      parsed = JSON.parse(captureText);
+    } catch {
+      setImportError(L.invalidJson);
+      setImporting(false);
+      return;
+    }
+    const body =
+      kind === "traffic"
+        ? { har: parsed, base_url: captureBase || undefined }
+        : kind === "postman"
+          ? { collection: parsed }
+          : { forms: parsed, base_url: captureBase || undefined };
+    try {
+      const res = await api(`/projects/${id}/discovery/${kind}`, { body });
+      setResult(res ?? {});
+      setCaptureText("");
+      await loadEps();
+    } catch (e: any) {
+      setImportError(e?.message || String(e));
+    } finally {
+      setImporting(false);
+    }
+  }
+
   async function toggleRow(ep: any) {
     setBusyRow(ep.id);
     const next = !ep.excluded;
@@ -253,9 +314,47 @@ export default function EndpointsPage() {
           <Pill active={tab === "file"} onClick={() => setTab("file")}>
             {L.tabFile}
           </Pill>
+          <Pill active={tab === "traffic"} onClick={() => setTab("traffic")}>
+            {L.tabTraffic}
+          </Pill>
+          <Pill active={tab === "postman"} onClick={() => setTab("postman")}>
+            {L.tabPostman}
+          </Pill>
+          <Pill active={tab === "dom"} onClick={() => setTab("dom")}>
+            {L.tabDom}
+          </Pill>
         </div>
 
-        {tab === "url" ? (
+        {tab === "traffic" || tab === "postman" || tab === "dom" ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+              {tab === "traffic" ? L.harHint : tab === "postman" ? L.postmanHint : L.domHint}
+            </div>
+            <textarea
+              className="input textarea"
+              dir="ltr"
+              rows={7}
+              placeholder={L.pastePh}
+              value={captureText}
+              onChange={(e) => setCaptureText(e.target.value)}
+              style={{ fontFamily: "'JetBrains Mono',ui-monospace,monospace", fontSize: 11.5 }}
+            />
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {tab !== "postman" && (
+                <Input
+                  dir="ltr"
+                  placeholder={L.baseUrl}
+                  value={captureBase}
+                  onChange={(e: any) => setCaptureBase(e.target.value)}
+                  style={{ flex: 1, minWidth: 220, fontSize: 12 }}
+                />
+              )}
+              <Button disabled={importing || !captureText.trim()} onClick={() => importCapture(tab)}>
+                {importing ? L.importing : L.importCapture}
+              </Button>
+            </div>
+          </div>
+        ) : tab === "url" ? (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Input
               dir="ltr"
@@ -353,7 +452,7 @@ export default function EndpointsPage() {
         ) : eps.length === 0 ? (
           <Empty title={L.empty} hint={L.emptyHint} />
         ) : (
-          <Table head={[L.method, L.path, L.summary, L.params, L.tests, L.coverage, L.lastOutcome, L.security, L.included]}>
+          <Table head={[L.method, L.path, L.source, L.summary, L.params, L.tests, L.coverage, L.lastOutcome, L.security, L.included]}>
             {eps.map((ep) => {
               const params = Array.isArray(ep.parameters) ? ep.parameters.length : 0;
               const secured = Array.isArray(ep.security) ? ep.security.length > 0 : !!ep.security;
@@ -372,6 +471,34 @@ export default function EndpointsPage() {
                   </td>
                   <td>
                     <M style={{ color: "var(--text)" }}>{ep.path}</M>
+                    {ep.declared_never_seen && (
+                      <div>
+                        <Badge tone="warning">{L.neverSeen}</Badge>
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    <Badge
+                      tone={
+                        ep.discovery_source === "openapi"
+                          ? "info"
+                          : ep.discovery_source === "traffic"
+                            ? "accent"
+                            : "muted"
+                      }
+                    >
+                      {ep.discovery_source ?? "openapi"}
+                    </Badge>
+                    {(ep.times_seen ?? 0) > 0 && (
+                      <M style={{ fontSize: 10.5, color: "var(--text-muted)", marginInlineStart: 6 }}>
+                        {L.seen} {ep.times_seen}
+                      </M>
+                    )}
+                    {ep.inferred && (
+                      <div>
+                        <M style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{L.inferred}</M>
+                      </div>
+                    )}
                   </td>
                   <td style={{ fontSize: 13, color: "var(--text-secondary)" }}>{ep.summary ?? "—"}</td>
                   <td>

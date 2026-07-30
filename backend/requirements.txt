@@ -13,3 +13,12 @@ openpyxl>=3.1
 pymupdf>=1.24
 python-docx>=1.1
 anthropic>=0.60 ; python_version >= "3.10"
+
+# --- optional ---
+# pytest        : the release gates (backend/tests) — `pip install pytest`
+# playwright    : the headless crawler for FR-021/FR-022 traffic + DOM discovery.
+#                 Deliberately not required: it pulls a browser binary an air-gapped
+#                 install may refuse, and /discovery/traffic + /discovery/dom accept a
+#                 capture produced by a proxy or devtools instead.
+#                 `pip install playwright && playwright install chromium`
+# cryptography  : upgrades secret storage from the HMAC-sealed fallback to AES-GCM.
