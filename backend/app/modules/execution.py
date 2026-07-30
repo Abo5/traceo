@@ -2,7 +2,9 @@
 
 Auth resolved ONCE per run (FR-EXE-04), variable interpolation + response chaining
 (FR-EXE-05), failed vs errored distinction (FR-EXE-11), redacted evidence capture
-(NFR-SEC-03), partial results streamed to DB, best-effort cancel (FR-EXE-10).
+(NFR-SEC-03), partial results streamed to DB, best-effort cancel (FR-EXE-10),
+per-run concurrency 1..32 (FR-040) and a run-namespaced fixture lifecycle whose
+teardown executes on success, failure and cancellation alike (FR-043).
 """
 import json
 import re
@@ -19,7 +21,7 @@ from sqlalchemy.orm import Session
 from .. import jobs as jobstore
 from ..config import settings
 from ..db import SessionLocal, get_db
-from ..deps import audit, get_project_scoped, require
+from ..deps import assert_token_scope, audit, get_project_scoped, require
 from ..models import Endpoint, Environment, Run, TestCase, TestResult, User
 from ..security import decrypt_secret, redact
 from .traceability import run_display_id, run_display_ids
@@ -490,8 +492,120 @@ def _case_worker(run_id: str, case: dict, client: httpx.Client,
 
 
 # ---------------------------------------------------------------------------
+# Test-data lifecycle (FR-043) — fixtures created before the suite, torn down after
+# ---------------------------------------------------------------------------
+
+def _fixture_namespace(run_id: str) -> str:
+    """Every fixture this run creates carries this token, so leftovers are
+    identifiable in the target system by run (FR-043 AC1)."""
+    return f"traceo-{run_id[:8]}"
+
+
+def _fixture_request(client: httpx.Client, spec: dict, context: dict,
+                     auth_headers: dict, auth_params: dict, auth_obj,
+                     secrets: list[str]) -> tuple[bool, object, str | None]:
+    """Issue one fixture request. Returns (ok, parsed_json, error)."""
+    method = (spec.get("method") or "POST").upper()
+    path = str(_interpolate(spec.get("path") or "/", context))
+    headers = dict(auth_headers)
+    headers.update({k: str(v) for k, v in (_interpolate(spec.get("headers") or {}, context)).items()})
+    params = dict(auth_params)
+    params.update(_interpolate(spec.get("params") or {}, context) or {})
+    kwargs: dict = {"headers": headers, "timeout": settings.REQUEST_TIMEOUT_S}
+    if params:
+        kwargs["params"] = params
+    if spec.get("body") is not None:
+        kwargs["json"] = _interpolate(spec.get("body"), context)
+    if auth_obj is not None:
+        kwargs["auth"] = auth_obj
+    try:
+        resp = client.request(method, path, **kwargs)
+    except Exception as e:  # noqa: BLE001
+        return False, None, redact(f"{type(e).__name__}: {e}", secrets)
+    if resp.status_code >= 400:
+        return False, None, f"HTTP {resp.status_code}"
+    try:
+        return True, resp.json(), None
+    except Exception:  # noqa: BLE001
+        return True, None, None
+
+
+def _setup_fixtures(specs: list, client: httpx.Client, context: dict,
+                    auth_headers: dict, auth_params: dict, auth_obj,
+                    secrets: list[str]) -> tuple[list[dict], list[dict]]:
+    """Create each declared fixture and publish its extracted values into the run
+    context. Returns (created, failed)."""
+    created: list[dict] = []
+    failed: list[dict] = []
+    for spec in specs or []:
+        if not isinstance(spec, dict) or not spec.get("create"):
+            continue
+        name = str(spec.get("name") or "fixture")
+        ok, data, error = _fixture_request(client, spec["create"], context,
+                                           auth_headers, auth_params, auth_obj, secrets)
+        if not ok:
+            failed.append({"name": name, "reason": error or "create failed"})
+            continue
+        extracted = {}
+        for var, path in (spec.get("extract") or {}).items():
+            try:
+                value = _resolve_path(data, str(path))
+            except Exception:  # noqa: BLE001
+                failed.append({"name": name, "reason": f"could not extract '{var}' from the response"})
+                continue
+            context[var] = value
+            extracted[var] = value
+        created.append({"name": name, "extracted": extracted})
+    return created, failed
+
+
+def _teardown_fixtures(specs: list, created: list[dict], client: httpx.Client,
+                       context: dict, auth_headers: dict, auth_params: dict, auth_obj,
+                       secrets: list[str]) -> tuple[list[str], list[dict]]:
+    """Delete fixtures in reverse creation order. Runs on success, failure and
+    cancellation (FR-043 AC2); whatever cannot be removed is reported (AC3)."""
+    by_name = {str(s.get("name") or "fixture"): s for s in (specs or []) if isinstance(s, dict)}
+    removed: list[str] = []
+    orphans: list[dict] = []
+    for entry in reversed(created):
+        spec = by_name.get(entry["name"]) or {}
+        delete = spec.get("delete")
+        if not delete:
+            orphans.append({"name": entry["name"], "reason": "no teardown declared for this fixture"})
+            continue
+        ok, _data, error = _fixture_request(client, delete, context,
+                                            auth_headers, auth_params, auth_obj, secrets)
+        if ok:
+            removed.append(entry["name"])
+        else:
+            orphans.append({"name": entry["name"], "reason": error or "delete failed"})
+    return removed, orphans
+
+
+# ---------------------------------------------------------------------------
 # Run job (executes on a jobstore thread; owns its own SessionLocal)
 # ---------------------------------------------------------------------------
+
+def _announce_run(db: Session, run: Run) -> None:
+    """Run completion posts a summary to any connected channel (FR-072 AC2).
+    A delivery problem is logged on the integration, never raised into the run."""
+    try:
+        from .automation import _outcomes_of, _previous_completed_run
+        from .integrations import notify_run
+
+        previous_run = _previous_completed_run(db, run)
+        regressions = 0
+        if previous_run:
+            current = _outcomes_of(db, run.id)
+            previous = _outcomes_of(db, previous_run.id)
+            regressions = sum(1 for cid, res in current.items()
+                              if res.outcome in ("failed", "errored")
+                              and previous.get(cid) is not None
+                              and previous[cid].outcome == "passed")
+        notify_run(db, run, regressions)
+    except Exception:  # noqa: BLE001 — notification is never allowed to fail a run
+        pass
+
 
 def _execute_run(job, run_id: str, case_ids: list[str]):
     db = SessionLocal()
@@ -544,23 +658,49 @@ def _execute_run(job, run_id: str, case_ids: list[str]):
                 endpoint_schemas[ep.id] = ep.response_schemas or {}
 
         env_vars = dict(env.variables or {})
+        env_vars["run_ns"] = _fixture_namespace(run_id)  # FR-043 AC1 namespacing
+        env_vars["run_id"] = run_id
         base_url = env.base_url
         tls_strict = env.tls_strict
+        fixture_specs = list(env.fixtures or [])
         total = len(cases)
         deadline = time.monotonic() + settings.RUN_TIMEOUT_S
+        # FR-040 AC2: per-run concurrency, clamped to the configured ceiling.
+        workers = run.concurrency or settings.RUN_CONCURRENCY
+        workers = max(1, min(int(workers), settings.RUN_CONCURRENCY_MAX))
 
+        fixture_report = {"created": [], "removed": [], "orphans": [], "setup_failed": []}
         with httpx.Client(base_url=base_url, verify=tls_strict,
                           timeout=settings.REQUEST_TIMEOUT_S) as client:
-            with ThreadPoolExecutor(max_workers=max(1, settings.RUN_CONCURRENCY)) as pool:
-                futures = [pool.submit(_case_worker, run_id, case, client,
-                                       auth_headers, auth_params, auth_obj,
-                                       env_vars, endpoint_schemas, deadline, secrets)
-                           for case in cases]
-                done = 0
-                for fut in as_completed(futures):
-                    fut.result()  # workers never raise
-                    done += 1
-                    job.progress = done / total if total else 1.0
+            created: list[dict] = []
+            try:
+                if fixture_specs:
+                    job.message = "Creating fixtures"
+                    created, setup_failed = _setup_fixtures(
+                        fixture_specs, client, env_vars, auth_headers, auth_params,
+                        auth_obj, secrets)
+                    fixture_report["created"] = [c["name"] for c in created]
+                    fixture_report["setup_failed"] = setup_failed
+
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    futures = [pool.submit(_case_worker, run_id, case, client,
+                                           auth_headers, auth_params, auth_obj,
+                                           env_vars, endpoint_schemas, deadline, secrets)
+                               for case in cases]
+                    done = 0
+                    for fut in as_completed(futures):
+                        fut.result()  # workers never raise
+                        done += 1
+                        job.progress = done / total if total else 1.0
+            finally:
+                # FR-043 AC2: teardown runs on success, failure AND cancellation.
+                if created:
+                    job.message = "Tearing down fixtures"
+                    removed, orphans = _teardown_fixtures(
+                        fixture_specs, created, client, env_vars, auth_headers,
+                        auth_params, auth_obj, secrets)
+                    fixture_report["removed"] = removed
+                    fixture_report["orphans"] = orphans
 
         cancelled = _cancel_flags.pop(run_id, False)
 
@@ -573,8 +713,11 @@ def _execute_run(job, run_id: str, case_ids: list[str]):
         run.counts = counts
         run.state = "cancelled" if cancelled else "completed"
         run.finished_at = _utcnow()
+        run.fixtures = fixture_report
         db.commit()
-        return {"run_id": run_id, "state": run.state, "counts": counts}
+        _announce_run(db, run)
+        return {"run_id": run_id, "state": run.state, "counts": counts,
+                "fixtures": fixture_report}
     except Exception as e:  # noqa: BLE001 — never leave a run stuck in 'running'
         try:
             run = db.get(Run, run_id)
@@ -598,6 +741,20 @@ def _execute_run(job, run_id: str, case_ids: list[str]):
 class RunCreate(BaseModel):
     environment_id: str
     test_case_ids: list[str] | None = None
+    branch: str = ""              # FR-054 trend filter
+    concurrency: int | None = None  # FR-040 AC2, 1..RUN_CONCURRENCY_MAX
+
+
+class RunQueued(Exception):
+    """Raised when an environment already has a run in flight (FR-060 AC3)."""
+
+    def __init__(self, run_id: str):
+        super().__init__(run_id)
+        self.run_id = run_id
+
+
+class NoApprovedCases(Exception):
+    pass
 
 
 def _get_run(run_id: str, user: User, db: Session) -> Run:
@@ -614,7 +771,64 @@ def _run_dict(run: Run) -> dict:
         "finished_at": _iso(run.finished_at), "counts": run.counts or {},
         "initiated_by": run.initiated_by, "abort_reason": run.abort_reason,
         "created_at": _iso(run.created_at),
+        "source": run.source or "manual", "branch": run.branch or "",
+        "fixtures": run.fixtures or {},
     }
+
+
+def start_run(db: Session, org_id: str, project_id: str, env: Environment,
+              initiated_by: str, *, test_case_ids: list[str] | None = None,
+              source: str = "manual", branch: str = "", concurrency: int | None = None,
+              serialise_per_environment: bool = False) -> tuple[str, str]:
+    """Create a run row and hand it to the job store. Shared by the manual, CI
+    (FR-061) and scheduled (FR-060) entry points so all three behave identically.
+    Returns (job_id, run_id). Raises NoApprovedCases / RunQueued."""
+    if serialise_per_environment:
+        # FR-060 AC3: never execute two runs concurrently against one environment.
+        in_flight = (db.query(Run)
+                     .filter(Run.environment_id == env.id,
+                             Run.state.in_(("queued", "running")))
+                     .order_by(Run.created_at.desc()).first())
+        if in_flight:
+            raise RunQueued(in_flight.id)
+
+    q = db.query(TestCase).filter(
+        TestCase.project_id == project_id,
+        TestCase.organisation_id == org_id,
+        TestCase.state == "approved")
+    if test_case_ids:
+        q = q.filter(TestCase.id.in_(test_case_ids))
+    cases = q.all()
+    if not cases:
+        raise NoApprovedCases()
+
+    clamped = 0
+    if concurrency is not None:
+        clamped = max(1, min(int(concurrency), settings.RUN_CONCURRENCY_MAX))
+
+    run = Run(organisation_id=org_id, project_id=project_id, environment_id=env.id,
+              state="queued", initiated_by=initiated_by, counts={}, source=source,
+              branch=branch[:200], concurrency=clamped, fixtures={})
+    db.add(run)
+    db.flush()
+    audit(db, org_id, initiated_by, "run.started", "run", run.id,
+          {"environment_id": env.id, "case_count": len(cases),
+           "source": source, "branch": branch})
+    db.commit()
+
+    run_id = run.id
+    case_ids = [c.id for c in cases]
+    job = jobstore.submit("execute", lambda j: _execute_run(j, run_id, case_ids))
+    return job.id, run_id
+
+
+def get_environment_scoped(project_id: str, env_id: str, org_id: str,
+                           db: Session) -> Environment:
+    env = db.get(Environment, env_id)
+    if not env or env.project_id != project_id or env.organisation_id != org_id:
+        raise HTTPException(404, detail={"code": "not_found",
+                                         "message": "Environment not found in this project"})
+    return env
 
 
 @router.post("/projects/{project_id}/runs", status_code=202)
@@ -622,36 +836,22 @@ def create_run(project_id: str, payload: RunCreate,
                user: User = Depends(require("trigger_run")),
                db: Session = Depends(get_db)):
     get_project_scoped(project_id, user, db)
-
-    env = db.get(Environment, payload.environment_id)
-    if (not env or env.project_id != project_id
-            or env.organisation_id != user.organisation_id):
-        raise HTTPException(404, detail={"code": "not_found",
-                                         "message": "Environment not found in this project"})
-
-    q = db.query(TestCase).filter(
-        TestCase.project_id == project_id,
-        TestCase.organisation_id == user.organisation_id,
-        TestCase.state == "approved")
-    if payload.test_case_ids:
-        q = q.filter(TestCase.id.in_(payload.test_case_ids))
-    cases = q.all()
-    if not cases:
+    assert_token_scope(user, project_id)
+    env = get_environment_scoped(project_id, payload.environment_id,
+                                 user.organisation_id, db)
+    if payload.concurrency is not None and not (1 <= payload.concurrency <= settings.RUN_CONCURRENCY_MAX):
+        raise HTTPException(422, detail={
+            "code": "invalid_concurrency",
+            "message": f"concurrency must be between 1 and {settings.RUN_CONCURRENCY_MAX}"})
+    try:
+        job_id, run_id = start_run(db, user.organisation_id, project_id, env, user.id,
+                                   test_case_ids=payload.test_case_ids,
+                                   branch=payload.branch,
+                                   concurrency=payload.concurrency)
+    except NoApprovedCases:
         raise HTTPException(409, detail={"code": "no_approved_cases",
                                          "message": "No approved test cases to execute"})
-
-    run = Run(organisation_id=user.organisation_id, project_id=project_id,
-              environment_id=env.id, state="queued", initiated_by=user.id, counts={})
-    db.add(run)
-    db.flush()
-    audit(db, user.organisation_id, user.id, "run.started", "run", run.id,
-          {"environment_id": env.id, "case_count": len(cases)})
-    db.commit()
-
-    run_id = run.id
-    case_ids = [c.id for c in cases]
-    job = jobstore.submit("execute", lambda j: _execute_run(j, run_id, case_ids))
-    return {"job_id": job.id, "run_id": run_id}
+    return {"job_id": job_id, "run_id": run_id}
 
 
 @router.get("/projects/{project_id}/runs")

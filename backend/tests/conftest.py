@@ -21,6 +21,9 @@ os.close(_fd)
 os.environ["TRACEO_DATABASE_URL"] = f"sqlite:///{_DB_PATH}"
 os.environ["TRACEO_SEED_DEMO"] = "0"
 os.environ.setdefault("TRACEO_LLM_PROVIDER", "mock")
+# The scheduler thread is exercised directly (test_automation) rather than left
+# ticking against tables the fixtures drop between tests.
+os.environ["TRACEO_SCHEDULER"] = "0"
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

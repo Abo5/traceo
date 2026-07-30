@@ -25,7 +25,7 @@ from ..models import Requirement, RequirementTestCase, SourceDocument, User
 
 router = APIRouter()
 
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".md", ".txt"}
+ALLOWED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".md", ".txt"}
 MAX_SEGMENTS = 500
 MIN_SEGMENT_CHARS = 15
 
@@ -93,10 +93,47 @@ def _extract_text(path: Path, ext: str) -> list[tuple[int | None, str]]:
                 "it is not installed on this server."
             )
         pages: list[tuple[int | None, str]] = []
-        with fitz.open(path) as doc:
+        try:
+            doc = fitz.open(path)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"This PDF could not be opened: {exc}")
+        with doc:
+            if getattr(doc, "needs_pass", False):
+                raise RuntimeError(
+                    "This PDF is password-protected. Remove the encryption and upload it "
+                    "again — Traceo will not attempt to break document protection.")
             for page_index, page in enumerate(doc):
                 pages.append((page_index + 1, page.get_text("text") or ""))
+        if not any(text.strip() for _no, text in pages):
+            # SRS §4.1: image-only PDFs are rejected by name; OCR is out of scope for 2.0.
+            raise RuntimeError(
+                "This PDF contains no extractable text — it is most likely a scan. "
+                "OCR is not supported; upload a text PDF, DOCX, XLSX or Markdown file.")
         return pages
+
+    if ext == ".xlsx":
+        try:
+            from openpyxl import load_workbook
+        except ImportError:
+            raise RuntimeError(
+                "XLSX support requires the 'openpyxl' package (pip install openpyxl); "
+                "it is not installed on this server.")
+        # One "page" per worksheet, rows flattened to pipe-separated lines so the
+        # requirement-table shape survives segmentation (FR-010 AC1).
+        workbook = load_workbook(str(path), read_only=True, data_only=True)
+        sheets: list[tuple[int | None, str]] = []
+        try:
+            for index, sheet in enumerate(workbook.worksheets, start=1):
+                lines = []
+                for row in sheet.iter_rows(values_only=True):
+                    cells = [str(c).strip() for c in row if c is not None and str(c).strip()]
+                    if cells:
+                        lines.append(" | ".join(cells))
+                if lines:
+                    sheets.append((index, "\n".join(lines)))
+        finally:
+            workbook.close()
+        return sheets or [(1, "")]
 
     if ext == ".docx":
         try:
@@ -428,6 +465,57 @@ async def upload_document(project_id: str, file: UploadFile = File(...),
     job = jobstore.submit(
         "ingest", lambda j: _run_ingest(j, doc_id, project_id, org_id, actor_id))
     return {"job_id": job.id, "document_id": doc_id}
+
+
+def ingest_text(db: Session, project, filename: str, text: str, actor_id: str,
+                mime_type: str = "text/markdown") -> tuple[str, str]:
+    """Store `text` as a source document and queue the same parse pipeline an upload
+    uses. Shared by the Confluence import (FR-011 AC2) and the paste-requirements
+    fallback (FR-010 AC4). Returns (job_id, document_id).
+
+    Re-ingesting the same `filename` bumps the version, so the existing diff logic
+    detects changed content and marks affected requirements stale (FR-011 AC3)."""
+    content = (text or "").encode("utf-8")
+    safename = re.sub(r"[^\w.\-؀-ۿ]", "_", filename)[:120]
+    storage_key = f"{uuid.uuid4()}_{safename}"
+    (settings.STORAGE_DIR / storage_key).write_bytes(content)
+
+    prior_max = db.query(func.max(SourceDocument.version)).filter(
+        SourceDocument.project_id == project.id,
+        SourceDocument.organisation_id == project.organisation_id,
+        SourceDocument.filename == filename,
+    ).scalar() or 0
+
+    doc = SourceDocument(
+        organisation_id=project.organisation_id, project_id=project.id,
+        filename=filename, mime_type=mime_type, size=len(content),
+        storage_key=storage_key, language=project.language,
+        version=prior_max + 1, parse_status="pending")
+    db.add(doc)
+    db.commit()
+
+    doc_id, org_id, project_id = doc.id, project.organisation_id, project.id
+    job = jobstore.submit(
+        "ingest", lambda j: _run_ingest(j, doc_id, project_id, org_id, actor_id))
+    return job.id, doc_id
+
+
+@router.post("/projects/{project_id}/requirements/paste", status_code=202)
+def paste_requirements(project_id: str, body: dict = Body(...),
+                       user: User = Depends(require("upload_documents")),
+                       db: Session = Depends(get_db)):
+    """FR-010 AC4 — the escape hatch offered by the zero-requirements empty state."""
+    project = get_project_scoped(project_id, user, db)
+    text = str(body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(422, detail={"code": "empty_text",
+                                         "message": "Provide the requirement text to parse."})
+    title = str(body.get("title") or "pasted-requirements").strip()[:100]
+    job_id, doc_id = ingest_text(db, project, f"{title}.md", text, user.id, "text/plain")
+    audit(db, user.organisation_id, user.id, "document.pasted", "source_document", doc_id,
+          {"title": title, "chars": len(text)})
+    db.commit()
+    return {"job_id": job_id, "document_id": doc_id}
 
 
 @router.get("/projects/{project_id}/documents")

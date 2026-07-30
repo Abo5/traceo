@@ -26,9 +26,26 @@ class Settings:
     RUN_CONCURRENCY = int(os.getenv("TRACEO_RUN_CONCURRENCY", "8"))
     EVIDENCE_MAX_BYTES = int(os.getenv("TRACEO_EVIDENCE_MAX_BYTES", "16384"))
 
+    RUN_CONCURRENCY_MAX = int(os.getenv("TRACEO_RUN_CONCURRENCY_MAX", "32"))  # FR-040 AC2
+
     CORS_ORIGINS = os.getenv("TRACEO_CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
 
     SEED_DEMO = os.getenv("TRACEO_SEED_DEMO", "1") == "1"
+
+    # Governance & deployment posture
+    AUDIT_RETENTION_DAYS = int(os.getenv("TRACEO_AUDIT_RETENTION_DAYS", "90"))  # FR-082 AC3
+    # On-premise mode (FR-081): refuses every outbound call whose host is not
+    # explicitly allow-listed, and forces the offline LLM provider.
+    ON_PREMISE = os.getenv("TRACEO_ON_PREMISE", "0") == "1"
+    EGRESS_ALLOWLIST = [h.strip() for h in os.getenv("TRACEO_EGRESS_ALLOWLIST", "").split(",") if h.strip()]
+    TELEMETRY_ENABLED = os.getenv("TRACEO_TELEMETRY", "0") == "1"  # FR-081 AC4: off by default
+
+    # Scheduler (FR-060)
+    SCHEDULER_ENABLED = os.getenv("TRACEO_SCHEDULER", "1") == "1"
+    SCHEDULER_TICK_S = float(os.getenv("TRACEO_SCHEDULER_TICK_S", "30"))
+
+    # Integration HTTP (FR-070/011/072)
+    INTEGRATION_TIMEOUT_S = float(os.getenv("TRACEO_INTEGRATION_TIMEOUT_S", "20"))
 
 settings = Settings()
 settings.STORAGE_DIR.mkdir(parents=True, exist_ok=True)

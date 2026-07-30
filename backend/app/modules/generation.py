@@ -609,6 +609,22 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str) -> list[dict]:
         unauth_case["preconditions"] = ""
         cases.append(unauth_case)
 
+        # FR-033 AC1: an expired credential and a wrong-role credential are distinct
+        # failure modes from "no credential" and must both be rejected. The values come
+        # from environment variables; when an environment does not define them the
+        # placeholder itself is an invalid credential, so the assertion still holds.
+        for var, label, expected_any in (
+                ("expired_token", "expired credential", [401, 403]),
+                ("wrong_role_token", "wrong-role credential", [403, 401])):
+            cred_headers = dict(headers)
+            cred_headers["Authorization"] = f"Bearer {{{{{var}}}}}"
+            cred_case = mk(f"Negative: {label} — {suffix}", "negative", "negative",
+                           _step(ep, params, cred_headers, body,
+                                 [{"type": "status_code", "expected": expected_any[0],
+                                   "expected_any": expected_any}]))
+            cred_case["preconditions"] = f"Environment variable '{var}' set on the environment"
+            cases.append(cred_case)
+
     if body is not None:
         cases.append(mk(f"Negative: malformed JSON body — {suffix}", "negative", "negative",
                         _step(ep, params, headers, None, [_error_assertion(ep)],
@@ -701,7 +717,7 @@ def _prefilter(req_text: str, endpoints: list[Endpoint]) -> list[Endpoint]:
 # ---------------------------------------------------------------------------
 
 def _persist_case(db: Session, org_id: str, project_id: str, req: Requirement,
-                  case: dict, model_name: str) -> None:
+                  case: dict, model_name: str) -> TestCase:
     tc = TestCase(
         organisation_id=org_id, project_id=project_id,
         title=case["title"][:500], description=case["description"],
@@ -717,6 +733,60 @@ def _persist_case(db: Session, org_id: str, project_id: str, req: Requirement,
                         assertions=s["assertions"], extractions=s.get("extractions") or []))
     db.add(RequirementTestCase(requirement_id=req.id, test_case_id=tc.id,
                                link_source="generated", requirement_version_at_link=req.version))
+    return tc
+
+
+def _step_signature(steps) -> str:
+    """Identity of what a case actually does, used to decide whether a regenerated
+    case differs from the one already stored."""
+    return json.dumps([{"m": (s.method if hasattr(s, "method") else s["method"]).upper(),
+                        "p": s.path if hasattr(s, "path") else s["path"],
+                        "r": s.request if hasattr(s, "request") else s["request"],
+                        "a": s.assertions if hasattr(s, "assertions") else s["assertions"]}
+                       for s in steps], sort_keys=True, default=str)
+
+
+def _refresh_case(db: Session, tc: TestCase, req: Requirement, case: dict,
+                  model_name: str) -> bool:
+    """Update an existing generated, never-hand-edited case in place. Returns True
+    when something actually changed — that is what the run reports (FR-036 AC3).
+
+    A case the user touched never reaches this function: it is filtered out by the
+    `protected` index in _run_generation."""
+    current = sorted(tc.steps, key=lambda s: s.order)
+    if _step_signature(current) == _step_signature(case["steps"]):
+        # Identical proposal: keep the row (and its history) untouched.
+        if tc.state == "stale":
+            tc.state = "draft"  # the requirement change is reflected, nothing else to do
+            return True
+        return False
+
+    for step in current:
+        db.delete(step)
+    db.flush()
+    for i, s in enumerate(case["steps"]):
+        db.add(TestStep(test_case_id=tc.id, order=i, endpoint_id=s.get("endpoint_id"),
+                        method=s["method"], path=s["path"], request=s["request"],
+                        assertions=s["assertions"], extractions=s.get("extractions") or []))
+    tc.description = case["description"]
+    tc.preconditions = case["preconditions"]
+    tc.type = case["type"]
+    tc.priority = case["priority"]
+    tc.model = model_name
+    tc.prompt_version = settings.PROMPT_VERSION
+    tc.state = "draft"
+    tc.version += 1
+
+    link = db.scalar(select(RequirementTestCase).where(
+        RequirementTestCase.requirement_id == req.id,
+        RequirementTestCase.test_case_id == tc.id))
+    if link is None:
+        db.add(RequirementTestCase(requirement_id=req.id, test_case_id=tc.id,
+                                   link_source="generated",
+                                   requirement_version_at_link=req.version))
+    else:
+        link.requirement_version_at_link = req.version
+    return True
 
 
 def _run_generation(job, org_id: str, user_id: str, project_id: str,
@@ -748,19 +818,31 @@ def _run_generation(job, org_id: str, user_id: str, project_id: str,
             Endpoint.excluded == False)).all()  # noqa: E712
         endpoints_by_key = {(e.method.upper(), e.path): e for e in endpoints}
 
-        # duplicate index over already-approved cases (FR-GEN-11)
-        dup_keys: set[tuple] = set()
-        approved = db.scalars(select(TestCase).where(
+        # Index every existing case in the project by its identity
+        # (technique, method, path, title). Regeneration consults this index so a
+        # second run neither duplicates work nor discards human edits (FR-036 AC3).
+        dup_keys: set[tuple] = set()          # approved: a re-proposal is a duplicate
+        refreshable: dict[tuple, TestCase] = {}  # generated + untouched: safe to refresh
+        protected: set[tuple] = set()         # hand-edited or hand-written: never touched
+        existing_cases = db.scalars(select(TestCase).where(
             TestCase.project_id == project_id,
             TestCase.organisation_id == org_id,
-            TestCase.state == "approved")).all()
-        for c in approved:
+            TestCase.state != "archived")).all()
+        for c in existing_cases:
             first = c.steps[0] if c.steps else None
-            dup_keys.add((c.technique, first.method.upper() if first else "",
-                          first.path if first else "", c.title))
+            key = (c.technique, first.method.upper() if first else "",
+                   first.path if first else "", c.title)
+            if c.user_modified or not c.generated:
+                protected.add(key)
+            elif c.state == "approved":
+                dup_keys.add(key)
+            elif c.state in ("draft", "stale"):
+                refreshable[key] = c
 
         provider = get_provider()
         generated = discarded = duplicates = 0
+        preserved = refreshed = 0
+        changed_cases: list[dict] = []
         total = max(len(reqs), 1)
 
         for idx, req in enumerate(reqs):
@@ -808,22 +890,42 @@ def _run_generation(job, org_id: str, user_id: str, project_id: str,
                         discarded += 1
                         continue
                     first = case["steps"][0]
-                    if (case["technique"], first["method"], first["path"], case["title"]) in dup_keys:
+                    key = (case["technique"], first["method"], first["path"], case["title"])
+                    if key in protected:
+                        # FR-036 AC3: a hand-edited or hand-written case is authoritative.
+                        preserved += 1
+                        continue
+                    if key in dup_keys:
                         duplicates += 1
                         continue
-                    _persist_case(db, org_id, project_id, req, case, model_name)
+                    prior = refreshable.get(key)
+                    if prior is not None:
+                        if _refresh_case(db, prior, req, case, model_name):
+                            refreshed += 1
+                            changed_cases.append({"test_case_id": prior.id,
+                                                  "title": prior.title,
+                                                  "change": "regenerated"})
+                        continue
+                    new_case = _persist_case(db, org_id, project_id, req, case, model_name)
                     generated += 1
+                    changed_cases.append({"test_case_id": new_case.id,
+                                          "title": new_case.title, "change": "added"})
             db.commit()
 
         job.progress = 0.98
-        job.message = f"Generated {generated}, discarded {discarded} (grounding), {len(unmappable)} unmappable"
+        job.message = (f"Generated {generated}, refreshed {refreshed}, "
+                       f"preserved {preserved} edited, discarded {discarded} (grounding), "
+                       f"{len(unmappable)} unmappable")
         audit(db, org_id, user_id, "generation.completed", "project", project_id,
               {"generated": generated, "discarded": discarded, "duplicates": duplicates,
+               "refreshed": refreshed, "preserved": preserved,
                "unmappable": len(unmappable), "depth": depth})
         db.commit()
         # BO-07: discarded is reported as a count only — the cases themselves are never shown
         return {"generated": generated, "discarded": discarded,
-                "unmappable": unmappable, "duplicates": duplicates}
+                "unmappable": unmappable, "duplicates": duplicates,
+                "refreshed": refreshed, "preserved_manual_edits": preserved,
+                "changed_cases": changed_cases}
     finally:
         db.close()
 

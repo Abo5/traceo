@@ -18,7 +18,8 @@ from ..db import get_db
 from ..deps import get_project_scoped, require
 from ..models import (Environment, Project, Requirement, RequirementTestCase,
                       Run, TestCase, TestResult, User)
-from .traceability import derive_severity, is_high_priority, run_display_id
+from .traceability import (GAP_NEXT_ACTIONS, derive_severity, gap_reason,
+                           is_high_priority, run_display_id)
 
 router = APIRouter()
 
@@ -133,9 +134,54 @@ def _counts_of(run: Run, entries: list[dict]) -> dict:
 # XLSX traceability matrix (FR-RPT-04, FR-RPT-07)
 # ---------------------------------------------------------------------------
 
+# Column and section labels, EN + AR. `lang=both` stamps "EN / AR" on every header
+# so one file serves an English delivery review and an Arabic contractual annex
+# without exporting twice (FR-071 AC3).
+_XLSX_LABELS = {
+    "Requirements": "المتطلبات", "Test Cases": "حالات الاختبار", "Matrix": "المصفوفة",
+    "Gaps": "الفجوات", "Failures": "الإخفاقات", "Latest Results": "أحدث النتائج",
+    "External ID": "المعرّف", "Description": "الوصف", "Type": "النوع",
+    "Priority": "الأولوية", "State": "الحالة", "Version": "الإصدار",
+    "Confidence": "الثقة", "Linked Cases": "الحالات المرتبطة", "Case ID": "معرّف الحالة",
+    "Title": "العنوان", "Technique": "الأسلوب", "Source": "المصدر",
+    "User Modified": "عُدّلت يدوياً", "Requirements ": "المتطلبات",
+    "Requirement": "المتطلب", "Requirement Description": "وصف المتطلب",
+    "Req State": "حالة المتطلب", "Case Title": "عنوان الحالة",
+    "Case State": "حالة الحالة", "Latest Outcome": "أحدث نتيجة",
+    "Outcome": "النتيجة", "Duration (ms)": "المدة (مللي ثانية)", "Run ID": "معرّف التشغيل",
+    "Executed At": "وقت التنفيذ", "Reason": "السبب", "Next Action": "الإجراء التالي",
+    "Severity": "الشدة", "Assertion": "التحقق", "Expected": "المتوقع",
+    "Actual": "الفعلي", "Run": "التشغيل", "Environment": "البيئة", "Branch": "الفرع",
+    "Exported": "تاريخ التصدير",
+}
+
+_GAP_REASONS_EN = {
+    "no_reachable_endpoint": "No reachable endpoint — import a spec covering it, or link it by hand",
+    "all_cases_disabled": "Linked cases exist but none is approved — approve one in review",
+    "no_approved_cases": "No approved cases — generate cases for this requirement",
+}
+
+
+def _resolve_lang(requested: str | None, project: Project) -> str:
+    lang = (requested or project.language or "en").lower()
+    return lang if lang in ("en", "ar", "both") else "en"
+
+
+def _label(text: str, lang: str) -> str:
+    arabic = _XLSX_LABELS.get(text, text)
+    if lang == "ar":
+        return arabic
+    if lang == "both" and arabic != text:
+        return f"{text} / {arabic}"
+    return text
+
+
 @router.get("/projects/{project_id}/exports/matrix.xlsx")
-def export_matrix(project_id: str, user: User = Depends(require("export")),
+def export_matrix(project_id: str, lang: str | None = None, run_id: str | None = None,
+                  user: User = Depends(require("export")),
                   db: Session = Depends(get_db)):
+    """FR-071 — matrix, failure list and gap list in one workbook. `lang` selects
+    en | ar | both; `run_id` stamps and scopes the failure sheet to one run."""
     project = get_project_scoped(project_id, user, db)
     try:
         from openpyxl import Workbook
@@ -146,7 +192,15 @@ def export_matrix(project_id: str, user: User = Depends(require("export")),
             "code": "missing_dependency",
             "message": "XLSX export requires the 'openpyxl' package (pip install openpyxl)."})
 
-    rtl = project.language == "ar"
+    lang = _resolve_lang(lang, project)
+    rtl = lang in ("ar", "both")
+    stamp_run = None
+    if run_id:
+        stamp_run = db.get(Run, run_id)
+        if not stamp_run or stamp_run.organisation_id != user.organisation_id \
+                or stamp_run.project_id != project_id:
+            raise HTTPException(404, detail={"code": "not_found",
+                                             "message": "Run not found in this project"})
     reqs = (db.query(Requirement)
             .filter(Requirement.project_id == project_id,
                     Requirement.organisation_id == user.organisation_id,
@@ -175,16 +229,33 @@ def export_matrix(project_id: str, user: User = Depends(require("export")),
     wb = Workbook()
     wb.remove(wb.active)
 
+    env_name = ""
+    if stamp_run:
+        env = db.get(Environment, stamp_run.environment_id)
+        env_name = env.name if env else ""
+    # FR-071 AC4: identity on every printed page, not just the first sheet.
+    stamp = " · ".join(filter(None, [
+        f"{_label('Run', lang)} #{run_display_id(db, stamp_run)}" if stamp_run else "",
+        f"{_label('Environment', lang)}: {env_name}" if env_name else "",
+        f"{_label('Branch', lang)}: {stamp_run.branch}" if stamp_run and stamp_run.branch else "",
+        f"{_label('Exported', lang)}: {datetime.now().isoformat(timespec='seconds')}",
+        f"Traceo · {project.name}",
+    ]))
+
     def sheet(title: str, headers: list[str], widths: list[int]):
-        ws = wb.create_sheet(title)
+        # Excel forbids \ / * ? : [ ] in a sheet name, so the bilingual separator
+        # differs from the one used inside cells.
+        ws = wb.create_sheet(_label(title, lang).replace(" / ", " · ")[:31])
         for col, (h, w) in enumerate(zip(headers, widths), 1):
-            cell = ws.cell(row=1, column=col, value=h)
+            cell = ws.cell(row=1, column=col, value=_label(h, lang))
             cell.font = header_font
             cell.fill = header_fill
             cell.alignment = Alignment(vertical="center")
             ws.column_dimensions[get_column_letter(col)].width = w
         ws.freeze_panes = "A2"
         ws.sheet_view.rightToLeft = rtl  # FR-RPT-07: Arabic projects export RTL sheets
+        ws.oddFooter.left.text = stamp[:255]
+        ws.evenFooter.left.text = stamp[:255]
         return ws
 
     def req_label(rid: str) -> str:
@@ -228,7 +299,47 @@ def export_matrix(project_id: str, user: User = Depends(require("export")),
             ws.append([r.external_id or r.id[:8], r.description, r.state,
                        c.id, c.title, c.state, res.outcome if res else "not_run"])
 
-    # -- Sheet 4: Latest Results
+    # -- Sheet 4: Gaps — every confirmed requirement without an approved case (FR-051)
+    ws = sheet("Gaps",
+               ["External ID", "Description", "Priority", "Reason", "Next Action"],
+               [14, 60, 10, 46, 52])
+    for r in reqs:
+        if r.state != "confirmed":
+            continue
+        states = [case_by_id[cid].state for cid in cases_by_req.get(r.id, [])
+                  if cid in case_by_id]
+        if any(s == "approved" for s in states):
+            continue
+        reason = gap_reason(states)
+        ws.append([r.external_id or r.id[:8], r.description, r.priority,
+                   _GAP_REASONS_EN[reason] if lang != "ar" else GAP_NEXT_ACTIONS[reason],
+                   GAP_NEXT_ACTIONS[reason] if lang != "en" else _GAP_REASONS_EN[reason]])
+
+    # -- Sheet 5: Failures — the defect list (FR-052), scoped to one run when asked
+    ws = sheet("Failures",
+               ["Case ID", "Title", "Requirement", "Outcome", "Severity",
+                "Assertion", "Expected", "Actual", "Run ID", "Executed At"],
+               [38, 52, 14, 10, 11, 16, 30, 30, 38, 24])
+    failure_source = (_run_outcomes(db, stamp_run.id) if stamp_run
+                      else {cid: res for cid, res in latest.items()})
+    for cid, res in sorted(failure_source.items(),
+                           key=lambda kv: _iso(kv[1].created_at) or ""):
+        if res.outcome not in ("failed", "errored") or cid not in case_by_id:
+            continue
+        c = case_by_id[cid]
+        linked = reqs_by_case.get(cid, [])
+        high = any(is_high_priority(req_by_id[rid].priority)
+                   for rid in linked if rid in req_by_id)
+        fr = res.failure_reason or {}
+        assertion = fr.get("assertion") if isinstance(fr.get("assertion"), dict) else {}
+        ws.append([c.id, c.title, ", ".join(req_label(rid) for rid in linked),
+                   res.outcome, derive_severity(res.outcome, res.failure_reason, high),
+                   assertion.get("type", "") or ("transport" if fr.get("error") else ""),
+                   str(assertion.get("expected", assertion.get("value", "")))[:200],
+                   str(fr.get("actual", fr.get("error", "")))[:200],
+                   res.run_id, _iso(res.created_at)])
+
+    # -- Sheet 6: Latest Results
     ws = sheet("Latest Results",
                ["Case ID", "Title", "Case State", "Outcome", "Duration (ms)",
                 "Run ID", "Executed At"],
@@ -244,7 +355,7 @@ def export_matrix(project_id: str, user: User = Depends(require("export")),
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
-    filename = f"traceo-matrix-{project.id[:8]}.xlsx"
+    filename = f"traceo-matrix-{project.id[:8]}-{lang}.xlsx"
     return StreamingResponse(
         buf, media_type=XLSX_MEDIA_TYPE,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'})
@@ -374,10 +485,15 @@ th { background: var(--amber); color: #131217; text-align: start; font-size: 12p
 td { border-top: 1px solid var(--border); padding: 8px 12px; font-size: 13px;
      vertical-align: top; }
 .footer { color: var(--muted); font-size: 12px; margin-top: 36px; }
+/* FR-071 AC4 — run identity repeated on every printed page. */
+.page-stamp { display: none; }
 @media print {
   :root { --bg:#FFFFFF; --card:#FFFFFF; --border:#D8D5E0; --text:#1B1A21;
           --muted:#5E5A6E; }
-  body { padding: 0; }
+  body { padding: 0; margin-bottom: 22mm; }
+  .page-stamp { display: block; position: fixed; bottom: 0; inset-inline: 0;
+                font-size: 10px; color: #5E5A6E; padding: 4px 0;
+                border-top: 1px solid #D8D5E0; }
   .kpi, .card, table { box-shadow: none; }
   th { color: #FFFFFF; background: #FF8A22; -webkit-print-color-adjust: exact;
        print-color-adjust: exact; }
@@ -462,8 +578,11 @@ def _defect_card(entry: dict, L: dict) -> str:
 
 
 @router.get("/runs/{run_id}/report.html", response_class=HTMLResponse)
-def run_report_html(run_id: str, user: User = Depends(require("view")),
+def run_report_html(run_id: str, lang: str | None = None,
+                    user: User = Depends(require("view")),
                     db: Session = Depends(get_db)):
+    """The PDF deliverable (print this page). `lang` selects en | ar | both —
+    bilingual renders every label as "EN / AR" in one document (FR-071 AC3)."""
     run = _get_run(run_id, user, db)
     project = db.get(Project, run.project_id)
     env = db.get(Environment, run.environment_id)
@@ -471,8 +590,13 @@ def run_report_html(run_id: str, user: User = Depends(require("view")),
     counts = _counts_of(run, entries)
     display_id = run_display_id(db, run)
 
-    arabic = bool(project and project.language == "ar")
-    L = _LABELS_AR if arabic else _LABELS_EN
+    chosen = _resolve_lang(lang, project) if project else (lang or "en")
+    arabic = chosen == "ar"
+    if chosen == "both":
+        L = {k: (f"{v} / {_LABELS_AR[k]}" if _LABELS_AR.get(k) and _LABELS_AR[k] != v else v)
+             for k, v in _LABELS_EN.items()}
+    else:
+        L = _LABELS_AR if arabic else _LABELS_EN
     dir_attr, lang_attr = ("rtl", "ar") if arabic else ("ltr", "en")
 
     total = counts.get("total", 0)
@@ -535,6 +659,8 @@ def run_report_html(run_id: str, user: User = Depends(require("view")),
 <tbody>{result_rows or '<tr><td colspan="6">—</td></tr>'}</tbody>
 </table>
 <div class="footer">{L["generated_by"]} · {_esc(_iso(run.created_at) or "")}</div>
+<div class="page-stamp">{L["run"]} #{display_id} · {_esc(env.name if env else "")}
+{f" · {_esc(run.branch)}" if run.branch else ""} · {_esc(_iso(run.created_at) or "")}</div>
 </body>
 </html>"""
     return HTMLResponse(content=page)

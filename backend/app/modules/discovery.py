@@ -305,6 +305,10 @@ def _endpoint_dict(e: Endpoint) -> dict:
         "summary": e.summary, "parameters": e.parameters,
         "request_schema": e.request_schema, "response_schemas": e.response_schemas,
         "security": e.security, "tags": e.tags, "excluded": e.excluded,
+        "discovery_source": e.discovery_source or "openapi",
+        "times_seen": e.times_seen or 0,
+        "inferred": bool(e.inferred),
+        "dom_fields": e.dom_fields or [],
     }
 
 
@@ -354,9 +358,15 @@ async def import_api_spec(project_id: str, request: Request,
     source = source[:500]
     title = str((spec.get("info") or {}).get("title") or "")[:300]
 
-    old_rows = db.query(Endpoint).filter(
+    # Only the specification-derived slice is replaced: endpoints contributed by a
+    # traffic capture, a DOM crawl or a Postman import survive a spec re-import and
+    # keep their observation counts (SRS §4.2 — one surface, many sources).
+    all_rows = db.query(Endpoint).filter(
         Endpoint.project_id == project_id,
         Endpoint.organisation_id == user.organisation_id).all()
+    old_rows = [e for e in all_rows if (e.discovery_source or "openapi") == "openapi"]
+    observed_by_key = {_op_key(e.method, e.path): e
+                       for e in all_rows if (e.discovery_source or "openapi") != "openapi"}
     old_by_key = {_op_key(e.method, e.path): e for e in old_rows}
     new_by_key = {_op_key(op["method"], op["path"]): op for op in operations}
 
@@ -399,13 +409,29 @@ async def import_api_spec(project_id: str, request: Request,
 
     for key, op in new_by_key.items():
         prior = old_by_key.get(key)
+        observed = observed_by_key.pop(key, None)
+        if observed is not None:
+            # The spec is the higher-fidelity source: it now owns the declaration,
+            # but the observation count it was never able to know is preserved.
+            observed.api_spec_id = spec_row.id
+            observed.discovery_source = "openapi"
+            observed.inferred = False
+            observed.operation_id = op["operation_id"]
+            observed.summary = op["summary"]
+            observed.parameters = op["parameters"]
+            observed.request_schema = op["request_schema"]
+            observed.response_schemas = op["response_schemas"]
+            observed.security = op["security"]
+            observed.tags = op["tags"]
+            continue
         db.add(Endpoint(
             organisation_id=user.organisation_id, api_spec_id=spec_row.id,
             project_id=project_id, method=op["method"], path=op["path"],
             operation_id=op["operation_id"], summary=op["summary"],
             parameters=op["parameters"], request_schema=op["request_schema"],
             response_schemas=op["response_schemas"], security=op["security"],
-            tags=op["tags"],
+            tags=op["tags"], discovery_source="openapi",
+            times_seen=prior.times_seen if prior else 0,
             excluded=prior.excluded if prior else False,  # FR-DSC-05 survives re-import
         ))
 
@@ -479,10 +505,15 @@ def list_endpoints(project_id: str, user: User = Depends(require("view")),
         Endpoint.organisation_id == user.organisation_id,
     ).order_by(Endpoint.path.asc(), Endpoint.method.asc()).all()
     coverage = _endpoint_coverage(db, project_id, user.organisation_id, rows)
+    # FR-020 AC3: "declared but never seen" is only meaningful once this project has
+    # observed traffic at all — otherwise every spec endpoint would carry the label.
+    has_observations = any((e.times_seen or 0) > 0 for e in rows)
     payload = []
     for e in rows:
         d = _endpoint_dict(e)
         d.update(coverage[e.id])
+        d["declared_never_seen"] = bool(
+            has_observations and d["discovery_source"] == "openapi" and not d["times_seen"])
         payload.append(d)
     return payload
 

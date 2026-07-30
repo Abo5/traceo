@@ -49,8 +49,10 @@ def _env_payload(e: Environment) -> dict:
     # NEVER return decrypted auth values (FR-PRJ-04).
     return {"id": e.id, "project_id": e.project_id, "name": e.name, "base_url": e.base_url,
             "auth_type": e.auth_type, "variables": e.variables or {},
-            "tls_strict": e.tls_strict,
+            "tls_strict": e.tls_strict, "fixtures": e.fixtures or [],
             "auth_config_masked": e.auth_config_encrypted is not None,
+            # FR-083 AC3: name and rotation date only — never the value.
+            "secret_rotated_at": _iso(e.updated_at) if e.auth_config_encrypted else None,
             "created_at": _iso(e.created_at), "updated_at": _iso(e.updated_at)}
 
 
@@ -98,6 +100,7 @@ class EnvironmentCreate(BaseModel):
     auth_config: dict | None = None  # write-only; e.g. {"key","header"} | {"username","password"} | {"token"} | {"client_id","client_secret","token_url"}
     variables: dict = Field(default_factory=dict)
     tls_strict: bool = True
+    fixtures: list = Field(default_factory=list)  # FR-043 test-data lifecycle
 
 
 class EnvironmentUpdate(BaseModel):
@@ -107,6 +110,7 @@ class EnvironmentUpdate(BaseModel):
     auth_config: dict | None = None  # write-only; {} clears the stored secret
     variables: dict | None = None
     tls_strict: bool | None = None
+    fixtures: list | None = None
 
 
 # --- projects ----------------------------------------------------------------
@@ -260,8 +264,14 @@ def _run_outcome_map(db: Session, run_id: str) -> dict[str, TestResult]:
 
 
 @router.get("/projects/{project_id}/dashboard")
-def project_dashboard(project_id: str, user: User = Depends(require("view")),
+def project_dashboard(project_id: str, branch: str | None = None,
+                      environment_id: str | None = None,
+                      drop_threshold: float = 5.0,
+                      user: User = Depends(require("view")),
                       db: Session = Depends(get_db)):
+    """FR-054: the trend series can be filtered by branch and environment, and a
+    coverage drop larger than `drop_threshold` points is marked on the point where
+    it happened."""
     get_project_scoped(project_id, user, db)
     org_id = user.organisation_id
 
@@ -301,19 +311,37 @@ def project_dashboard(project_id: str, user: User = Depends(require("view")),
     display_ids = run_display_ids(db, project_id)
 
     # -- trend (FR-054): last 14 completed runs, oldest -> newest
-    completed = (db.query(Run)
-                 .filter(Run.project_id == project_id, Run.organisation_id == org_id,
-                         Run.state == "completed")
-                 .order_by(Run.created_at.desc(), Run.id.desc())
-                 .limit(14).all())
+    trend_q = (db.query(Run)
+               .filter(Run.project_id == project_id, Run.organisation_id == org_id,
+                       Run.state == "completed"))
+    if branch:
+        trend_q = trend_q.filter(Run.branch == branch)
+    if environment_id:
+        trend_q = trend_q.filter(Run.environment_id == environment_id)
+    completed = (trend_q.order_by(Run.created_at.desc(), Run.id.desc()).limit(14).all())
     completed.reverse()
     trend = []
+    previous_coverage = None
     for r in completed:
         c = r.counts or {}
+        coverage = _run_coverage_pct(r)
+        # AC3: a drop beyond the threshold is marked, not merely plotted.
+        dropped = (previous_coverage is not None
+                   and previous_coverage - coverage > drop_threshold)
         trend.append({"run_id": r.id, "display_id": display_ids.get(r.id),
-                      "coverage_pct": _run_coverage_pct(r),
+                      "coverage_pct": coverage,
                       "passed": c.get("passed", 0), "failed": c.get("failed", 0),
-                      "errored": c.get("errored", 0)})
+                      "errored": c.get("errored", 0),
+                      "branch": r.branch or "", "source": r.source or "manual",
+                      "environment_id": r.environment_id,
+                      "dropped": dropped,
+                      "delta": round(coverage - previous_coverage, 1)
+                      if previous_coverage is not None else None})
+        previous_coverage = coverage
+
+    branches = sorted({r.branch for r in db.query(Run)
+                       .filter(Run.project_id == project_id,
+                               Run.organisation_id == org_id).all() if r.branch})
 
     # -- median run duration over the same window
     durations = [(r.finished_at - r.started_at).total_seconds() * 1000
@@ -390,6 +418,8 @@ def project_dashboard(project_id: str, user: User = Depends(require("view")),
         "coverage_pct": coverage_pct,
         "latest_run": latest_payload,
         "trend": trend,
+        "branches": branches,
+        "drop_threshold": drop_threshold,
         "regression_watch": regression_watch,
         "gaps_detail": gaps_detail,
         "open_defects": open_defects,
@@ -419,7 +449,7 @@ def create_environment(project_id: str, body: EnvironmentCreate,
     env = Environment(organisation_id=user.organisation_id, project_id=project_id,
                       name=body.name.strip(), base_url=body.base_url.strip(),
                       auth_type=body.auth_type, variables=body.variables or {},
-                      tls_strict=body.tls_strict)
+                      tls_strict=body.tls_strict, fixtures=body.fixtures or [])
     if body.auth_config:
         env.auth_config_encrypted = encrypt_secret(body.auth_config)
     db.add(env)
@@ -462,6 +492,9 @@ def update_environment(project_id: str, env_id: str, body: EnvironmentUpdate,
     if body.tls_strict is not None:
         env.tls_strict = body.tls_strict
         changed.append("tls_strict")
+    if body.fixtures is not None:
+        env.fixtures = body.fixtures
+        changed.append("fixtures")
     if changed:
         audit(db, user.organisation_id, user.id, "environment.update", "environment", env.id,
               {"fields": changed})
