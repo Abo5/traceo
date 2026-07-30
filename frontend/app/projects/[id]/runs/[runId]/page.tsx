@@ -82,6 +82,13 @@ export default function RunReportPage() {
           initiator: "المشغّل",
           exportHtml: "تصدير HTML",
           exportHint: "يُفتح التقرير في تبويب جديد (يتطلب جلسة موثّقة)",
+          reportLang: "لغة التقرير",
+          langAr: "العربية",
+          langEn: "الإنجليزية",
+          langBoth: "ثنائي اللغة",
+          syncXray: "مزامنة Xray",
+          syncing: "جارٍ المزامنة…",
+          synced: "تمت المزامنة",
           total: "الكل",
           passed: "ناجح",
           failed: "فاشل",
@@ -147,6 +154,13 @@ export default function RunReportPage() {
           initiator: "Initiator",
           exportHtml: "Export HTML",
           exportHint: "Opens the report in a new tab (requires an authenticated session)",
+          reportLang: "Report language",
+          langAr: "Arabic",
+          langEn: "English",
+          langBoth: "Bilingual",
+          syncXray: "Sync to Xray",
+          syncing: "Syncing…",
+          synced: "Synced",
           total: "Total",
           passed: "Passed",
           failed: "Failed",
@@ -227,6 +241,10 @@ export default function RunReportPage() {
 
   const [gate, setGate] = useState<any | null>(null);
   const [jira, setJira] = useState<any | null>(null);
+  const [xray, setXray] = useState<any | null>(null);
+  const [xraySync, setXraySync] = useState<"idle" | "busy" | "done">("idle");
+  // FR-071 AC3 — the bilingual deliverable is a user choice, not a hidden default.
+  const [reportLang, setReportLang] = useState<"ar" | "en" | "both">("both");
   const [exports, setExports] = useState<Record<string, any>>({});
   const [exporting, setExporting] = useState<string | null>(null);
 
@@ -247,12 +265,26 @@ export default function RunReportPage() {
         setProjRuns(pr ? asList(pr) : []);
         setGate(gateVerdict);
         setJira((ints?.integrations ?? []).find((i: any) => i.type === "jira") ?? null);
+        setXray((ints?.integrations ?? []).find((i: any) => i.type === "xray") ?? null);
         const byCase: Record<string, any> = {};
         for (const e of exp?.exports ?? []) byCase[e.test_case_id] = e;
         setExports(byCase);
       })
       .catch((e) => setError(e?.message || String(e)))
       .finally(() => setLoading(false));
+  }
+
+  /** FR-070 AC3 — create an Xray test execution and sync every verdict into it. */
+  async function syncToXray() {
+    if (!xray) return;
+    setXraySync("busy");
+    try {
+      await api(`/runs/${runId}/xray/sync`, { body: { integration_id: xray.id } });
+      setXraySync("done");
+    } catch (e: any) {
+      setError(e?.message || String(e));
+      setXraySync("idle");
+    }
   }
 
   /** FR-070 — push one failure to Jira; a repeat export updates that same issue. */
@@ -298,7 +330,7 @@ export default function RunReportPage() {
   async function openHtmlReport() {
     try {
       const token = getToken();
-      const res = await fetch(`${API}/runs/${runId}/report.html`, {
+      const res = await fetch(`${API}/runs/${runId}/report.html?lang=${reportLang}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -430,9 +462,26 @@ export default function RunReportPage() {
           </span>
         }
         actions={
-          <Button variant="secondary" onClick={openHtmlReport} title={L.exportHint}>
-            {L.exportHtml}
-          </Button>
+          <div className="row" style={{ gap: 8, alignItems: "center" }}>
+            <Select
+              aria-label={L.reportLang}
+              value={reportLang}
+              onChange={(e) => setReportLang(e.target.value as "ar" | "en" | "both")}
+              style={{ height: 34, fontSize: 12, minWidth: 130 }}
+            >
+              <option value="both">{L.langBoth}</option>
+              <option value="ar">{L.langAr}</option>
+              <option value="en">{L.langEn}</option>
+            </Select>
+            <Button variant="secondary" onClick={openHtmlReport} title={L.exportHint}>
+              {L.exportHtml}
+            </Button>
+            {xray && (
+              <Button variant="secondary" disabled={xraySync === "busy"} onClick={syncToXray}>
+                {xraySync === "busy" ? L.syncing : xraySync === "done" ? L.synced : L.syncXray}
+              </Button>
+            )}
+          </div>
         }
       />
 

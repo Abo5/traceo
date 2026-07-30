@@ -25,6 +25,8 @@ type Env = {
   variables: Record<string, string>;
   tls_strict: boolean;
   auth_config_masked: boolean;
+  secret_rotated_at?: string | null;
+  fixtures?: any[];
 };
 
 type CheckResult = { reachable: boolean; status_code?: number; auth_applied?: boolean; error?: string };
@@ -37,6 +39,7 @@ const EMPTY_FORM = {
   auth_type: "none",
   tls_strict: true,
   variablesText: "",
+  fixturesText: "",
   // secret inputs (write-only; only sent when filled)
   key: "",
   header: "",
@@ -47,6 +50,16 @@ const EMPTY_FORM = {
   client_id: "",
   client_secret: "",
 };
+
+const FIXTURE_EXAMPLE = `[
+  {
+    "name": "seed-customer",
+    "create": { "method": "POST", "path": "/customers",
+                "body": { "name": "{{run_ns}}" } },
+    "extract": { "customer_id": "id" },
+    "delete": { "method": "DELETE", "path": "/customers/{{customer_id}}" }
+  }
+]`;
 
 function varsToText(vars: Record<string, string> | undefined): string {
   if (!vars) return "";
@@ -98,6 +111,11 @@ export default function EnvironmentsPage() {
         clientSecret: "سر العميل",
         secretHint: "تُحفظ الأسرار مشفّرة ولا تُعرض بعد الحفظ — اتركها فارغة للإبقاء على السر الحالي",
         secretSaved: "سر محفوظ",
+        fixtures: "بيانات الاختبار (FR-043)",
+        fixturesHint:
+          "تُنشأ قبل الحزمة وتُحذف بعدها — حتى عند الفشل أو الإلغاء. استخدم {{run_ns}} لتمييز بيانات كل تشغيل",
+        fixturesInvalid: "قائمة بيانات الاختبار ليست JSON صالحاً",
+        fixturesNotArray: "قائمة بيانات الاختبار يجب أن تكون مصفوفة []",
         variables: "المتغيرات",
         variablesHint: "سطر لكل متغيّر بصيغة KEY=VALUE — تُستخدم في الاستيفاء {{var}}",
         tls: "التحقق من شهادة TLS",
@@ -144,6 +162,11 @@ export default function EnvironmentsPage() {
         secretHint:
           "Secrets are stored encrypted and never shown after saving — leave blank to keep the current secret",
         secretSaved: "Secret saved",
+        fixtures: "Test data (FR-043)",
+        fixturesHint:
+          "Created before the suite and removed after — on failure and cancellation too. Use {{run_ns}} to namespace each run's data",
+        fixturesInvalid: "The fixture list is not valid JSON",
+        fixturesNotArray: "The fixture list must be an array []",
         variables: "Variables",
         variablesHint: "One per line as KEY=VALUE — used for {{var}} interpolation",
         tls: "Verify TLS certificate",
@@ -214,6 +237,9 @@ export default function EnvironmentsPage() {
       auth_type: env.auth_type,
       tls_strict: env.tls_strict,
       variablesText: varsToText(env.variables),
+      fixturesText: (env.fixtures ?? []).length
+        ? JSON.stringify(env.fixtures, null, 2)
+        : "",
     });
     setFormError(null);
     setModalOpen(true);
@@ -252,6 +278,27 @@ export default function EnvironmentsPage() {
       variables: textToVars(form.variablesText),
       tls_strict: form.tls_strict,
     };
+    // FR-043 — the fixture list is authored as JSON; a malformed list must not be
+    // silently dropped, so the form refuses to save rather than sending nothing.
+    const fixturesRaw = form.fixturesText.trim();
+    if (fixturesRaw) {
+      let parsed: any;
+      try {
+        parsed = JSON.parse(fixturesRaw);
+      } catch {
+        setFormError(L.fixturesInvalid);
+        setSaving(false);
+        return;
+      }
+      if (!Array.isArray(parsed)) {
+        setFormError(L.fixturesNotArray);
+        setSaving(false);
+        return;
+      }
+      body.fixtures = parsed;
+    } else {
+      body.fixtures = [];
+    }
     // write-only secrets: only send when the user typed something new
     if (authConfig !== undefined) body.auth_config = authConfig;
     try {
@@ -545,6 +592,17 @@ export default function EnvironmentsPage() {
               placeholder={"admin_token=...\nuser_id=42"}
               value={form.variablesText}
               onChange={(e) => setForm((f) => ({ ...f, variablesText: e.target.value }))}
+            />
+          </Field>
+
+          <Field label={L.fixtures} hint={L.fixturesHint}>
+            <Textarea
+              dir="ltr"
+              rows={7}
+              placeholder={FIXTURE_EXAMPLE}
+              value={form.fixturesText}
+              onChange={(e) => setForm((f) => ({ ...f, fixturesText: e.target.value }))}
+              style={{ fontFamily: "'JetBrains Mono',ui-monospace,monospace", fontSize: 11.5 }}
             />
           </Field>
 

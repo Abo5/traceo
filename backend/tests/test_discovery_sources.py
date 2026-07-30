@@ -17,8 +17,19 @@ def test_path_templating_names_parameters_after_their_collection():
     assert templatize("/customers/3f0c9c62-5f1e-4a7a-9b0a-1d2e3f4a5b6c") == \
         "/customers/{customerId}"
     assert templatize("/companies/2024-01-31/report") == "/companies/{companyId}/report"
-    # A word segment is content, not an identifier.
+
+    # Prefixed business identifiers — the dominant style in the systems this product
+    # tests. Missing these forks a near-duplicate endpoint per observed record.
+    assert templatize("/customers/CUST-001") == "/customers/{customerId}"
+    assert templatize("/orders/ORD-1001/items") == "/orders/{orderId}/items"
+    assert templatize("/invoices/INV-2001") == "/invoices/{invoiceId}"
+
+    # A word segment is content, not an identifier — including a hyphenated one,
+    # which is why the digit is required.
     assert templatize("/orders/summary") == "/orders/summary"
+    assert templatize("/account/sign-up") == "/account/sign-up"
+    assert templatize("/orders/order-history") == "/orders/order-history"
+    assert templatize("/api/v2/orders") == "/api/v2/orders"
     assert templatize("/") == "/"
 
 
@@ -119,6 +130,10 @@ def test_traffic_import_merges_with_the_spec_surface(client, register_org, creat
         {"request": {"method": "GET", "url": "https://api.sa/customers/551"},
          "response": {"status": 200, "content": {"mimeType": "application/json",
                                                  "text": '{"id":"551","loyaltyTier":"gold"}'}}},
+        # the same endpoint observed with a prefixed id must fold into the same row
+        {"request": {"method": "GET", "url": "https://api.sa/customers/CUST-001"},
+         "response": {"status": 200, "content": {"mimeType": "application/json",
+                                                 "text": '{"id":"CUST-001"}'}}},
         # never declared — traffic contributes a new endpoint
         {"request": {"method": "GET", "url": "https://api.sa/invoices"},
          "response": {"status": 200, "content": {"mimeType": "application/json",
@@ -135,7 +150,8 @@ def test_traffic_import_merges_with_the_spec_surface(client, register_org, creat
     declared = by_path[("GET", "/customers/{id}")]
     assert declared["discovery_source"] == "openapi", \
         "traffic must not take ownership of a declared endpoint"
-    assert declared["times_seen"] == 1
+    assert declared["times_seen"] == 2, \
+        "a numeric id and a prefixed id are the same endpoint observed twice"
     assert declared["declared_never_seen"] is False
 
     observed = by_path[("GET", "/invoices")]

@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { API, api, getToken } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
-import { Badge, Button, Card, Empty, PageHeader, Pill, Progress, RefChip, StatCard, StatusDot } from "@/components/ui";
+import { Badge, Button, Card, Empty, PageHeader, Pill, Progress, RefChip, Select, StatCard, StatusDot } from "@/components/ui";
 
 type Tone = "success" | "warning" | "error" | "info" | "muted" | "accent";
 
@@ -62,6 +62,10 @@ export default function MatrixPage() {
           errored: "خطأ",
           exportXlsx: "تصدير Excel",
           exporting: "جارٍ التصدير…",
+          lang: "لغة التصدير",
+          langAr: "العربية",
+          langEn: "الإنجليزية",
+          langBoth: "ثنائي اللغة",
           matrix: "المصفوفة",
           empty: "لا توجد متطلبات مؤكّدة",
           emptyHint: "أكّد المتطلبات وولّد حالات لتظهر المصفوفة",
@@ -91,6 +95,10 @@ export default function MatrixPage() {
           errored: "Errored",
           exportXlsx: "Export Excel",
           exporting: "Exporting…",
+          lang: "Export language",
+          langAr: "Arabic",
+          langEn: "English",
+          langBoth: "Bilingual",
           matrix: "Matrix",
           empty: "No confirmed requirements",
           emptyHint: "Confirm requirements and generate cases to populate the matrix",
@@ -123,6 +131,8 @@ export default function MatrixPage() {
   const [statusF, setStatusF] = useState("all");
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  // FR-071 AC3 — the bilingual export must be selectable, not a hidden parameter.
+  const [exportLang, setExportLang] = useState<"ar" | "en" | "both">("both");
 
   function load() {
     setLoading(true);
@@ -151,7 +161,10 @@ export default function MatrixPage() {
     setExporting(true);
     setExportError(null);
     try {
-      await downloadFile(`/projects/${id}/exports/matrix.xlsx`, "traceability-matrix.xlsx");
+      await downloadFile(
+        `/projects/${id}/exports/matrix.xlsx?lang=${exportLang}`,
+        `traceability-matrix-${exportLang}.xlsx`
+      );
     } catch (e: any) {
       setExportError(e?.message || String(e));
     } finally {
@@ -169,9 +182,21 @@ export default function MatrixPage() {
         }
         sub={L.sub}
         actions={
-          <Button variant="secondary" disabled={exporting} onClick={exportXlsx}>
-            {exporting ? L.exporting : L.exportXlsx}
-          </Button>
+          <div className="row" style={{ gap: 8, alignItems: "center" }}>
+            <Select
+              aria-label={L.lang}
+              value={exportLang}
+              onChange={(e) => setExportLang(e.target.value as "ar" | "en" | "both")}
+              style={{ height: 34, fontSize: 12, minWidth: 130 }}
+            >
+              <option value="both">{L.langBoth}</option>
+              <option value="ar">{L.langAr}</option>
+              <option value="en">{L.langEn}</option>
+            </Select>
+            <Button variant="secondary" disabled={exporting} onClick={exportXlsx}>
+              {exporting ? L.exporting : L.exportXlsx}
+            </Button>
+          </div>
         }
       />
 

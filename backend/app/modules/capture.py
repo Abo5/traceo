@@ -44,6 +44,10 @@ _HEX_RE = re.compile(r"^[0-9a-f]{16,}$", re.I)
 _DIGITS_RE = re.compile(r"^\d+$")
 _ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# Prefixed business identifiers — CUST-001, ORD-1001, INV-2001, REQ_14. The digit
+# requirement is what separates an identifier from a hyphenated word like
+# "sign-up" or "order-history", which must stay a literal path segment.
+_PREFIXED_ID_RE = re.compile(r"^[A-Za-z]{1,12}[-_][0-9A-Za-z]{1,24}$")
 
 
 def _utcnow() -> datetime:
@@ -55,10 +59,11 @@ def _utcnow() -> datetime:
 # ---------------------------------------------------------------------------
 
 def templatize(path: str) -> str:
-    """`/orders/8812` -> `/orders/{id}`. A segment is treated as an identifier when it
-    is numeric, a UUID/ULID, a long hex string or an ISO date. The template name is
-    derived from the preceding segment so two different collections do not collide:
-    `/orders/{orderId}` and `/users/{userId}`."""
+    """`/orders/8812` -> `/orders/{orderId}`. A segment is treated as an identifier
+    when it is numeric, a UUID/ULID, a long hex string, an ISO date, or a prefixed
+    business id such as `CUST-001` — the dominant style in the systems this product
+    tests. The template name is derived from the preceding segment so two different
+    collections do not collide: `/orders/{orderId}` and `/users/{userId}`."""
     if not path:
         return "/"
     if not path.startswith("/"):
@@ -69,9 +74,10 @@ def templatize(path: str) -> str:
         if not segment:
             out.append(segment)
             continue
+        prefixed_id = bool(_PREFIXED_ID_RE.match(segment)) and any(ch.isdigit() for ch in segment)
         if (_DIGITS_RE.match(segment) or _UUID_RE.match(segment)
                 or _HEX_RE.match(segment) or _ULID_RE.match(segment)
-                or _DATE_RE.match(segment)):
+                or _DATE_RE.match(segment) or prefixed_id):
             parent = ""
             for prior in reversed(segments[:index]):
                 if prior and not prior.startswith("{"):

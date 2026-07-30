@@ -24,11 +24,20 @@ flowchart TB
         TR["Traceability + Reporting"]
     end
 
+    subgraph OPS["الأتمتة والتكاملات"]
+        AU["Automation — CI Gate · Scheduler"]
+        IN["Integrations — Jira/Xray · Confluence · Slack"]
+    end
+
     API --> RP
     API --> DE
     API --> TG
     API --> EX
     API --> TR
+    API --> AU
+    API --> IN
+    AU --> EX
+    IN --> RP
 
     subgraph JOBS["Job Workers"]
         JW["Threads في MVP — مسار إلى Celery"]
@@ -48,6 +57,9 @@ flowchart TB
     RP --> FS
     DE --> FS
 
+    CAP["Capture Sources — HAR · DOM · Postman · Playwright (اختياري)"]
+    CAP --> DE
+
     subgraph LLM["LLM Abstraction Layer"]
         MOCK["Mock Provider — deterministic"]
         CLAUDE["Claude API"]
@@ -58,9 +70,29 @@ flowchart TB
 
     SUT["System Under Test"]
     EX -->|"HTTP — أدلة كاملة مع حجب الأسرار"| SUT
+    EXT["أنظمة الفريق — Jira · Confluence · Slack"]
+    IN -->|"عبر بوابة خروج واحدة"| EXT
 ```
 
 المحرك الوحيد الذي لا يلمس النموذج اللغوي إطلاقاً هو **Discovery Engine** — حتميته هي ما يجعل بوابة التحقق (Grounding) ممكنة أصلاً: الجرد المكتشف هو مرجع الحقيقة الذي تُفحص ضده كل حالة مولَّدة. تعطُّل مزوّد النموذج يعطّل التوليد فقط؛ الاستيعاب والتنفيذ والتتبّع والتقارير تستمر (NFR-REL-03).
+
+### سطح واحد من مصادر متعددة — One surface, many sources
+
+المواصفة ليست المصدر الوحيد للجرد. `modules/capture.py` يبني السطح نفسه من التقاط حركة المرور (HAR) ومن نماذج الـ DOM ومن مجموعات Postman، ويدمجها بقاعدة أولوية واحدة:
+
+```
+openapi  >  traffic  >  dom  >  postman        (لكل خاصية)
+```
+
+المصدر الأعلى دقةً يملك «الإعلان»، لكن **عدّاد الرصد يتراكم دائماً** من كل المصادر. ومسار مرصود يُطابَق بنيوياً على نقطة مُعلَنة بنفس الشكل، فلا يتفرّع `‎/customers/{customerId}` عن `‎/customers/{id}`. لهذا يبقى إعادة استيراد المواصفة آمناً: يستبدل الشريحة المُعلَنة فقط، وما ساهمت به المصادر الأخرى — وعدّادات رصده — يبقى.
+
+التقاط حركة المرور يُنقّح بيانات الاعتماد **عند نقطة الالتقاط**؛ والأجسام تُختزل إلى أسماء الحقول وأنواعها المستنتَجة، فلا تُخزَّن قيمة ملتقَطة أصلاً.
+
+### الأتمتة والتكاملات
+
+`modules/automation.py` يضيف بوابة تسليم تُقيَّم بعد انتهاء التشغيل وتُرجع رمز خروج يفهمه خط الأنابيب، ومجدولاً بصيغة cron يعمل كخيط داخل العملية. المسارات الثلاثة لبدء التشغيل — يدوي، CI، مجدول — تمرّ كلها عبر `start_run(...)` نفسه، فيستحيل أن يسلك تشغيل CI مساراً مختلفاً عن اليدوي.
+
+`modules/integrations.py` هو **المخرج الوحيد** إلى أنظمة الفريق: كل نداء خارجي يمرّ عبر `_request` التي تفرض قائمة السماح في وضع on-premise (FR-081)، وهي أيضاً نقطة الاستبدال الوحيدة في الاختبارات.
 
 ---
 
@@ -420,21 +452,25 @@ flowchart LR
 | POST | `/members/invite` | دعوة عضو بدور محدد (manage_members) |
 | PATCH / DELETE | `/members/{id}` | تغيير دور / إزالة عضو |
 | GET | `/audit` | سجل التدقيق، الأحدث أولاً (view_audit_log) |
+| GET / PUT | `/audit/retention` | مدة الاحتفاظ (افتراضياً 90 يوماً) — التعديل للمدير (FR-082) |
+| POST | `/audit/purge` | مسار الحذف الوحيد، ولا يمسّ سجلاً قبل تاريخ احتفاظه |
+| GET | `/audit/export.csv` | تصدير السجل كاملاً للمدقّق |
 
 ### Projects — المشاريع والبيئات (`modules/projects.py`)
 
 | Method | Path | الوصف |
 |---|---|---|
 | CRUD | `/projects` | إنشاء / تسمية / أرشفة / حذف |
-| GET | `/projects/{id}/dashboard` | عدادات المتطلبات والحالات والتغطية وآخر تشغيل (FR-PRJ-07) |
-| CRUD | `/projects/{id}/environments` | البيئات — الأسرار write-only، تُعاد `auth_config_masked` فقط (FR-PRJ-04) |
+| GET | `/projects/{id}/dashboard` | العدادات والتغطية والاتجاه ومراقبة الانحدار — فلاتر `branch`/`environment_id` وعتبة الهبوط (FR-PRJ-07، FR-054، FR-062) |
+| CRUD | `/projects/{id}/environments` | البيئات — الأسرار write-only، تُعاد `auth_config_masked` + `secret_rotated_at` فقط (FR-PRJ-04). الحقل `fixtures` يعرّف دورة حياة بيانات الاختبار (FR-043) |
 | POST | `/projects/{id}/environments/{eid}/check` | فحص اتصال ومصادقة دون كشف السر (FR-PRJ-06) |
 
 ### Ingestion — استيعاب المتطلبات (`modules/ingestion.py`)
 
 | Method | Path | الوصف |
 |---|---|---|
-| POST | `/projects/{id}/documents` | رفع وثيقة (pdf/docx/md/txt ≤ 50MB) → `202 {job_id, document_id}` |
+| POST | `/projects/{id}/documents` | رفع وثيقة (pdf/docx/xlsx/md/txt ≤ 50MB) → `202 {job_id, document_id}` |
+| POST | `/projects/{id}/requirements/paste` | لصق نص المتطلبات مباشرة — مخرج الحالة الفارغة (FR-010) |
 | GET | `/projects/{id}/documents` | الوثائق وإصداراتها وحالة التحليل |
 | GET | `/projects/{id}/requirements` | قائمة المتطلبات — فلاتر state/type/priority/q، الأقل ثقة أولاً |
 | PATCH | `/requirements/{rid}` | تحرير أو تأكيد؛ تحرير المؤكد يرفع الإصدار ويوسم الحالات Stale |
@@ -446,14 +482,24 @@ flowchart LR
 | Method | Path | الوصف |
 |---|---|---|
 | POST | `/projects/{id}/api-specs` | استيراد OpenAPI 3.x / Swagger 2.0 ملفاً أو رابطاً — تحليل متزامن مع `warnings`، وحارس SSRF على الجلب |
-| GET | `/projects/{id}/endpoints` | جرد الواجهات المطبَّع |
+| GET | `/projects/{id}/endpoints` | جرد الواجهات المطبَّع — مع `discovery_source` و`times_seen` و`declared_never_seen` |
 | PATCH | `/endpoints/{eid}` | استبعاد/تضمين واجهة من التوليد (FR-DSC-05) |
+
+### Capture — مصادر الاكتشاف الأخرى (`modules/capture.py`)
+
+| Method | Path | الوصف |
+|---|---|---|
+| POST | `/projects/{id}/discovery/traffic` | التقاط HAR — تعميم المسارات، عدّ الرصد، تنقيح الاعتماد عند الالتقاط (FR-021) |
+| POST | `/projects/{id}/discovery/dom` | نماذج الـ DOM — الحقول وقيود التحقق وحاويات RTL (FR-022) |
+| POST | `/projects/{id}/discovery/postman` | مجموعة v2.1 — المجلدات وسوم، والمتغيرات غير المحلولة تُبلَّغ لا تُخمَّن (FR-023) |
+| POST | `/projects/{id}/discovery/crawl` | قيادة التطبيق بمتصفح مخفي (Playwright اختياري — 501 مع تعليمات التثبيت عند غيابه) |
+| POST | `/projects/{id}/discovery/reset` | إسقاط مساهمة مصدر غير المواصفة |
 
 ### Generation — الربط والتوليد والتحقق (`modules/generation.py`)
 
 | Method | Path | الوصف |
 |---|---|---|
-| POST | `/projects/{id}/generate` | توليد لمتطلبات مختارة أو الكل، بعمق smoke/standard/exhaustive → `202 {job_id}`؛ الناتج `{generated, discarded, unmappable}` |
+| POST | `/projects/{id}/generate` | توليد لمتطلبات مختارة أو الكل، بعمق smoke/standard/exhaustive → `202 {job_id}`؛ الناتج `{generated, discarded, unmappable, refreshed, preserved_manual_edits, changed_cases}`. الحالات المحرَّرة يدوياً محميّة من إعادة التوليد (FR-036) |
 
 ### Review — المراجعة والاعتماد (`modules/review.py`)
 
@@ -471,7 +517,7 @@ flowchart LR
 
 | Method | Path | الوصف |
 |---|---|---|
-| POST | `/projects/{id}/runs` | بدء تشغيل على بيئة → `202 {job_id, run_id}`؛ نتائج جزئية تتدفق أثناء التنفيذ |
+| POST | `/projects/{id}/runs` | بدء تشغيل على بيئة (مع `branch` و`concurrency` 1..32) → `202 {job_id, run_id}`؛ نتائج جزئية تتدفق أثناء التنفيذ. بيانات الاختبار تُنشأ قبل الحزمة وتُحذف في `finally` — عند النجاح والفشل والإلغاء (FR-043) |
 | GET | `/runs/{id}` | الحالة والعدادات |
 | GET | `/runs/{id}/results` | نتائج كل حالة مع الأدلة (فلتر outcome) |
 | POST | `/runs/{id}/cancel` | إلغاء مع حفظ الجزئي (FR-EXE-10) |
@@ -488,10 +534,32 @@ flowchart LR
 
 | Method | Path | الوصف |
 |---|---|---|
-| GET | `/projects/{id}/exports/matrix.xlsx` | تصدير Excel بأربع أوراق — RTL عندما لغة المشروع عربية (FR-RPT-07) |
+| GET | `/projects/{id}/exports/matrix.xlsx` | تصدير Excel بست أوراق (تشمل الفجوات والإخفاقات) — `lang=en\|ar\|both`، وختم هوية التشغيل في تذييل كل صفحة (FR-071) |
 | GET | `/runs/{id}/report` | ملخص JSON بصيغة تقرير عيوب (FR-RPT-01/02/03) |
-| GET | `/runs/{id}/report.html` | تقرير HTML مكتفٍ ذاتياً قابل للطباعة — `dir=rtl` للعربية (FR-RPT-05) |
+| GET | `/runs/{id}/report.html` | تقرير HTML مكتفٍ ذاتياً قابل للطباعة — `lang=en\|ar\|both` (FR-RPT-05، FR-071) |
 | GET | `/runs/{id}/compare/{other_id}` | مقارنة تشغيلين — newly_failing / newly_passing (FR-RPT-06) |
+
+### Automation — البوابة والجدولة (`modules/automation.py`)
+
+| Method | Path | الوصف |
+|---|---|---|
+| GET / PUT | `/projects/{id}/gate` | سياسة بوابة التسليم: أدنى تغطية، أقصى إخفاقات جديدة، سبب المنع (FR-061) |
+| GET | `/runs/{id}/gate` | الحكم: `passed`، `exit_code`، و`breaches` تسمّي المتطلب المخروق. المقارنة داخل الفرع نفسه |
+| POST | `/projects/{id}/ci/runs` | بدء تشغيل موسوم `source=ci`؛ 409 إذا كانت البيئة مشغولة |
+| GET/POST/DELETE | `/tokens` | رموز مشغّلات CI — يُخزَّن الهاش فقط، وتُعرض القيمة مرة واحدة (manage_tokens) |
+| CRUD | `/projects/{id}/schedules` | جدولة cron لكل بيئة، بتوقيت السعودية افتراضياً؛ المتداخل يُؤجَّل لا يُنفَّذ بالتوازي (FR-060) |
+
+### Integrations — التكاملات (`modules/integrations.py`)
+
+| Method | Path | الوصف |
+|---|---|---|
+| CRUD | `/integrations` | Jira / Xray / Confluence / Slack — السر write-only، ويُعاد `secret_set` و`secret_rotated_at` فقط |
+| POST | `/integrations/{id}/check` | فحص الاتصال وبيانات الاعتماد |
+| POST | `/runs/{rid}/results/{id}/export` | تصدير عيب إلى Jira؛ إعادة التصدير **تُحدِّث** التذكرة نفسها (FR-070) |
+| POST | `/runs/{rid}/xray/sync` | إنشاء تنفيذ اختبار في Xray ومزامنة الأحكام |
+| POST | `/runs/{rid}/notify` | ملخص إلى Slack — يُطلق تلقائياً عند اكتمال التشغيل حسب مستوى التنبيه |
+| GET | `/integrations/{id}/confluence/pages` | صفحات الفضاء للاختيار |
+| POST | `/projects/{id}/confluence/import` | استيراد الصفحات عبر خط الاستيعاب نفسه — إعادة الاستيراد ترفع الإصدار وتوسم الحالات (FR-011) |
 
 ### Jobs — المهام
 
