@@ -242,3 +242,78 @@ def test_a_failure_quotes_the_criterion_it_violates(client, register_org, create
     html = client.get(f"/v1/runs/{run_id}/report.html", headers=headers).text
     assert statement in html, "the printable defect report must quote the criterion"
     assert "AC1" in html
+
+
+# ---------------------------------------------------------------- attribution width
+
+def test_subject_attribution_closes_false_gaps_without_inventing_coverage():
+    """The one place attribution widens. It must key on the field the case is ABOUT."""
+    from app.modules.generation import attribute_by_subject
+
+    criteria = [
+        {"index": "AC1", "statement": "قيمة age أقل من 18 تُرفض بالرمز 422"},
+        {"index": "AC2", "statement": "قيمة age أكبر من 120 تُرفض بالرمز 422"},
+        {"index": "AC3", "statement": "زمن الاستجابة يُقاس عند بوابة الـ API"},
+        {"index": "AC4", "statement": "the phone_number must be ten digits"},
+    ]
+
+    # A boundary case on `age` is real evidence for the other age criterion.
+    assert attribute_by_subject(criteria, ["age"], ["AC1"]) == ["AC2"]
+
+    # A criterion naming no field the suite touches stays uncovered — the honest
+    # answer, because no API assertion verifies where latency is measured.
+    assert "AC3" not in attribute_by_subject(criteria, ["age"], [])
+
+    # snake_case / prose gap is bridged, but only for the field actually exercised.
+    assert attribute_by_subject(criteria, ["phone_number"], []) == ["AC4"]
+    assert attribute_by_subject(criteria, ["email"], []) == []
+
+    # A case about nothing in particular (a plain positive request) claims nothing.
+    assert attribute_by_subject(criteria, [], []) == []
+
+    # Never re-cites what is already cited.
+    assert attribute_by_subject(criteria, ["age"], ["AC1", "AC2"]) == []
+
+
+def test_generation_attributes_a_boundary_case_to_the_criterion_that_states_it(
+        client, register_org, create_project):
+    headers = register_org("Cross Attribution Org")
+    pid = create_project(headers, name="Bounds", language="en")
+    import_spec(client, headers, pid)
+    rid = add_requirement(
+        client, headers, pid, "REQ-004", "Customer age rules on create customer",
+        criteria=["age below 18 is rejected when creating a customer",
+                  "age above 120 is rejected",
+                  "response time is measured at the API gateway"],
+        priority="high")
+    confirm_requirement(client, headers, rid)
+    poll_job(client, headers, client.post(f"/v1/projects/{pid}/generate",
+                                          json={"depth": "standard"},
+                                          headers=headers).json()["job_id"])
+    drafts = items_of(client.get(f"/v1/projects/{pid}/test-cases",
+                                 params={"state": "draft"}, headers=headers).json())
+    client.post("/v1/test-cases/bulk",
+                json={"ids": [d["id"] for d in drafts], "action": "approve"},
+                headers=headers)
+
+    row = next(r for r in client.get(f"/v1/projects/{pid}/traceability",
+                                     headers=headers).json()["rows"]
+               if r["requirement"]["id"] == rid)
+    covered = {c["index"]: c["covered"] for c in row["criteria"]}
+
+    assert covered["AC2"] is True, \
+        "the age boundary cases are evidence for 'age above 120 is rejected'"
+
+    # NOTE on what this does and does not guarantee. AC3 ("response time is measured
+    # at the API gateway") is not verifiable by an API assertion, yet it can still be
+    # reported as covered: the mapper selected an endpoint for it, so cases were
+    # generated citing it. Mapping precision belongs to the mapper (an LLM bounded by
+    # MIN_MAP_CONFIDENCE), and the deterministic offline provider is lenient.
+    #
+    # A lexical "does this criterion mention the endpoint's fields" gate was tried
+    # here and removed: it silently dropped legitimate criteria that name no field,
+    # such as "an unauthorised caller is rejected". Losing real coverage to make a
+    # number look better is the worse error. The human review gate — no case counts
+    # until someone approves it — is what catches a case citing a criterion it does
+    # not verify, and that is by design, not by omission.
+    assert "AC3" in covered

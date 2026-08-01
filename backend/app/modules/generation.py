@@ -562,10 +562,16 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str,
     inputs = _constrained_inputs(ep)
     cases: list[dict] = []
 
-    def mk(title: str, technique: str, ctype: str, step: dict) -> dict:
+    def mk(title: str, technique: str, ctype: str, step: dict,
+           subject: str | list[str] | None = None) -> dict:
+        """`subject` is the input this case is ABOUT — not every field it happens to
+        send. A positive request sets every field, but it is about none of them in
+        particular; a boundary case on `age` is about `age`. Attribution reads this,
+        so a loose reading here would over-claim coverage."""
+        subjects = [subject] if isinstance(subject, str) else list(subject or [])
         return {"title": title[:500], "description": description, "preconditions": preconditions,
                 "type": ctype, "priority": req.priority or "medium", "technique": technique,
-                "steps": [step], "requirement_ids": [req.id]}
+                "steps": [step], "requirement_ids": [req.id], "subjects": subjects}
 
     # -- Positive (all depths): valid EP class with representative values
     cases.append(mk(f"Positive: valid request — {suffix}", "ep", "positive",
@@ -596,7 +602,7 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str,
                                "op": "contains", "expected": "utf-8"})
             cases.append(mk(f"Localisation: Arabic round-trip in {loc_inp['name']} — {suffix}",
                             "localisation", "positive",
-                            _step(ep, p2, headers, b2, assertions)))
+                            _step(ep, p2, headers, b2, assertions), loc_inp["name"]))
 
     if depth == "smoke":
         return cases
@@ -608,7 +614,7 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str,
             continue
         p2, b2 = _apply_input(inp, bad, params, body)
         cases.append(mk(f"EP: invalid {inp['name']} ({constraint}) — {suffix}", "ep", "negative",
-                        _step(ep, p2, headers, b2, [_error_assertion(ep)])))
+                        _step(ep, p2, headers, b2, [_error_assertion(ep)]), inp["name"]))
 
     # -- BVA: min / min+1 / max-1 / max — only explicit bounds (FR-GEN-04)
     for inp in inputs:
@@ -639,19 +645,19 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str,
             seen.add(key)
             p2, b2 = _apply_input(inp, val, params, body)
             cases.append(mk(f"BVA: {inp['name']} at {label} boundary — {suffix}", "bva", "boundary",
-                            _step(ep, p2, headers, b2, _positive_assertions(ep))))
+                            _step(ep, p2, headers, b2, _positive_assertions(ep)), inp["name"]))
 
     # -- Negative suite (FR-GEN-08)
     for missing in _required_inputs(ep):
         p2, b2 = _drop_input(missing, params, body)
         cases.append(mk(f"Negative: missing required {missing['name']} — {suffix}", "negative", "negative",
-                        _step(ep, p2, headers, b2, [_error_assertion(ep)])))
+                        _step(ep, p2, headers, b2, [_error_assertion(ep)]), missing["name"]))
 
     for inp in inputs:
         if inp["schema"].get("type") in ("integer", "number"):
             p2, b2 = _apply_input(inp, "not_a_number", params, body)
             cases.append(mk(f"Negative: wrong type for {inp['name']} — {suffix}", "negative", "negative",
-                            _step(ep, p2, headers, b2, [_error_assertion(ep)])))
+                            _step(ep, p2, headers, b2, [_error_assertion(ep)]), inp["name"]))
             break  # one wrong-type probe per endpoint
 
     if ep.security:
@@ -692,7 +698,7 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str,
                             "negative", "negative",
                             _step(ep, p2, headers, b2,
                                   [{"type": "status_code", "expected": 400,
-                                    "expected_any": [400, 413, 422]}])))
+                                    "expected_any": [400, 413, 422]}]), inp["name"]))
             break
 
     # -- FR-033: injection-shaped strings — must be handled, never a 5xx
@@ -705,7 +711,7 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str,
                             "negative", "negative",
                             _step(ep, p2, headers, b2,
                                   [{"type": "status_code", "expected": 200,
-                                    "expected_any": [200, 201, 400, 422]}])))
+                                    "expected_any": [200, 201, 400, 422]}]), inj_inp["name"]))
 
     if depth != "exhaustive":
         return cases
@@ -717,7 +723,8 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str,
             for val in enum[:MAX_ENUM_SWEEP]:
                 p2, b2 = _apply_input(inp, val, params, body)
                 cases.append(mk(f"EP: enum sweep {inp['name']}={val} — {suffix}", "ep", "positive",
-                                _step(ep, p2, headers, b2, _positive_assertions(ep))))
+                                _step(ep, p2, headers, b2, _positive_assertions(ep)),
+                                inp["name"]))
 
     # -- Decision tables (FR-032): valid/invalid combinations across interacting inputs.
     #    An input with no invalid representative cannot vary, so its "invalid" half of
@@ -753,7 +760,9 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str,
             assertions = _positive_assertions(ep) if all_valid else [_error_assertion(ep)]
             case = mk(f"Decision table {ci + 1}: {', '.join(labels)} — {suffix}",
                       "decision_table", "positive" if all_valid else "negative",
-                      _step(ep, p2, headers, b2, assertions))
+                      _step(ep, p2, headers, b2, assertions),
+                      # A decision-table row is about every input it varies.
+                      [i["name"] for i in variable_inputs])
             if disclosure:
                 case["description"] = case["description"] + disclosure
             cases.append(case)
@@ -797,6 +806,47 @@ def _attach_criterion(db: Session, requirement_id: str, case_id: str, index: str
     current = list(link.criterion_indexes or [])
     if index not in current:
         link.criterion_indexes = current + [index]
+
+
+_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]+|[؀-ۿ]+")
+
+
+def _statement_tokens(text: str) -> set[str]:
+    """Lowercased word tokens, plus the parts of snake_case / camelCase names, so a
+    criterion writing "phone number" matches a field called `phone_number`."""
+    tokens: set[str] = set()
+    for raw in _TOKEN_RE.findall(text or ""):
+        low = raw.lower()
+        tokens.add(low)
+        tokens.update(part for part in re.split(r"[_\-]", low) if len(part) > 2)
+        tokens.update(part.lower() for part in re.findall(r"[A-Z]?[a-z]+", raw) if len(part) > 2)
+    return tokens
+
+
+def attribute_by_subject(criteria: list[dict], subjects: list[str],
+                         already_cited: list[str]) -> list[str]:
+    """Extra criteria this case demonstrably verifies, beyond the one that mapped it.
+
+    A criterion is added ONLY when the field the case is about is named in the
+    criterion's own words. "قيمة age أكبر من 120 تُرفض" names `age`, and the boundary
+    case on `age` is genuinely evidence for it — reporting that criterion as uncovered
+    would be a false gap. A criterion that names no field the suite touches
+    ("measured at the API gateway") matches nothing and stays uncovered, which is the
+    honest answer: no API assertion verifies it.
+
+    This is the one place attribution widens, and it is deliberately keyed on the
+    subject field alone — never on generic overlap, which would let any criterion
+    claim any case."""
+    if not subjects:
+        return []
+    extra: list[str] = []
+    for criterion in criteria:
+        if criterion["index"] in already_cited or criterion["index"] in extra:
+            continue
+        tokens = _statement_tokens(criterion["statement"])
+        if any(_statement_tokens(subject) & tokens for subject in subjects):
+            extra.append(criterion["index"])
+    return extra
 
 
 def _archive_orphaned_cases(db: Session, req: Requirement) -> int:
@@ -954,7 +1004,7 @@ def _run_generation(job, org_id: str, user_id: str, project_id: str,
 
         provider = get_provider()
         generated = discarded = duplicates = 0
-        preserved = refreshed = archived = 0
+        preserved = refreshed = archived = cross_attributed = 0
         changed_cases: list[dict] = []
         total = max(len(reqs), 1)
 
@@ -980,6 +1030,7 @@ def _run_generation(job, org_id: str, user_id: str, project_id: str,
             # key -> case id, so two criteria that produce the same case share it
             # instead of duplicating it; the case then names both.
             emitted_this_run: dict[tuple, str] = {}
+            subjects_by_case: dict[str, list[str]] = {}
 
             for criterion in criteria:
                 job.message = f"Mapping {label} / {criterion['index']}"
@@ -1054,6 +1105,7 @@ def _run_generation(job, org_id: str, user_id: str, project_id: str,
                         prior = refreshable.get(key)
                         if prior is not None:
                             emitted_this_run[key] = prior.id
+                            subjects_by_case[prior.id] = case.get("subjects") or []
                             if _refresh_case(db, prior, req, case, model_name,
                                              [criterion["index"]]):
                                 refreshed += 1
@@ -1065,11 +1117,28 @@ def _run_generation(job, org_id: str, user_id: str, project_id: str,
                         new_case = _persist_case(db, org_id, project_id, req, case,
                                                  model_name, [criterion["index"]])
                         emitted_this_run[key] = new_case.id
+                        subjects_by_case[new_case.id] = case.get("subjects") or []
                         generated += 1
                         changed_cases.append({"test_case_id": new_case.id,
                                               "title": new_case.title,
                                               "criterion": criterion["index"],
                                               "change": "added"})
+            # Second attribution pass: a case whose subject field is named by another
+            # criterion of this requirement is evidence for that criterion too.
+            # Without it the matrix shows a false gap — "age above 120 is rejected"
+            # reported as untested while the boundary case on `age` sits right there.
+            for case_id, subjects in subjects_by_case.items():
+                link = db.scalar(select(RequirementTestCase).where(
+                    RequirementTestCase.requirement_id == req.id,
+                    RequirementTestCase.test_case_id == case_id))
+                if link is None:
+                    continue
+                cited = list(link.criterion_indexes or [])
+                extra = attribute_by_subject(criteria, subjects, cited)
+                if extra:
+                    link.criterion_indexes = cited + extra
+                    cross_attributed += len(extra)
+
             archived += _archive_orphaned_cases(db, req)
             db.commit()
 
@@ -1080,13 +1149,15 @@ def _run_generation(job, org_id: str, user_id: str, project_id: str,
         audit(db, org_id, user_id, "generation.completed", "project", project_id,
               {"generated": generated, "discarded": discarded, "duplicates": duplicates,
                "refreshed": refreshed, "preserved": preserved, "archived": archived,
+               "cross_attributed": cross_attributed,
                "unmappable": len(unmappable), "depth": depth})
         db.commit()
         # BO-07: discarded is reported as a count only — the cases themselves are never shown
         return {"generated": generated, "discarded": discarded,
                 "unmappable": unmappable, "duplicates": duplicates,
                 "refreshed": refreshed, "preserved_manual_edits": preserved,
-                "archived": archived, "changed_cases": changed_cases}
+                "archived": archived, "cross_attributed": cross_attributed,
+                "changed_cases": changed_cases}
     finally:
         db.close()
 

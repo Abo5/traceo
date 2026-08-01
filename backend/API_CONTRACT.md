@@ -47,12 +47,23 @@ all cite these labels. A removed criterion retires its number permanently, and a
 whose criterion disappeared is ARCHIVED rather than deleted — its results are evidence
 of what was true at the time.
 
-**Attribution is deliberately conservative.** A case is credited only to the criterion
-whose mapping produced it. A boundary case derived from the endpoint schema therefore
-credits the criterion that put that endpoint in scope, not every criterion it might
-incidentally exercise — so the matrix under-claims rather than over-claims coverage.
-For a document that ends up in a contract, an unclaimed truth is recoverable and a
-false claim is not.
+**Attribution widens once, on evidence.** A case is credited to the criterion whose
+mapping produced it, plus any sibling criterion that NAMES the field the case is about
+(`generation.attribute_by_subject`). A boundary case on `age` is genuine evidence for
+"age above 120 is rejected"; reporting that criterion as untested would be a false gap.
+The widening keys on the case's subject field alone — never on generic word overlap,
+which would let any criterion claim any case — and a case about nothing in particular,
+such as a plain positive request, claims nothing.
+
+**Known limit, stated rather than hidden.** Whether a criterion gets cases at all
+depends on the mapper's precision. A non-functional sentence ("response time is
+measured at the API gateway") can still be selected by the mapper and will then be
+reported as covered. A lexical gate requiring the criterion to mention the endpoint's
+fields was implemented here and REMOVED: it silently dropped legitimate criteria that
+name no field, such as "an unauthorised caller is rejected". Losing real coverage to
+improve a number is the worse error. The human review gate — no case counts until
+someone approves it — is the designed control for this, and MIN_MAP_CONFIDENCE is the
+tunable one.
 
 ## LLM prompt contract (MockProvider heuristics depend on these exact markers)
 
