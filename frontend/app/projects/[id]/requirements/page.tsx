@@ -15,6 +15,7 @@ import {
   PageHeader,
   Pill,
   Progress,
+  RefChip,
   Select,
   StatusDot,
   Textarea,
@@ -109,6 +110,7 @@ export default function RequirementsPage() {
           medium: "متوسطة",
           low: "منخفضة",
           criteria: "معيار قبول",
+          needsCriteria: "بحاجة إلى معيار قبول",
           v: "إصدار",
         }
       : {
@@ -152,6 +154,7 @@ export default function RequirementsPage() {
           medium: "Medium",
           low: "Low",
           criteria: "acceptance criteria",
+          needsCriteria: "needs a criterion",
           v: "v",
         };
 
@@ -523,7 +526,23 @@ export default function RequirementsPage() {
                           {r.acceptance_criteria.length} {L.criteria}
                         </span>
                       )}
+                      {/* FR-013 AC3 — a requirement nothing can be generated for */}
+                      {r.needs_criteria && <Badge tone="warning">{L.needsCriteria}</Badge>}
                     </div>
+
+                    {/* FR-013 AC2 — the addressable units cases and defects cite */}
+                    {Array.isArray(r.criteria) && r.criteria.length > 0 && (
+                      <div style={{ marginTop: 8, display: "grid", gap: 4 }}>
+                        {r.criteria.map((c: any) => (
+                          <div key={c.index} className="row" style={{ gap: 8, alignItems: "flex-start" }}>
+                            <RefChip id={c.index} />
+                            <span dir="auto" style={{ fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.6 }}>
+                              {c.statement}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div style={{ width: 130, flexShrink: 0 }}>
                     <div

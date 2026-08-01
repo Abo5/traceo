@@ -90,6 +90,11 @@ class Requirement(TimestampMixin, Base):
     source_text: Mapped[str] = mapped_column(Text, default="")  # original text shown side-by-side
     confidence: Mapped[float] = mapped_column(Float, default=1.0)  # FR-REQ-08
     content_hash: Mapped[str] = mapped_column(String(64), default="")  # drives staleness FR-TRC-04
+    # FR-013 AC2: statement hash -> "AC1". Numbers follow the STATEMENT, not its
+    # position, so inserting a criterion does not renumber the ones already tested.
+    criteria_numbering: Mapped[dict] = mapped_column(JSON, default=dict)
+    # FR-013 AC3: no criterion could be derived — a human must supply one.
+    needs_criteria: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class ApiSpec(TimestampMixin, Base):
@@ -166,6 +171,10 @@ class RequirementTestCase(Base):
     test_case_id: Mapped[str] = mapped_column(ForeignKey("test_cases.id"), primary_key=True)
     link_source: Mapped[str] = mapped_column(String(20), default="generated")  # generated|manual
     requirement_version_at_link: Mapped[int] = mapped_column(Integer, default=1)  # staleness driver
+    # The other half of the governing design rule (SRS §1): a case names the endpoint
+    # it targets AND the criteria it derives from. e.g. ["AC1", "AC3"] when one case
+    # satisfies more than one criterion.
+    criterion_indexes: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 

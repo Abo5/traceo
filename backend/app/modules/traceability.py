@@ -15,6 +15,7 @@ from ..db import get_db
 from ..deps import get_project_scoped, require
 from ..models import (Requirement, RequirementTestCase, Run, TestCase,
                       TestResult, User)
+from .ingestion import numbered_criteria
 
 router = APIRouter()
 
@@ -23,6 +24,9 @@ GAP_NEXT_ACTIONS = {
     "no_reachable_endpoint": "استورد مواصفة تغطي هذا المتطلب أو اربطه يدوياً",
     "all_cases_disabled": "اعتمد إحدى الحالات المرتبطة في المراجعة",
     "no_approved_cases": "ولّد حالات لهذا المتطلب",
+    # FR-013 AC3 / FR-051 AC2 — a requirement with nothing testable stated
+    "no_criteria": "اكتب معيار قبول واحداً على الأقل — لا يمكن توليد حالة لا تعرف ما تتحقق منه",
+    "criteria_uncovered": "بعض معايير القبول لا تغطيها أي حالة معتمدة — ولّد لها أو اربطها يدوياً",
 }
 
 RUN_DISPLAY_BASE = 1000  # first run of a project renders as #1001
@@ -71,13 +75,40 @@ def derive_severity(outcome: str, failure_reason: dict | None, high_priority: bo
     return "major" if high_priority else "minor"
 
 
-def gap_reason(case_states: list[str]) -> str:
-    """v2 gap-reason vocabulary for an uncovered confirmed requirement."""
+def gap_reason(case_states: list[str], has_criteria: bool = True) -> str:
+    """v2 gap-reason vocabulary for an uncovered confirmed requirement.
+
+    Ordered by what the reader should fix FIRST: a requirement with no acceptance
+    criteria cannot be generated for at all, so saying "no reachable endpoint" would
+    send them to the wrong screen."""
+    if not has_criteria:
+        return "no_criteria"
     if not case_states:
         return "no_reachable_endpoint"  # never mapped / unmappable
     if not any(s == "approved" for s in case_states):
         return "all_cases_disabled"  # linked, but nothing approved counts
     return "no_approved_cases"  # fallback
+
+
+def criterion_coverage(criteria: list[dict], links: list) -> list[dict]:
+    """Per-criterion coverage — the unit FR-013 AC4 says the matrix reports against.
+
+    A requirement showing 'covered' while one of its three criteria has no case is
+    exactly the false comfort the traceability matrix exists to prevent."""
+    approved_by_index: dict[str, list[str]] = {}
+    for link, tc in links:
+        for index in (link.criterion_indexes or []):
+            approved_by_index.setdefault(index, []).append(tc.state)
+    out = []
+    for criterion in criteria:
+        states = approved_by_index.get(criterion["index"], [])
+        out.append({
+            "index": criterion["index"],
+            "statement": criterion["statement"],
+            "case_count": len(states),
+            "covered": any(s == "approved" for s in states),
+        })
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -151,8 +182,10 @@ def traceability_matrix(project_id: str, user: User = Depends(require("view")),
                      TestCase.organisation_id == user.organisation_id)
              .all())
     cases_by_req: dict[str, list[TestCase]] = {}
+    links_by_req: dict[str, list] = {}
     for link, tc in links:
         cases_by_req.setdefault(link.requirement_id, []).append(tc)
+        links_by_req.setdefault(link.requirement_id, []).append((link, tc))
 
     all_case_ids = list({tc.id for _link, tc in links})
     latest = _latest_outcomes(db, all_case_ids)
@@ -166,23 +199,38 @@ def traceability_matrix(project_id: str, user: User = Depends(require("view")),
         status = _requirement_status(cases)
         has_approved = any(c["state"] == "approved" for c in cases)
 
+        criteria = numbered_criteria(req)
+        coverage = criterion_coverage(criteria, links_by_req.get(req.id, []))
+        uncovered = [c["index"] for c in coverage if not c["covered"]]
+
         if req.state == "confirmed":
             confirmed_total += 1
             if has_approved:
                 confirmed_covered += 1
             else:
-                reason = gap_reason([c["state"] for c in cases])
+                reason = gap_reason([c["state"] for c in cases], bool(criteria))
                 gaps.append({"requirement_id": req.id, "external_id": req.external_id,
                              "reason": reason,
                              "next_action": GAP_NEXT_ACTIONS[reason]})
+            # FR-013 AC4 — a covered requirement whose criteria are not all covered
+            # is still a gap; reporting it as green is the failure mode the matrix exists to prevent.
+            if has_approved and uncovered:
+                gaps.append({"requirement_id": req.id, "external_id": req.external_id,
+                             "reason": "criteria_uncovered",
+                             "criteria": uncovered,
+                             "next_action": GAP_NEXT_ACTIONS["criteria_uncovered"]})
 
         rows.append({
             "requirement": {
                 "id": req.id, "external_id": req.external_id,
                 "description": req.description, "type": req.type,
                 "priority": req.priority, "state": req.state, "version": req.version,
+                "needs_criteria": bool(req.needs_criteria),
             },
             "cases": cases,
+            "criteria": coverage,          # FR-013 AC4
+            "criteria_covered": sum(1 for c in coverage if c["covered"]),
+            "criteria_total": len(coverage),
             "status": status,
         })
 

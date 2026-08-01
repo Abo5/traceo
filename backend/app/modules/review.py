@@ -18,6 +18,7 @@ from ..db import get_db
 from ..deps import audit, get_project_scoped, require
 from ..models import (Endpoint, Requirement, RequirementTestCase, TestCase,
                       TestStep, User)
+from .ingestion import numbered_criteria
 
 router = APIRouter()
 
@@ -56,8 +57,14 @@ def _links_for(db: Session, case_ids: list[str]) -> dict[str, list[dict]]:
             .filter(RequirementTestCase.test_case_id.in_(case_ids))
             .all())
     for link, req in rows:
+        indexes = list(link.criterion_indexes or [])
+        statements = {c["index"]: c["statement"] for c in numbered_criteria(req)}
         out[link.test_case_id].append({
             "id": req.id, "external_id": req.external_id, "description": req.description,
+            # The other half of the governing rule: what this case verifies, not just
+            # which requirement it belongs to.
+            "criterion_indexes": indexes,
+            "criteria": [{"index": i, "statement": statements.get(i, "")} for i in indexes],
         })
     return out
 
@@ -120,6 +127,23 @@ def _clean_steps(raw_steps: list) -> list[dict]:
                         "method": method, "path": path, "request": request,
                         "assertions": assertions, "extractions": extractions})
     return cleaned
+
+
+def _validated_indexes(req: Requirement, indexes: list[str] | None) -> list[str]:
+    """Keep only criterion labels this requirement actually has. A case citing an AC
+    that does not exist would be worse than one citing none: the matrix would report
+    coverage of a sentence nobody wrote."""
+    if not indexes:
+        return []
+    live = {c["index"] for c in numbered_criteria(req)}
+    unknown = [i for i in indexes if i not in live]
+    if unknown:
+        raise HTTPException(422, detail={
+            "code": "unknown_criteria",
+            "message": (f"{req.external_id or req.id[:8]} has no "
+                        f"{', '.join(unknown)} — available: "
+                        f"{', '.join(sorted(live)) or 'none'}")})
+    return list(dict.fromkeys(indexes))
 
 
 def _resolve_endpoint_ids(db: Session, project_id: str, org_id: str,
@@ -362,6 +386,10 @@ class CaseCreate(BaseModel):
     type: str = "positive"
     priority: str = "medium"
     steps: list | None = None
+    # Which criteria this hand-written case verifies, per requirement:
+    # {"<requirement_id>": ["AC1", "AC3"]}. Optional — a case may be written before
+    # the criteria are, and the matrix then reports it as requirement-level coverage.
+    criterion_indexes: dict[str, list[str]] | None = None
 
 
 @router.post("/projects/{project_id}/test-cases", status_code=201)
@@ -406,6 +434,8 @@ def create_test_case(project_id: str, body: CaseCreate,
     for rid in wanted:
         db.add(RequirementTestCase(
             requirement_id=rid, test_case_id=tc.id, link_source="manual",
+            criterion_indexes=_validated_indexes(found[rid],
+                                                 (body.criterion_indexes or {}).get(rid)),
             requirement_version_at_link=found[rid].version))
     audit(db, user.organisation_id, user.id, "test_case.created",
           "test_case", tc.id, {"manual": True, "requirement_ids": wanted})
@@ -419,6 +449,7 @@ def create_test_case(project_id: str, body: CaseCreate,
 
 class LinkBody(BaseModel):
     requirement_id: str
+    criterion_indexes: list[str] | None = None
 
 
 @router.post("/test-cases/{case_id}/links", status_code=201)
@@ -437,6 +468,7 @@ def add_link(case_id: str, body: LinkBody,
             "code": "link_exists", "message": "This requirement is already linked"})
     db.add(RequirementTestCase(requirement_id=req.id, test_case_id=tc.id,
                                link_source="manual",
+                               criterion_indexes=_validated_indexes(req, body.criterion_indexes),
                                requirement_version_at_link=req.version))
     audit(db, user.organisation_id, user.id, "test_case.link_added",
           "test_case", tc.id, {"requirement_id": req.id})

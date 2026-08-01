@@ -18,6 +18,7 @@ from ..db import get_db
 from ..deps import get_project_scoped, require
 from ..models import (Endpoint, Environment, Project, Requirement,
                       RequirementTestCase, Run, TestCase, TestResult, TestStep, User)
+from .ingestion import numbered_criteria
 from .traceability import (GAP_NEXT_ACTIONS, derive_severity, gap_reason,
                            is_high_priority, run_display_id)
 
@@ -51,9 +52,14 @@ def _requirements_by_case(db: Session, case_ids: list[str]) -> dict[str, list[di
             .filter(RequirementTestCase.test_case_id.in_(case_ids))
             .all())
     for link, req in rows:
+        indexes = list(link.criterion_indexes or [])
+        statements = {c["index"]: c["statement"] for c in numbered_criteria(req)}
         out[link.test_case_id].append({
             "id": req.id, "external_id": req.external_id, "description": req.description,
             "priority": req.priority,
+            # FR-042 AC2 — a failure names the criterion, not merely the requirement.
+            "criterion_indexes": indexes,
+            "criteria": [{"index": i, "statement": statements.get(i, "")} for i in indexes],
         })
     return out
 
@@ -470,6 +476,8 @@ h2 { font-size: 17px; margin: 34px 0 12px; border-inline-start: 4px solid var(--
 .card h3 { margin: 0 0 8px; font-size: 15px; }
 .reqs { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
 .reqs .rid { color: var(--amber); font-weight: 600; }
+.reqs .crit { margin-inline-start: 14px; padding-inline-start: 8px;
+              border-inline-start: 2px solid var(--border); margin-top: 3px; }
 .kv { display: grid; grid-template-columns: 110px 1fr; gap: 4px 14px; margin: 10px 0; }
 .kv .k { color: var(--muted); }
 pre { background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
@@ -525,9 +533,17 @@ def _clip(text: str) -> str:
 def _defect_card(entry: dict, L: dict) -> str:
     tc = entry["test_case"]
     fr = entry["failure_reason"] or {}
+    # FR-042 AC2 — the failure names the CRITERION it violates, in the criterion's
+    # own words, above expected/actual. "REQ-014 failed" is a ticket nobody can act
+    # on; "REQ-014 / AC2: a refund over 1000 is held for approval" is.
     reqs = "".join(
         f'<div><span class="rid mono">{_esc(r["external_id"] or r["id"][:8])}</span> '
-        f'{_esc(r["description"])}</div>'
+        f'{_esc(r["description"])}'
+        + "".join(
+            f'<div class="crit"><span class="rid mono">{_esc(c["index"])}</span> '
+            f'{_esc(c["statement"])}</div>'
+            for c in (r.get("criteria") or []) if c.get("statement"))
+        + '</div>'
         for r in entry["requirements"])
     outcome_lbl = L.get(entry["outcome"], entry["outcome"])
 

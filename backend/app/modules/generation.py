@@ -24,6 +24,7 @@ from ..db import SessionLocal, get_db
 from ..deps import audit, get_project_scoped, require
 from ..llm import get_provider
 from ..models import Endpoint, Requirement, RequirementTestCase, TestCase, TestStep, User
+from .ingestion import numbered_criteria
 
 router = APIRouter()
 
@@ -544,10 +545,18 @@ def _step(ep, params, headers, body, assertions, raw_body=None) -> dict:
             "request": request, "assertions": assertions, "extractions": []}
 
 
-def _generate_cases(req: Requirement, ep: Endpoint, depth: str) -> list[dict]:
+def _generate_cases(req: Requirement, ep: Endpoint, depth: str,
+                    criterion: dict | None = None) -> list[dict]:
     suffix = f"{ep.method.upper()} {ep.path}"
     req_ref = req.external_id or req.id[:8]
-    description = f"Covers requirement {req_ref}: {(req.description or '')[:400]}"
+    # Every case says, in its own description, which sentence it verifies — so the
+    # reviewer approving it and the developer reading the defect see the same claim
+    # (SRS §1 governing rule, FR-042 AC2).
+    if criterion:
+        description = (f"Covers {req_ref} / {criterion['index']}: "
+                       f"{criterion['statement'][:400]}")
+    else:
+        description = f"Covers requirement {req_ref}: {(req.description or '')[:400]}"
     preconditions = "Authenticated session" if (ep.security or []) else ""
     params, headers, body = _valid_request(ep)
     inputs = _constrained_inputs(ep)
@@ -778,8 +787,45 @@ def _prefilter(req_text: str, endpoints: list[Endpoint]) -> list[Endpoint]:
 # Job + route
 # ---------------------------------------------------------------------------
 
+def _attach_criterion(db: Session, requirement_id: str, case_id: str, index: str) -> None:
+    """Record a second (or third) criterion the same case verifies."""
+    link = db.scalar(select(RequirementTestCase).where(
+        RequirementTestCase.requirement_id == requirement_id,
+        RequirementTestCase.test_case_id == case_id))
+    if link is None:
+        return
+    current = list(link.criterion_indexes or [])
+    if index not in current:
+        link.criterion_indexes = current + [index]
+
+
+def _archive_orphaned_cases(db: Session, req: Requirement) -> int:
+    """SRS §4.3 regeneration rule: a case whose criterion no longer exists is
+    ARCHIVED, not deleted — its results are evidence of what was true at the time, and
+    deleting it would silently rewrite the run history it appears in.
+
+    Hand-written and hand-edited cases are never archived this way: a human chose to
+    keep them, and that choice outranks a re-parse."""
+    live = {c["index"] for c in numbered_criteria(req)}
+    if not live:
+        return 0
+    rows = (db.query(RequirementTestCase, TestCase)
+            .join(TestCase, TestCase.id == RequirementTestCase.test_case_id)
+            .filter(RequirementTestCase.requirement_id == req.id).all())
+    archived = 0
+    for link, tc in rows:
+        cited = list(link.criterion_indexes or [])
+        if not cited or tc.user_modified or not tc.generated or tc.state == "archived":
+            continue
+        if not any(index in live for index in cited):
+            tc.state = "archived"
+            archived += 1
+    return archived
+
+
 def _persist_case(db: Session, org_id: str, project_id: str, req: Requirement,
-                  case: dict, model_name: str) -> TestCase:
+                  case: dict, model_name: str,
+                  criterion_indexes: list[str] | None = None) -> TestCase:
     tc = TestCase(
         organisation_id=org_id, project_id=project_id,
         title=case["title"][:500], description=case["description"],
@@ -794,7 +840,9 @@ def _persist_case(db: Session, org_id: str, project_id: str, req: Requirement,
                         method=s["method"], path=s["path"], request=s["request"],
                         assertions=s["assertions"], extractions=s.get("extractions") or []))
     db.add(RequirementTestCase(requirement_id=req.id, test_case_id=tc.id,
-                               link_source="generated", requirement_version_at_link=req.version))
+                               link_source="generated",
+                               criterion_indexes=list(criterion_indexes or []),
+                               requirement_version_at_link=req.version))
     return tc
 
 
@@ -809,7 +857,7 @@ def _step_signature(steps) -> str:
 
 
 def _refresh_case(db: Session, tc: TestCase, req: Requirement, case: dict,
-                  model_name: str) -> bool:
+                  model_name: str, criterion_indexes: list[str] | None = None) -> bool:
     """Update an existing generated, never-hand-edited case in place. Returns True
     when something actually changed — that is what the run reports (FR-036 AC3).
 
@@ -845,9 +893,12 @@ def _refresh_case(db: Session, tc: TestCase, req: Requirement, case: dict,
     if link is None:
         db.add(RequirementTestCase(requirement_id=req.id, test_case_id=tc.id,
                                    link_source="generated",
+                                   criterion_indexes=list(criterion_indexes or []),
                                    requirement_version_at_link=req.version))
     else:
         link.requirement_version_at_link = req.version
+        if criterion_indexes:
+            link.criterion_indexes = list(criterion_indexes)
     return True
 
 
@@ -903,91 +954,139 @@ def _run_generation(job, org_id: str, user_id: str, project_id: str,
 
         provider = get_provider()
         generated = discarded = duplicates = 0
-        preserved = refreshed = 0
+        preserved = refreshed = archived = 0
         changed_cases: list[dict] = []
         total = max(len(reqs), 1)
 
         for idx, req in enumerate(reqs):
             job.progress = round(idx / total * 0.95, 3)
-            job.message = f"Mapping requirement {req.external_id or req.id[:8]}"
+            label = req.external_id or req.id[:8]
             if not endpoints:
                 unmappable.append({"requirement_id": req.id, "reason": "endpoint inventory is empty"})
                 continue
-            req_text = " ".join([req.description or ""] + [str(a) for a in (req.acceptance_criteria or [])]).strip()
-            candidates = _prefilter(req_text, endpoints)
-            if not candidates:
-                unmappable.append({"requirement_id": req.id,
-                                   "reason": "no candidate endpoints matched the requirement text"})
-                continue
-            payload = {"requirement": req_text,
-                       "candidates": [{"method": e.method, "path": e.path, "summary": e.summary,
-                                       "operation_id": e.operation_id, "tags": e.tags or []}
-                                      for e in candidates]}
-            try:
-                result = provider.complete_json(
-                    "map_requirement",
-                    MAP_INSTRUCTIONS + "PAYLOAD:\n" + json.dumps(payload, ensure_ascii=False),
-                    MAP_SCHEMA)
-            except Exception as exc:  # noqa: BLE001 — one bad mapping must not sink the job
-                unmappable.append({"requirement_id": req.id, "reason": f"mapping failed: {exc}"})
-                continue
-            selected = [i for i in (result.data.get("selected") or [])
-                        if isinstance(i, int) and not isinstance(i, bool) and 0 <= i < len(candidates)]
-            confidence = float(result.data.get("confidence") or 0.0)
-            if not selected:
-                unmappable.append({"requirement_id": req.id, "reason": "mapper selected no endpoint"})
-                continue
-            if confidence < MIN_MAP_CONFIDENCE:
-                unmappable.append({"requirement_id": req.id,
-                                   "reason": f"mapping confidence {confidence:.2f} below {MIN_MAP_CONFIDENCE}"})
-                continue
-            model_name = getattr(result, "model", "") or "deterministic"
 
-            for ci in dict.fromkeys(selected):  # de-dup, keep order
-                ep = candidates[ci]
-                job.message = f"Generating cases for {ep.method.upper()} {ep.path}"
-                for case in _generate_cases(req, ep, depth):
-                    # HARD GATE — the model proposes, the system verifies (BR-09)
-                    if grounding_validate(case, endpoints_by_key):
-                        discarded += 1
-                        continue
-                    first = case["steps"][0]
-                    key = (case["technique"], first["method"], first["path"], case["title"])
-                    if key in protected:
-                        # FR-036 AC3: a hand-edited or hand-written case is authoritative.
-                        preserved += 1
-                        continue
-                    if key in dup_keys:
-                        duplicates += 1
-                        continue
-                    prior = refreshable.get(key)
-                    if prior is not None:
-                        if _refresh_case(db, prior, req, case, model_name):
-                            refreshed += 1
-                            changed_cases.append({"test_case_id": prior.id,
-                                                  "title": prior.title,
-                                                  "change": "regenerated"})
-                        continue
-                    new_case = _persist_case(db, org_id, project_id, req, case, model_name)
-                    generated += 1
-                    changed_cases.append({"test_case_id": new_case.id,
-                                          "title": new_case.title, "change": "added"})
+            # THE GOVERNING RULE (SRS §1): a case must be able to name the criterion it
+            # derives from and the endpoint it targets. So the criterion — not the
+            # requirement — is the unit generation iterates (FR-013 AC4).
+            criteria = numbered_criteria(req)
+            if not criteria:
+                unmappable.append({
+                    "requirement_id": req.id, "external_id": req.external_id,
+                    "reason": "no acceptance criteria — a case cannot name what it verifies"})
+                if not req.needs_criteria:
+                    req.needs_criteria = True  # FR-013 AC3: surface it for human input
+                continue
+
+            # key -> case id, so two criteria that produce the same case share it
+            # instead of duplicating it; the case then names both.
+            emitted_this_run: dict[tuple, str] = {}
+
+            for criterion in criteria:
+                job.message = f"Mapping {label} / {criterion['index']}"
+                criterion_text = " ".join(
+                    [req.description or "", criterion["statement"]]).strip()
+                candidates = _prefilter(criterion_text, endpoints)
+                if not candidates:
+                    unmappable.append({
+                        "requirement_id": req.id, "external_id": req.external_id,
+                        "criterion": criterion["index"],
+                        "reason": "no candidate endpoints matched this criterion"})
+                    continue
+                payload = {"requirement": criterion_text,
+                           "candidates": [{"method": e.method, "path": e.path,
+                                           "summary": e.summary,
+                                           "operation_id": e.operation_id,
+                                           "tags": e.tags or []}
+                                          for e in candidates]}
+                try:
+                    result = provider.complete_json(
+                        "map_requirement",
+                        MAP_INSTRUCTIONS + "PAYLOAD:\n" + json.dumps(payload, ensure_ascii=False),
+                        MAP_SCHEMA)
+                except Exception as exc:  # noqa: BLE001 — one bad mapping must not sink the job
+                    unmappable.append({"requirement_id": req.id,
+                                       "external_id": req.external_id,
+                                       "criterion": criterion["index"],
+                                       "reason": f"mapping failed: {exc}"})
+                    continue
+                selected = [i for i in (result.data.get("selected") or [])
+                            if isinstance(i, int) and not isinstance(i, bool)
+                            and 0 <= i < len(candidates)]
+                confidence = float(result.data.get("confidence") or 0.0)
+                if not selected:
+                    unmappable.append({"requirement_id": req.id,
+                                       "external_id": req.external_id,
+                                       "criterion": criterion["index"],
+                                       "reason": "mapper selected no endpoint for this criterion"})
+                    continue
+                if confidence < MIN_MAP_CONFIDENCE:
+                    unmappable.append({
+                        "requirement_id": req.id, "external_id": req.external_id,
+                        "criterion": criterion["index"],
+                        "reason": f"mapping confidence {confidence:.2f} below {MIN_MAP_CONFIDENCE}"})
+                    continue
+                model_name = getattr(result, "model", "") or "deterministic"
+
+                for ci in dict.fromkeys(selected):  # de-dup, keep order
+                    ep = candidates[ci]
+                    job.message = (f"Generating {label} / {criterion['index']} → "
+                                   f"{ep.method.upper()} {ep.path}")
+                    for case in _generate_cases(req, ep, depth, criterion):
+                        # HARD GATE — the model proposes, the system verifies (BR-09)
+                        if grounding_validate(case, endpoints_by_key):
+                            discarded += 1
+                            continue
+                        first = case["steps"][0]
+                        key = (case["technique"], first["method"], first["path"], case["title"])
+
+                        if key in emitted_this_run:
+                            # Same case, another criterion — record the second citation.
+                            _attach_criterion(db, req.id, emitted_this_run[key],
+                                              criterion["index"])
+                            continue
+                        if key in protected:
+                            # FR-036 AC3: a hand-edited case is authoritative.
+                            preserved += 1
+                            continue
+                        if key in dup_keys:
+                            duplicates += 1
+                            continue
+                        prior = refreshable.get(key)
+                        if prior is not None:
+                            emitted_this_run[key] = prior.id
+                            if _refresh_case(db, prior, req, case, model_name,
+                                             [criterion["index"]]):
+                                refreshed += 1
+                                changed_cases.append({"test_case_id": prior.id,
+                                                      "title": prior.title,
+                                                      "criterion": criterion["index"],
+                                                      "change": "regenerated"})
+                            continue
+                        new_case = _persist_case(db, org_id, project_id, req, case,
+                                                 model_name, [criterion["index"]])
+                        emitted_this_run[key] = new_case.id
+                        generated += 1
+                        changed_cases.append({"test_case_id": new_case.id,
+                                              "title": new_case.title,
+                                              "criterion": criterion["index"],
+                                              "change": "added"})
+            archived += _archive_orphaned_cases(db, req)
             db.commit()
 
         job.progress = 0.98
         job.message = (f"Generated {generated}, refreshed {refreshed}, "
-                       f"preserved {preserved} edited, discarded {discarded} (grounding), "
-                       f"{len(unmappable)} unmappable")
+                       f"preserved {preserved} edited, archived {archived} orphaned, "
+                       f"discarded {discarded} (grounding), {len(unmappable)} unmappable")
         audit(db, org_id, user_id, "generation.completed", "project", project_id,
               {"generated": generated, "discarded": discarded, "duplicates": duplicates,
-               "refreshed": refreshed, "preserved": preserved,
+               "refreshed": refreshed, "preserved": preserved, "archived": archived,
                "unmappable": len(unmappable), "depth": depth})
         db.commit()
         # BO-07: discarded is reported as a count only — the cases themselves are never shown
         return {"generated": generated, "discarded": discarded,
                 "unmappable": unmappable, "duplicates": duplicates,
                 "refreshed": refreshed, "preserved_manual_edits": preserved,
-                "changed_cases": changed_cases}
+                "archived": archived, "changed_cases": changed_cases}
     finally:
         db.close()
 

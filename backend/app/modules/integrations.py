@@ -28,6 +28,7 @@ from ..deps import audit, get_project_scoped, require
 from ..models import (DefectExport, Integration, Requirement, RequirementTestCase,
                       Run, TestCase, TestResult, User)
 from ..security import decrypt_secret, encrypt_secret, redact
+from .ingestion import numbered_criteria
 from .traceability import derive_severity, is_high_priority, run_display_id
 
 router = APIRouter()
@@ -274,10 +275,20 @@ def build_defect_document(db: Session, run: Run, result: TestResult,
                           case: TestCase) -> dict:
     """The reproducible bug report (FR-052) rendered as a portable document — the
     same content the Jira description, the Xray comment and the Slack alert carry."""
-    reqs = (db.query(Requirement)
+    rows = (db.query(Requirement, RequirementTestCase)
             .join(RequirementTestCase, RequirementTestCase.requirement_id == Requirement.id)
             .filter(RequirementTestCase.test_case_id == case.id).all())
+    reqs = [r for r, _link in rows]
     high = any(is_high_priority(r.priority) for r in reqs)
+    # FR-042 AC2 — the exported issue quotes the criterion, so a developer who has
+    # never seen Traceo can judge the failure from the ticket alone.
+    criteria_cited: list[dict] = []
+    for req, link in rows:
+        statements = {c["index"]: c["statement"] for c in numbered_criteria(req)}
+        for index in (link.criterion_indexes or []):
+            criteria_cited.append({
+                "requirement": req.external_id or req.id[:8],
+                "index": index, "statement": statements.get(index, "")})
     severity = derive_severity(result.outcome, result.failure_reason, high)
     display = run_display_id(db, run)
 
@@ -297,6 +308,7 @@ def build_defect_document(db: Session, run: Run, result: TestResult,
         "requirements": [{"external_id": r.external_id, "id": r.id,
                           "priority": r.priority, "description": r.description}
                          for r in reqs],
+        "criteria": criteria_cited,
         "steps": steps,
         "expected": assertion.get("expected", assertion.get("value")),
         "actual": fr.get("actual", fr.get("error")),
@@ -311,6 +323,9 @@ def _defect_description(doc: dict) -> str:
     if doc["requirements"]:
         lines.append("Requirements: " + ", ".join(
             r["external_id"] or r["id"][:8] for r in doc["requirements"]))
+    for criterion in doc.get("criteria") or []:
+        lines.append(f"Violated criterion {criterion['requirement']} / "
+                     f"{criterion['index']}: {criterion['statement']}")
     lines += ["", "Reproduction steps:"] + (doc["steps"] or ["1. (single request)"])
     lines += ["", f"Expected: {doc.get('expected')}", f"Actual: {doc.get('actual')}"]
     evidence = doc.get("evidence") or []

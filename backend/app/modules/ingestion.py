@@ -165,6 +165,52 @@ def _content_hash(description: str, criteria: list) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+# --- acceptance criteria as addressable units (FR-013) -------------------------------
+
+def criterion_key(statement: str) -> str:
+    """Identity of a criterion = its normalised statement. Whitespace and casing
+    changes must not look like a different criterion."""
+    return hashlib.sha256(" ".join(str(statement or "").split()).lower().encode()).hexdigest()[:16]
+
+
+def assign_criteria_numbers(criteria: list, existing: dict | None = None) -> dict:
+    """statement-hash -> "AC1". A number, once given to a statement, is never reused
+    for a different one and never changes (FR-013 AC2) — the matrix, the generated
+    cases and the defect reports all cite these labels, so renumbering on re-parse
+    would silently re-point evidence at the wrong sentence.
+
+    Inserting a criterion at the top therefore appends AC(n+1) rather than shifting
+    everything down; a removed criterion retires its number permanently."""
+    numbering = dict(existing or {})
+    used = {int(v[2:]) for v in numbering.values() if str(v).startswith("AC") and v[2:].isdigit()}
+    next_number = max(used) + 1 if used else 1
+    for statement in criteria or []:
+        key = criterion_key(statement)
+        if key in numbering:
+            continue
+        numbering[key] = f"AC{next_number}"
+        next_number += 1
+    return numbering
+
+
+def numbered_criteria(requirement) -> list[dict]:
+    """[{index: "AC1", statement: "..."}] in document order, for the API and the UI."""
+    numbering = requirement.criteria_numbering or {}
+    out = []
+    for position, statement in enumerate(requirement.acceptance_criteria or [], start=1):
+        key = criterion_key(statement)
+        out.append({"index": numbering.get(key, f"AC{position}"),
+                    "statement": str(statement), "key": key})
+    return out
+
+
+def criterion_statement(requirement, index: str) -> str | None:
+    for entry in numbered_criteria(requirement):
+        if entry["index"] == index:
+            return entry["statement"]
+    return None
+
+
 # --- text extraction ---------------------------------------------------------------
 
 def _extract_text(path: Path, ext: str) -> list[tuple[int | None, str]]:
@@ -391,6 +437,10 @@ def _persist_requirements(db: Session, doc: SourceDocument, extractions: list[di
                 match.external_id = data["external_id"] or match.external_id
                 match.description = data["description"]
                 match.acceptance_criteria = data["acceptance_criteria"]
+                # AC numbers follow statements across re-parses (FR-013 AC2).
+                match.criteria_numbering = assign_criteria_numbers(
+                    data["acceptance_criteria"], match.criteria_numbering)
+                match.needs_criteria = not data["acceptance_criteria"]
                 match.type = data["type"]
                 match.priority = data["priority"]
                 match.confidence = data["confidence"]
@@ -407,6 +457,8 @@ def _persist_requirements(db: Session, doc: SourceDocument, extractions: list[di
                 external_id=data["external_id"],
                 description=data["description"],
                 acceptance_criteria=data["acceptance_criteria"],
+                criteria_numbering=assign_criteria_numbers(data["acceptance_criteria"]),
+                needs_criteria=not data["acceptance_criteria"],  # FR-013 AC3
                 type=data["type"],
                 priority=data["priority"],
                 state="extracted",
@@ -492,7 +544,10 @@ def _req_dict(r: Requirement) -> dict:
     return {
         "id": r.id, "project_id": r.project_id, "source_document_id": r.source_document_id,
         "external_id": r.external_id, "description": r.description,
-        "acceptance_criteria": r.acceptance_criteria, "type": r.type,
+        "acceptance_criteria": r.acceptance_criteria,
+        "criteria": numbered_criteria(r),          # FR-013 AC2 — addressable units
+        "needs_criteria": bool(r.needs_criteria),  # FR-013 AC3
+        "type": r.type,
         "priority": r.priority, "state": r.state, "version": r.version,
         "source_location": r.source_location, "source_text": r.source_text,
         "confidence": r.confidence, "content_hash": r.content_hash,
@@ -675,6 +730,9 @@ def update_requirement(requirement_id: str, body: dict = Body(...),
             and body["acceptance_criteria"] != req.acceptance_criteria:
         changes["acceptance_criteria"] = True
         req.acceptance_criteria = body["acceptance_criteria"]
+        req.criteria_numbering = assign_criteria_numbers(
+            body["acceptance_criteria"], req.criteria_numbering)
+        req.needs_criteria = not body["acceptance_criteria"]
         content_changed = True
     if body.get("external_id") is not None and body["external_id"] != req.external_id:
         changes["external_id"] = {"from": req.external_id, "to": body["external_id"]}
@@ -725,6 +783,8 @@ def create_requirement(body: dict = Body(...),
         source_document_id=None,
         external_id=str(body.get("external_id") or "").strip(),
         description=description, acceptance_criteria=criteria,
+        criteria_numbering=assign_criteria_numbers(criteria),
+        needs_criteria=not criteria,
         type=rtype, priority=str(body.get("priority") or "medium"),
         state="confirmed",  # human-authored — no extraction review needed
         version=1, source_location={}, source_text=description,

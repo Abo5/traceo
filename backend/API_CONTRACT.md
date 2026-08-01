@@ -25,6 +25,35 @@ from ..llm import get_provider               # get_provider().complete_json(prom
   auth events, requirement edits, approvals/rejections, environment changes, run initiation.
 - Timestamps ISO 8601 UTC; ids are UUID strings; JSON field names snake_case.
 
+## The governing design rule (SRS §1)
+
+> A test case may only exist if it can name (a) the acceptance criterion it derives
+> from and (b) the discovered endpoint it targets.
+
+Both halves are enforced in code, not by convention:
+
+- **(b)** is the grounding gate in `generation.grounding_validate` — a fabricated
+  endpoint, parameter, body field or assertion target discards the case.
+- **(a)** is criterion attribution. Generation iterates CRITERIA, not requirements:
+  each criterion is mapped to endpoints on its own, and every case it produces stores
+  the criterion label on `RequirementTestCase.criterion_indexes`. A requirement with
+  no criteria produces nothing and is reported (`needs_criteria`), because a case that
+  cannot say what it verifies is exactly what this product exists to prevent.
+
+Criterion labels (`AC1`, `AC2` …) follow the STATEMENT, not its position
+(`ingestion.assign_criteria_numbers`): inserting a criterion appends a new number
+rather than shifting existing ones, because cases, matrix rows and exported defects
+all cite these labels. A removed criterion retires its number permanently, and a case
+whose criterion disappeared is ARCHIVED rather than deleted — its results are evidence
+of what was true at the time.
+
+**Attribution is deliberately conservative.** A case is credited only to the criterion
+whose mapping produced it. A boundary case derived from the endpoint schema therefore
+credits the criterion that put that endpoint in scope, not every criterion it might
+incidentally exercise — so the matrix under-claims rather than over-claims coverage.
+For a document that ends up in a contract, an unclaimed truth is recoverable and a
+false claim is not.
+
 ## LLM prompt contract (MockProvider heuristics depend on these exact markers)
 
 - `extract_requirement`: prompt = instructions + `"SEGMENT:\n" + segment_text`.
@@ -82,6 +111,8 @@ from ..llm import get_provider               # get_provider().complete_json(prom
   — editing a CONFIRMED requirement bumps version, sets content_hash, marks linked approved cases stale.
 - POST /requirements (manual add) / DELETE /requirements/{rid}
 - POST /projects/{id}/requirements/confirm_all — bulk confirm extracted.
+- Requirement payloads carry `criteria: [{index, statement, key}]` (FR-013 AC2) and
+  `needs_criteria: bool` (AC3) alongside the raw `acceptance_criteria` list.
 
 ### modules/discovery.py  (Discovery Engine, TRD §4.2 — deterministic, NO LLM)
 - POST /projects/{id}/api-specs {url} or multipart file (json/yaml) -> parsed synchronously.
@@ -156,6 +187,10 @@ from ..llm import get_provider               # get_provider().complete_json(prom
 - POST /test-cases/{id}/reject {reason_code, reason_text} (approve_reject)
 - POST /test-cases/bulk {ids, action: approve|reject, reason_code?} (FR-REV-04)
 - POST /projects/{id}/test-cases (manual authoring, requirement_ids required — FR-REV-07, FR-GEN-02)
+  `criterion_indexes: {"<requirement_id>": ["AC1"]}` cites the criteria a hand-written
+  case verifies; an index the requirement does not have is refused (422
+  `unknown_criteria`) rather than stored, since it would report coverage of a sentence
+  nobody wrote. POST /test-cases/{id}/links accepts the same field.
   Steps are bound to the endpoint they target by (method, path) when no endpoint_id is
   supplied, so a hand-written case counts in the endpoint coverage map like a generated
   one (FR-036 AC4). A path outside the inventory stays unbound rather than being refused.
@@ -183,7 +218,15 @@ from ..llm import get_provider               # get_provider().complete_json(prom
   behave identically; `serialise_per_environment=True` defers rather than overlapping (FR-060 AC3).
 
 ### modules/traceability.py  (TRD §4.7)
-- GET /projects/{id}/traceability -> {rows: [{requirement{id,external_id,description,type,priority,state,version}, cases: [{id,title,state,latest_outcome}], status}], coverage_pct, gaps: [{requirement_id, external_id, reason: "no_approved_cases"|"unmappable"}]}
+- GET /projects/{id}/traceability -> {rows: [{requirement{...}, cases: [...], status,
+  criteria: [{index, statement, case_count, covered}], criteria_covered, criteria_total}],
+  coverage_pct, gaps: [{requirement_id, external_id, reason, next_action, criteria?}]}
+  FR-013 AC4: the matrix reports against CRITERIA. A requirement with an approved case
+  but an uncovered criterion still raises a `criteria_uncovered` gap naming it — a row
+  reading green while one of its sentences is untested is the precise false comfort the
+  matrix exists to prevent.
+  Gap reasons: no_criteria | no_reachable_endpoint | all_cases_disabled |
+  no_approved_cases | criteria_uncovered.
   Status per req (FR-TRC-02): not_covered | covered_not_run | passing | failing | errored.
   Coverage % = confirmed reqs with ≥1 approved linked case / all confirmed (stale/draft/rejected excluded).
 - Expose helper `def mark_stale(db, requirement_id)` — sets linked approved cases -> stale (used by ingestion).
@@ -255,6 +298,10 @@ stays usable across upgrades.
   regression comparison, CI token auth + scoping + revocation, schedule firing and deferral.
 - test_integrations.py — Jira create-then-update dedupe, Xray sync, Slack alert levels, Confluence
   import + stale re-import, secrets never echoed, on-premise egress refusal.
+- test_criteria.py — the criterion half of the governing rule: label stability across
+  re-parses and reordering, the no-criteria flag and its gap reason, every generated
+  case naming a criterion, the matrix reporting per criterion, and a failure quoting
+  the criterion it violates.
 - test_techniques.py — Hijri conversion against published Umm al-Qura dates (±1 day, the
   stated limit) and annotation idempotence; pairwise completeness and determinism for
   2..10 conditions plus the disclosure text; coverage counting response branches rather

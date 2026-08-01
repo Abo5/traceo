@@ -60,6 +60,9 @@ export default function MatrixPage() {
           passing: "ناجح",
           failing: "فاشل",
           errored: "خطأ",
+          criteriaCovered: "معايير مغطّاة",
+          covered: "مغطّى",
+          uncovered: "غير مغطّى",
           exportXlsx: "تصدير Excel",
           exporting: "جارٍ التصدير…",
           lang: "لغة التصدير",
@@ -93,6 +96,9 @@ export default function MatrixPage() {
           passing: "Passing",
           failing: "Failing",
           errored: "Errored",
+          criteriaCovered: "criteria covered",
+          covered: "Covered",
+          uncovered: "Not covered",
           exportXlsx: "Export Excel",
           exporting: "Exporting…",
           lang: "Export language",
@@ -321,6 +327,29 @@ export default function MatrixPage() {
                             ))
                           )}
                         </div>
+
+                        {Array.isArray(row.criteria) && row.criteria.length > 0 && (
+                          <div style={{ marginTop: 10, display: "grid", gap: 4 }}>
+                            {row.criteria.map((c: any) => (
+                              <div key={c.index} className="row" style={{ gap: 8, alignItems: "flex-start" }}>
+                                <span
+                                  title={c.covered ? L.covered : L.uncovered}
+                                  style={{
+                                    color: c.covered ? "var(--success)" : "var(--warning)",
+                                    fontSize: 12,
+                                    lineHeight: 1.7,
+                                  }}
+                                >
+                                  {c.covered ? "✓" : "○"}
+                                </span>
+                                <M style={{ fontSize: 10.5, color: "var(--accent)" }}>{c.index}</M>
+                                <span dir="auto" style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
+                                  {c.statement}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       <div style={{ width: 150, flexShrink: 0, display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
                         <Badge tone={tone}>{statusLabel(row.status)}</Badge>
@@ -330,6 +359,22 @@ export default function MatrixPage() {
                         <M style={{ fontSize: 10, color: "var(--text-muted)" }}>
                           {passed}/{cases.length} {L.cases}
                         </M>
+                        {/* FR-013 AC4 — the matrix reports against criteria, so a
+                            requirement cannot read as covered while one of its
+                            sentences has nothing testing it. */}
+                        {typeof row.criteria_total === "number" && row.criteria_total > 0 && (
+                          <M
+                            style={{
+                              fontSize: 10,
+                              color:
+                                row.criteria_covered === row.criteria_total
+                                  ? "var(--success)"
+                                  : "var(--warning)",
+                            }}
+                          >
+                            {row.criteria_covered}/{row.criteria_total} {L.criteriaCovered}
+                          </M>
+                        )}
                       </div>
                     </div>
                   );
