@@ -75,7 +75,10 @@ SCREENS agent (create ONLY these files; import shared per contract above):
   to /projects/{id}/documents then pollJob), documents list w/ version + parse_status badge, requirements
   table: mono external_id (accent), description, editable inline or via Modal (PATCH /requirements/{rid}),
   confidence bar, type/priority/state badges, confirm button per row + "اعتماد الكل" confirm_all, filters.
-- app/projects/[id]/endpoints/page.tsx — import card (URL input or file upload to /projects/{id}/api-specs),
+- app/projects/[id]/endpoints/page.tsx — import card with five tabs: spec by URL, spec by
+  file, HAR traffic, Postman collection, DOM forms. Rows show discovery source,
+  observation count, "declared, never seen" and the uncovered response branches.
+  (original: URL input or file upload to /projects/{id}/api-specs),
   warnings display, inventory table: mono METHOD badge (spectrum color per verb), path, summary, params
   count, include/exclude toggle (PATCH /endpoints/{eid}).
 - app/projects/[id]/generate/page.tsx — requirement multi-select (confirmed only), depth pill selector
@@ -97,6 +100,13 @@ SCREENS agent (create ONLY these files; import shared per contract above):
   linked req chip, expanded = steps-to-reproduce + request/response evidence blocks (mono, recessed) +
   failure_reason expected vs actual, defect-report style. Compare tab: select another run -> newly
   failing/passing lists. Export buttons: report.html (open in new tab), matrix.xlsx (download).
+- app/projects/[id]/integrations/page.tsx — the 11th screen. Connected systems table
+  (Jira / Xray / Confluence / Slack) with connection check; the delivery-gate policy form
+  and a copy-ready CI step; cron schedules per environment; the Confluence page picker.
+  Secrets are write-only in the form and the screen shows only "secret stored" plus its
+  rotation date — never a value.
+- app/settings/tokens/page.tsx — CI tokens. The clear token appears once, in a modal that
+  says so; the table shows only its prefix.
 - app/projects/[id]/matrix/page.tsx — traceability matrix: coverage % StatCard + gaps count, filter pills
   (status/priority/type), grid rows: mono req id (accent), description, linked case chips w/ state dots,
   status pill (not_covered=warning, passing=success, failing=error, errored=warning, covered_not_run=info),

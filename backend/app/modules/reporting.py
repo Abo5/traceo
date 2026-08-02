@@ -43,6 +43,18 @@ def _get_run(run_id: str, user: User, db: Session) -> Run:
 # Shared data assembly
 # ---------------------------------------------------------------------------
 
+_PRIORITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+
+def _top_priority(values) -> str | None:
+    """The highest priority among the linked requirements — a case serving a P0 and a
+    P2 requirement is judged by the P0."""
+    known = [str(v).lower() for v in values if v]
+    if not known:
+        return None
+    return sorted(known, key=lambda v: _PRIORITY_ORDER.get(v, 2))[0]
+
+
 def _requirements_by_case(db: Session, case_ids: list[str]) -> dict[str, list[dict]]:
     out: dict[str, list[dict]] = {cid: [] for cid in case_ids}
     if not case_ids:
@@ -109,6 +121,8 @@ def _report_entries(db: Session, run: Run) -> list[dict]:
     for res, tc in rows:
         linked = reqs.get(tc.id, [])
         high = any(is_high_priority(r.get("priority")) for r in linked)
+        # The most severe linked requirement governs (SRS §4.5).
+        top_priority = _top_priority([r.get("priority") for r in linked])
         entries.append({
             "test_case": {"id": tc.id, "title": tc.title, "description": tc.description,
                           "type": tc.type, "priority": tc.priority, "state": tc.state,
@@ -121,7 +135,7 @@ def _report_entries(db: Session, run: Run) -> list[dict]:
             "requirements": linked,
             "executed_at": _iso(res.created_at),
             # FR-052: severity only meaningful on failed/errored cases
-            "severity": derive_severity(res.outcome, res.failure_reason, high)
+            "severity": derive_severity(res.outcome, res.failure_reason, high, top_priority)
             if res.outcome in ("failed", "errored") else None,
         })
     return entries
@@ -339,7 +353,10 @@ def export_matrix(project_id: str, lang: str | None = None, run_id: str | None =
         fr = res.failure_reason or {}
         assertion = fr.get("assertion") if isinstance(fr.get("assertion"), dict) else {}
         ws.append([c.id, c.title, ", ".join(req_label(rid) for rid in linked),
-                   res.outcome, derive_severity(res.outcome, res.failure_reason, high),
+                   res.outcome, derive_severity(res.outcome, res.failure_reason, high,
+                                                _top_priority([req_by_id[rid].priority
+                                                               for rid in linked
+                                                               if rid in req_by_id])),
                    assertion.get("type", "") or ("transport" if fr.get("error") else ""),
                    str(assertion.get("expected", assertion.get("value", "")))[:200],
                    str(fr.get("actual", fr.get("error", "")))[:200],

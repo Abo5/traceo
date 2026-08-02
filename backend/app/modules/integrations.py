@@ -289,7 +289,10 @@ def build_defect_document(db: Session, run: Run, result: TestResult,
             criteria_cited.append({
                 "requirement": req.external_id or req.id[:8],
                 "index": index, "statement": statements.get(index, "")})
-    severity = derive_severity(result.outcome, result.failure_reason, high)
+    priorities = sorted((str(r.priority or "medium").lower() for r in reqs),
+                        key=lambda v: {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(v, 2))
+    severity = derive_severity(result.outcome, result.failure_reason, high,
+                               priorities[0] if priorities else None)
     display = run_display_id(db, run)
 
     steps: list[str] = []

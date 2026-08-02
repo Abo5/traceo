@@ -25,7 +25,7 @@ from ..models import (ApiSpec, Endpoint, Environment, Project, Requirement,
                       TestResult, TestStep, User)
 from ..security import decrypt_secret, encrypt_secret, redact
 from .traceability import (GAP_NEXT_ACTIONS, derive_severity, gap_reason,
-                           is_high_priority, run_display_ids)
+                           is_high_priority, project_coverage, run_display_ids)
 
 router = APIRouter()
 
@@ -236,7 +236,9 @@ def _run_coverage_pct(run: Run) -> float:
 
 def _case_requirement_info(db: Session, case_ids: list[str]) -> dict[str, dict]:
     """case_id -> {external_ids: [...], high_priority: bool} over linked requirements."""
-    info = {cid: {"external_ids": [], "high_priority": False} for cid in case_ids}
+    info = {cid: {"external_ids": [], "high_priority": False, "priority": None}
+            for cid in case_ids}
+    order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     if not case_ids:
         return info
     rows = (db.query(RequirementTestCase.test_case_id,
@@ -250,6 +252,9 @@ def _case_requirement_info(db: Session, case_ids: list[str]) -> dict[str, dict]:
             entry["external_ids"].append(external_id)
         if is_high_priority(priority):
             entry["high_priority"] = True
+        level = str(priority or "medium").lower()
+        if entry["priority"] is None or order.get(level, 2) < order.get(entry["priority"], 2):
+            entry["priority"] = level  # the most severe linked requirement governs
     return info
 
 
@@ -291,17 +296,10 @@ def project_dashboard(project_id: str, branch: str | None = None,
         if state in tc_counts:
             tc_counts[state] = count
 
-    # coverage: confirmed requirements with >=1 approved linked case / confirmed (0 if none)
-    covered = (db.query(func.count(func.distinct(RequirementTestCase.requirement_id)))
-               .select_from(RequirementTestCase)
-               .join(Requirement, Requirement.id == RequirementTestCase.requirement_id)
-               .join(TestCase, TestCase.id == RequirementTestCase.test_case_id)
-               .filter(Requirement.project_id == project_id,
-                       Requirement.organisation_id == org_id,
-                       Requirement.state == "confirmed",
-                       TestCase.state == "approved")
-               .scalar() or 0)
-    coverage_pct = round(100.0 * covered / confirmed_count, 1) if confirmed_count else 0.0
+    # One coverage computation for the whole product (SRS §4.5) — the dashboard, the
+    # matrix and the CI gate must never show three different numbers.
+    project_cov = project_coverage(db, project_id, org_id)
+    coverage_pct = project_cov["coverage_pct"]
 
     latest = (db.query(Run)
               .filter(Run.project_id == project_id, Run.organisation_id == org_id)
@@ -361,7 +359,8 @@ def project_dashboard(project_id: str, branch: str | None = None,
         open_defects["critical"] = sum(
             1 for cid, res in failing.items()
             if derive_severity(res.outcome, res.failure_reason,
-                               req_info[cid]["high_priority"]) == "critical")
+                               req_info[cid]["high_priority"],
+                               req_info[cid]["priority"]) == "critical")
 
         if len(completed) >= 2:
             previous_results = _run_outcome_map(db, completed[-2].id)
@@ -380,7 +379,8 @@ def project_dashboard(project_id: str, branch: str | None = None,
                         "run_id": latest_completed.id,
                         "outcome": res.outcome,
                         "severity": derive_severity(res.outcome, res.failure_reason,
-                                                    req_info[cid]["high_priority"]),
+                                                    req_info[cid]["high_priority"],
+                                                    req_info[cid]["priority"]),
                     })
 
     # -- gap detail (FR-051): uncovered confirmed requirements + next action
@@ -416,6 +416,9 @@ def project_dashboard(project_id: str, branch: str | None = None,
         "confirmed_count": confirmed_count,
         "test_case_counts": tc_counts,
         "coverage_pct": coverage_pct,
+        "requirement_coverage_pct": project_cov["requirement_coverage_pct"],
+        "criteria_covered": project_cov["criteria_covered"],
+        "criteria_total": project_cov["criteria_total"],
         "latest_run": latest_payload,
         "trend": trend,
         "branches": branches,

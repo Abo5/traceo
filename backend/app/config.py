@@ -30,7 +30,9 @@ class Settings:
 
     # FR-032 AC3: beyond this many decision-table combinations, pairwise reduction is
     # applied and disclosed on every case it produces.
-    DECISION_TABLE_MAX_COMBOS = int(os.getenv("TRACEO_DECISION_TABLE_MAX_COMBOS", "8"))
+    # Default 64 per SRS §4.3 — six interacting conditions still enumerate exhaustively;
+    # beyond that pairwise reduction applies and is disclosed on every case.
+    DECISION_TABLE_MAX_COMBOS = int(os.getenv("TRACEO_DECISION_TABLE_MAX_COMBOS", "64"))
 
     CORS_ORIGINS = os.getenv("TRACEO_CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
 

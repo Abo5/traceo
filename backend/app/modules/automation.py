@@ -25,7 +25,7 @@ from ..models import (ApiToken, Environment, GatePolicy, Requirement,
 from ..security import generate_api_token
 from .execution import (NoApprovedCases, RunQueued, get_environment_scoped,
                         start_run)
-from .traceability import is_high_priority, run_display_id
+from .traceability import is_high_priority, project_coverage, run_display_id
 
 router = APIRouter()
 
@@ -126,24 +126,10 @@ def _requirements_of_cases(db: Session, case_ids: list[str]) -> dict[str, list[R
 
 
 def _requirement_coverage(db: Session, project_id: str, org_id: str) -> tuple[float, int, int]:
-    """Confirmed requirements carrying at least one approved case — the same
-    definition the dashboard and the matrix use, so the gate cannot disagree
-    with the screen a QA lead is looking at."""
-    confirmed = (db.query(Requirement.id)
-                 .filter(Requirement.project_id == project_id,
-                         Requirement.organisation_id == org_id,
-                         Requirement.state == "confirmed").all())
-    total = len(confirmed)
-    if not total:
-        return 0.0, 0, 0
-    ids = {rid for (rid,) in confirmed}
-    covered_rows = (db.query(RequirementTestCase.requirement_id)
-                    .join(TestCase, TestCase.id == RequirementTestCase.test_case_id)
-                    .filter(TestCase.project_id == project_id,
-                            TestCase.organisation_id == org_id,
-                            TestCase.state == "approved").all())
-    covered = len({rid for (rid,) in covered_rows if rid in ids})
-    return round(covered / total * 100, 1), covered, total
+    """Delegates to the one coverage computation (SRS §4.5, criterion-level and
+    priority-weighted) so the gate cannot disagree with the matrix."""
+    result = project_coverage(db, project_id, org_id)
+    return (result["coverage_pct"], result["criteria_covered"], result["criteria_total"])
 
 
 def _previous_completed_run(db: Session, run: Run) -> Run | None:
@@ -207,7 +193,7 @@ def evaluate_gate(db: Session, run: Run) -> dict:
                 "code": "coverage_below_minimum",
                 "message": (f"Requirement coverage {coverage_pct}% is below the "
                             f"required {policy.min_coverage_pct}% "
-                            f"({covered}/{total_reqs} requirements covered)"),
+                            f"({covered}/{total_reqs} acceptance criteria covered)"),
                 "requirements": [],
             })
         if len(new_failure_ids) > policy.max_new_failures:
@@ -241,6 +227,9 @@ def evaluate_gate(db: Session, run: Run) -> dict:
         "source": run.source or "manual",
         "policy": _policy_payload(policy),
         "coverage_pct": coverage_pct,
+        "covered_criteria": covered,
+        "total_criteria": total_reqs,
+        # kept under the old names so an existing pipeline step keeps parsing
         "covered_requirements": covered,
         "total_requirements": total_reqs,
         "counts": run.counts or {},

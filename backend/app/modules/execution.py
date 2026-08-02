@@ -498,7 +498,7 @@ def _case_worker(run_id: str, case: dict, client: httpx.Client,
 def _fixture_namespace(run_id: str) -> str:
     """Every fixture this run creates carries this token, so leftovers are
     identifiable in the target system by run (FR-043 AC1)."""
-    return f"traceo-{run_id[:8]}"
+    return f"traceo-run-{run_id}"  # the exact token SRS §4.4 specifies
 
 
 def _fixture_request(client: httpx.Client, spec: dict, context: dict,
