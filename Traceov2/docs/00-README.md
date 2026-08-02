@@ -9,6 +9,7 @@
 | 03 | [SRS](03-SRS-Traceo.md) | How the system behaves — information model, layer-by-layer specification, non-functional requirements |
 | 04 | [User Flows](04-User-Flows.md) | Eight end-to-end flows across the 11 screens, with alternates and error paths |
 | 05 | [Design Spec](05-Design-Spec.md) | Tokens, components, layout rules, RTL behaviour, accessibility |
+| 06 | [Delivery Notes v2.1](06-Delivery-Notes-v2.1.md) | What changed on contact with implementation — corrections, shortfalls and the reasons |
 | — | `index.html` | The interactive design — all 11 screens, navigable |
 
 ## The reference system
@@ -39,13 +40,13 @@ BR-03  (business requirement)
 
 ## Implementation status
 
-Every FR in this set is implemented. Two notes on how a capability is delivered rather
-than whether it is:
+Every FR in this set is implemented and covered by tests.
 
-- **FR-021 / FR-022** — the endpoint surface is built from a HAR capture and DOM form
-  descriptors, which a proxy, browser devtools or Traceo's own Playwright driver can
-  produce. The driver is an optional dependency so an air-gapped install still gets
-  traffic-based discovery by importing a capture.
-- **FR-071** — the PDF deliverable is a self-contained printable HTML report (print to
-  PDF); XLSX is generated natively. Both are bilingual and carry the run identity on
-  every page.
+**Read [06-Delivery-Notes-v2.1](06-Delivery-Notes-v2.1.md) before quoting anything in
+this set to a client.** It records where implementation corrected the specification —
+including the headline coverage number, which moved from 100% to 87.8% once coverage was
+measured per acceptance criterion as `03-SRS §4.5` always specified — and where the build
+falls short of what is written here, with the reason in each case.
+
+The `TADQEEQ_*_v2.0.docx` deliverables are dated snapshots and are deliberately not
+edited in place; the delivery notes are their addendum.
