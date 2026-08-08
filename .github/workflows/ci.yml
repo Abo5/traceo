@@ -166,11 +166,14 @@ jobs:
     needs: [images]
     steps:
       - uses: actions/checkout@v4
-      - name: Boot stack (Go backend + frontend)
+      - name: Boot stack (Go backend + frontend + demo SUT)
         # Same compose images the deployment ships (§17): mock LLM keeps the run
         # deterministic and offline; demo seeding is off — test data is created
-        # through the API, never seeded.
-        run: docker compose --profile go up -d --wait
+        # through the API, never seeded. The "e2e" profile adds the demo SUT
+        # (demo/sut) that run-executing specs point their Traceo environment at:
+        # the RUN EXECUTOR inside the backend container is what calls it, so the
+        # tests hand the backend a compose-internal address (SUT_URL below).
+        run: docker compose --profile go --profile e2e up -d --wait
         env:
           TRACEO_LLM_PROVIDER: mock
           TRACEO_SEED_DEMO: "0"
@@ -194,6 +197,11 @@ jobs:
         if: github.event_name == 'pull_request'
         working-directory: e2e
         run: npx playwright test --grep "@smoke|@critical|@permission|@i18n|@a11y" --grep-invert "@regression"
+        env:
+          # Address the BACKEND's run executor uses to reach the demo SUT over
+          # the compose network (e2e/config/resolve.ts; the browser never calls
+          # it). Local host-based runs keep the localhost:9000 default.
+          SUT_URL: http://sut:9000
       - name: Full run (main + nightly schedule)
         # No grep — everything runs, which is a strict superset of @regression:
         # covers @e2e @regression (full UI pipeline), @permission @regression
@@ -202,6 +210,8 @@ jobs:
         if: github.ref == 'refs/heads/main' || github.event_name == 'schedule'
         working-directory: e2e
         run: npx playwright test
+        env:
+          SUT_URL: http://sut:9000
       - uses: actions/upload-artifact@v4
         if: always()
         with:

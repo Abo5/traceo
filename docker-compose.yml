@@ -51,6 +51,19 @@ services:
       - traceo-data:/data
     restart: unless-stopped
 
+  sut:
+    # Demo system-under-test for the e2e suite (profile "e2e" so a production
+    # `--profile go up` never ships it). Only the backend's run executor calls
+    # it — over the compose network as http://sut:9000 — so no host port is
+    # published. CI boots it with:
+    #   docker compose --profile go --profile e2e up -d --wait
+    # and the tests point the backend at it via SUT_URL=http://sut:9000.
+    profiles: ["e2e"]
+    build:
+      context: ./demo/sut
+    image: traceo/demo-sut:local
+    restart: unless-stopped
+
   frontend:
     # No profile: pairs with whichever backend profile is active.
     build:
