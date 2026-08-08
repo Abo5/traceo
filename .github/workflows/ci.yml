@@ -13,9 +13,15 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Nightly full regression at 02:00 UTC — fires the e2e job's schedule
+    # branch (heavy @regression specs run here and on pushes to main only).
+    - cron: "0 2 * * *"
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # event_name is part of the group so a nightly scheduled run is never
+  # cancelled by (or cancels) a push to main that shares the same ref.
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -153,3 +159,52 @@ jobs:
             exit 1
           fi
           echo "refused as expected"
+
+  e2e:
+    name: E2E · Playwright
+    runs-on: ubuntu-latest
+    needs: [images]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Boot stack (Go backend + frontend)
+        # Same compose images the deployment ships (§17): mock LLM keeps the run
+        # deterministic and offline; demo seeding is off — test data is created
+        # through the API, never seeded.
+        run: docker compose --profile go up -d --wait
+        env:
+          TRACEO_LLM_PROVIDER: mock
+          TRACEO_SEED_DEMO: "0"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - name: Install dependencies
+        working-directory: e2e
+        run: npm ci
+      - name: Install Chromium
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+      - name: PR fast lane
+        # Fast subset per docs §12: smoke + critical path + light permission
+        # checks + bilingual/a11y smokes. --grep-invert "@regression" keeps the
+        # heavy specs out of the PR lane even when they share a fast tag
+        # (e.g. the permission matrix is "@permission @regression" and the
+        # full UI pipeline is "@e2e @regression").
+        if: github.event_name == 'pull_request'
+        working-directory: e2e
+        run: npx playwright test --grep "@smoke|@critical|@permission|@i18n|@a11y" --grep-invert "@regression"
+      - name: Full run (main + nightly schedule)
+        # No grep — everything runs, which is a strict superset of @regression:
+        # covers @e2e @regression (full UI pipeline), @permission @regression
+        # (role matrix), @negative @validation @regression, plus @i18n and
+        # @a11y alongside the fast-lane tags.
+        if: github.ref == 'refs/heads/main' || github.event_name == 'schedule'
+        working-directory: e2e
+        run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-report
+          path: e2e/reports
+          retention-days: 14
