@@ -1,0 +1,71 @@
+/**
+ * Accessibility scans (@a11y, §18) — axe over every top-level surface:
+ * the public auth pages, the projects list, and each project sub-page
+ * (API-created project + storage-state auth, §9). The gate is delta-based:
+ * only violations absent from e2e/a11y-baseline.json fail (see helpers/a11y.ts).
+ * Page readiness is asserted on `{domain}-page-root` testids, never on
+ * bilingual text (§5, §6).
+ */
+import { test, expect } from '../fixtures';
+import { checkA11y } from '../helpers/a11y';
+import { LoginPage } from '../pages/login.page';
+import { ProjectsPage } from '../pages/projects.page';
+import { PROJECT_SECTIONS, ProjectShellPage } from '../pages/project-shell.page';
+import { RegisterPage } from '../pages/register.page';
+
+test.describe('accessibility @a11y', () => {
+  // Dev-server first navigation compiles the route on demand (up to ~20s),
+  // and the axe scan itself adds a few seconds — widen the test budget.
+  test.beforeEach(() => {
+    test.setTimeout(60_000);
+  });
+
+  // `page` (no storage state) — the auth pages are public surfaces.
+  test('login page has no new a11y violations', async ({ page }) => {
+    const login = new LoginPage(page);
+
+    await login.goto();
+    await expect(login.root).toBeVisible({ timeout: 20_000 });
+
+    await checkA11y(page, 'login');
+  });
+
+  test('register page has no new a11y violations', async ({ page }) => {
+    const register = new RegisterPage(page);
+
+    await register.goto();
+    await expect(register.root).toBeVisible({ timeout: 20_000 });
+
+    await checkA11y(page, 'register');
+  });
+
+  test('projects list has no new a11y violations', async ({ asQaLead }) => {
+    const projects = new ProjectsPage(asQaLead);
+
+    await projects.goto();
+    await expect(projects.root).toBeVisible({ timeout: 20_000 });
+
+    // Project cards are volatile: sibling tests' `project` fixtures append to
+    // this org's list mid-run, so card count (and thus nth-child fingerprints)
+    // is nondeterministic under fullyParallel — scan the page chrome only.
+    await checkA11y(asQaLead, 'projects', { exclude: ['[data-testid="projects-list-card"]'] });
+  });
+
+  for (const section of PROJECT_SECTIONS) {
+    test(`project ${section} page has no new a11y violations`, async ({
+      asQaLead,
+      project,
+    }) => {
+      const shell = new ProjectShellPage(asQaLead);
+
+      await shell.goto(project.id);
+      await expect(shell.rootOf('overview')).toBeVisible({ timeout: 20_000 });
+      if (section !== 'overview') {
+        await shell.openSection(section);
+        await expect(shell.rootOf(section)).toBeVisible({ timeout: 20_000 });
+      }
+
+      await checkA11y(asQaLead, `project:${section}`);
+    });
+  }
+});

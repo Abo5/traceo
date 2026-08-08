@@ -1,0 +1,65 @@
+/**
+ * Projects repository — backend/app/modules/projects.py.
+ *
+ * Verified shapes:
+ * - POST /projects {name, language} -> 201 project payload (manage_projects: admin|qa_lead)
+ * - POST /projects/{id}/environments {name, base_url, auth_type?, auth_config?, variables?, tls_strict?}
+ *   -> 201 env payload; auth_config is write-only, reads expose auth_config_masked.
+ */
+import type { TraceoHttp } from './http';
+import type { Environment, NewEnvironment, NewProject, Project } from './types';
+
+export class ProjectsRepository {
+  constructor(private readonly http: TraceoHttp) {}
+
+  async create(body: NewProject): Promise<Project> {
+    return this.http.post<Project>('/projects', body);
+  }
+
+  async list(status?: 'active' | 'archived'): Promise<Project[]> {
+    return this.http.get<Project[]>('/projects', { status });
+  }
+
+  async get(projectId: string): Promise<Project> {
+    return this.http.get<Project>(`/projects/${projectId}`);
+  }
+
+  async update(
+    projectId: string,
+    body: Partial<{ name: string; language: 'en' | 'ar'; status: 'active' | 'archived' }>,
+  ): Promise<Project> {
+    return this.http.patch<Project>(`/projects/${projectId}`, body);
+  }
+
+  async remove(projectId: string): Promise<{ deleted: boolean }> {
+    return this.http.delete<{ deleted: boolean }>(`/projects/${projectId}`);
+  }
+
+  /** FR-PRJ-07 dashboard — asserted fields only; the payload carries more. */
+  async dashboard(projectId: string): Promise<{
+    requirement_count: number;
+    confirmed_count: number;
+    test_case_counts: Record<string, number>;
+    coverage_pct: number;
+    latest_run: Record<string, unknown> | null;
+  }> {
+    return this.http.get(`/projects/${projectId}/dashboard`);
+  }
+
+  // --- environments (FR-PRJ-04/05) --------------------------------------------
+
+  async createEnvironment(projectId: string, body: NewEnvironment): Promise<Environment> {
+    return this.http.post<Environment>(`/projects/${projectId}/environments`, body);
+  }
+
+  async listEnvironments(projectId: string): Promise<Environment[]> {
+    return this.http.get<Environment[]>(`/projects/${projectId}/environments`);
+  }
+
+  async checkEnvironment(
+    projectId: string,
+    envId: string,
+  ): Promise<{ reachable: boolean; status_code?: number; auth_applied: boolean; error?: string }> {
+    return this.http.post(`/projects/${projectId}/environments/${envId}/check`);
+  }
+}

@@ -1,0 +1,335 @@
+openapi: 3.0.3
+info:
+  title: "منصة الطلبات — Orders Platform API"
+  version: "2.0.0"
+  description: >-
+    الواجهات البرمجية لمنصة الطلبات الحكومية: تسجيل الدخول، إدارة العملاء،
+    الطلبات، والفواتير. جميع الواجهات محمية برمز Bearer عدا تسجيل الدخول.
+    المسارات هنا نسبية — عنوان البيئة الأساسي يتضمن البادئة /api/v2.
+
+servers:
+  - url: http://localhost:9000/api/v2
+    description: "بيئة الاختبار — النظام قيد الفحص (Demo SUT)"
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: auth
+    description: "المصادقة وتسجيل الدخول"
+  - name: customers
+    description: "إدارة العملاء"
+  - name: orders
+    description: "إدارة الطلبات"
+  - name: invoices
+    description: "الفواتير"
+
+paths:
+  /auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: "تسجيل الدخول برقم الجوال وكلمة المرور"
+      description: "الواجهة الوحيدة غير المحمية — تعيد رمز دخول عند صحة البيانات."
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, password]
+              properties:
+                phone:
+                  type: string
+                  pattern: '^05[0-9]{8}$'
+                  minLength: 10
+                  maxLength: 10
+                  description: "رقم الجوال: يبدأ بـ 05 ومكوّن من 10 أرقام فقط"
+                password:
+                  type: string
+                  description: "كلمة المرور"
+      responses:
+        '200':
+          description: "تم تسجيل الدخول بنجاح"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                    description: "رمز الدخول المستخدم في ترويسة Authorization"
+        '401':
+          description: "رقم الجوال أو كلمة المرور غير صحيحة"
+
+  /customers:
+    post:
+      tags: [customers]
+      operationId: createCustomer
+      summary: "إنشاء عميل جديد"
+      description: "يتحقق من صيغة رقم الجوال والبريد الإلكتروني وعمر العميل قبل الإنشاء."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, phone, email, age]
+              properties:
+                name:
+                  type: string
+                  minLength: 2
+                  description: "اسم العميل (عربي أو لاتيني)"
+                phone:
+                  type: string
+                  pattern: '^05[0-9]{8}$'
+                  description: "رقم الجوال: يبدأ بـ 05 ومكوّن من 10 أرقام فقط"
+                email:
+                  type: string
+                  format: email
+                  description: "البريد الإلكتروني بصيغة صحيحة"
+                age:
+                  type: integer
+                  minimum: 18
+                  maximum: 120
+                  description: "عمر العميل بين 18 و120 عاماً (حدود شاملة)"
+      responses:
+        '201':
+          description: "تم إنشاء العميل"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '422':
+          description: "بيانات غير صالحة — رقم جوال أو بريد أو عمر مخالف للقيود"
+
+  /customers/{id}:
+    get:
+      tags: [customers]
+      operationId: getCustomer
+      summary: "جلب بيانات عميل بمعرّفه"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: "معرّف العميل، مثل CUST-001"
+          schema:
+            type: string
+      responses:
+        '200':
+          description: "بيانات العميل"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '404':
+          description: "العميل غير موجود"
+
+  /orders:
+    get:
+      tags: [orders]
+      operationId: listOrders
+      summary: "قائمة الطلبات مع ترشيح بالحالة وترقيم صفحات"
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: "ترشيح الطلبات بحالتها — أي قيمة أخرى تُرفض بالرمز 422"
+          schema:
+            type: string
+            enum: [pending, confirmed, dispatched, delivered, cancelled]
+        - name: page
+          in: query
+          required: false
+          description: "رقم الصفحة — يبدأ من 1"
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+      responses:
+        '200':
+          description: "صفحة من الطلبات"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    description: "الطلبات المطابقة للترشيح"
+                    items:
+                      $ref: '#/components/schemas/Order'
+                  page:
+                    type: integer
+                    description: "رقم الصفحة الحالية"
+        '422':
+          description: "حالة غير معروفة أو رقم صفحة أقل من 1"
+    post:
+      tags: [orders]
+      operationId: createOrder
+      summary: "إنشاء طلب جديد"
+      description: "الطلب يتطلب عنصراً واحداً على الأقل وإجمالياً أكبر من صفر."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customer_id, items, total]
+              properties:
+                customer_id:
+                  type: string
+                  description: "معرّف العميل صاحب الطلب"
+                items:
+                  type: array
+                  minItems: 1
+                  description: "عناصر الطلب — عنصر واحد على الأقل"
+                  items:
+                    type: object
+                    required: [sku, qty]
+                    properties:
+                      sku:
+                        type: string
+                        description: "رمز الصنف"
+                      qty:
+                        type: integer
+                        minimum: 1
+                        description: "الكمية"
+                total:
+                  type: number
+                  minimum: 0.01
+                  description: "إجمالي الطلب — يجب أن يكون أكبر من صفر"
+      responses:
+        '201':
+          description: "تم إنشاء الطلب بحالة pending"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '422':
+          description: "عناصر فارغة أو إجمالي غير موجب"
+
+  /orders/{id}/cancel:
+    post:
+      tags: [orders]
+      operationId: cancelOrder
+      summary: "إلغاء طلب قبل الشحن"
+      description: "الإلغاء مسموح قبل الشحن فقط — الطلب المشحون أو المُسلَّم يُرفض إلغاؤه."
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: "معرّف الطلب، مثل ORD-1001"
+          schema:
+            type: string
+      responses:
+        '200':
+          description: "تم إلغاء الطلب"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  status:
+                    type: string
+                    description: "الحالة بعد الإلغاء: cancelled"
+                  message:
+                    type: string
+                    description: "رسالة تأكيد بالعربية"
+        '409':
+          description: "لا يمكن إلغاء طلب مشحون dispatched أو مُسلَّم delivered"
+
+  /invoices/{id}:
+    get:
+      tags: [invoices]
+      operationId: getInvoice
+      summary: "جلب فاتورة بمعرّفها"
+      description: "الفاتورة تعرض اسم العميل العربي بترميز سليم واتجاه العرض RTL."
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: "معرّف الفاتورة، مثل INV-2001"
+          schema:
+            type: string
+      responses:
+        '200':
+          description: "بيانات الفاتورة"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  customer_name:
+                    type: string
+                    description: "اسم العميل العربي بترميز UTF-8 سليم"
+                  total:
+                    type: number
+                    description: "إجمالي الفاتورة"
+                  rendered_direction:
+                    type: string
+                    enum: [rtl, ltr]
+                    description: "اتجاه عرض الفاتورة — rtl للفواتير العربية"
+        '404':
+          description: "الفاتورة غير موجودة"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: "رمز Bearer مطلوب على كل الواجهات عدا تسجيل الدخول /auth/login"
+
+  schemas:
+    Customer:
+      type: object
+      description: "سجل العميل"
+      properties:
+        id:
+          type: string
+          description: "معرّف العميل"
+        name:
+          type: string
+          description: "اسم العميل"
+        phone:
+          type: string
+          description: "رقم الجوال"
+        email:
+          type: string
+          description: "البريد الإلكتروني"
+        age:
+          type: integer
+          description: "العمر"
+
+    Order:
+      type: object
+      description: "سجل الطلب"
+      properties:
+        id:
+          type: string
+          description: "معرّف الطلب"
+        customer_id:
+          type: string
+          description: "معرّف العميل"
+        status:
+          type: string
+          enum: [pending, confirmed, dispatched, delivered, cancelled]
+          description: "حالة الطلب"
+        items:
+          type: array
+          description: "عناصر الطلب"
+          items:
+            type: object
+            properties:
+              sku:
+                type: string
+              qty:
+                type: integer
+        total:
+          type: number
+          description: "إجمالي الطلب"
