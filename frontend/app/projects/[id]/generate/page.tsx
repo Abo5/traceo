@@ -316,7 +316,9 @@ function GenerateInner() {
                   />
                   <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                     <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
-                      {d.label} <M style={{ color: "var(--text-muted)", fontSize: 11 }}>{d.v}</M>
+                      {/* text-secondary, not text-muted: 11px muted-on-surface-2 fails
+                          WCAG AA contrast (axe color-contrast, @a11y delta gate) */}
+                      {d.label} <M style={{ color: "var(--text-secondary)", fontSize: 11 }}>{d.v}</M>
                     </span>
                     <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{d.hint}</span>
                   </span>
