@@ -12,6 +12,7 @@ export default defineConfig({
   reporter: [
     ['html', { outputFolder: 'reports/html', open: 'never' }],
     ['junit', { outputFile: 'reports/junit/results.xml' }],
+    ['./reporters/flaky-reporter.ts'], // pass-on-retry detection → reports/flaky.json (§16)
   ],
   use: {
     baseURL: env.baseUrl,

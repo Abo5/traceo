@@ -63,6 +63,25 @@ backend/.venv/bin/python demo/seed_demo.py
 cd backend && .venv/bin/python -m pytest
 ```
 
+#### اختبارات الواجهة E2E — Playwright
+
+تتطلب المنظومة كاملة قيد التشغيل (خطوات التشغيل السريع أعلاه، أو `docker compose --profile go --profile e2e up -d --wait`):
+
+```bash
+cd e2e
+npm install
+npx playwright install chromium
+npx playwright test
+```
+
+ممر الـ PR السريع (الوسوم السريعة دون المواصفات الثقيلة):
+
+```bash
+npx playwright test --grep "@smoke|@critical|@permission|@i18n|@a11y" --grep-invert "@regression"
+```
+
+التفاصيل كاملة (المعمارية، الوسوم، سياسة حجر الهشاشة) في [docs/TEST_AUTOMATION_ARCHITECTURE.md](docs/TEST_AUTOMATION_ARCHITECTURE.md).
+
 ## متغيرات البيئة الرئيسية — Environment Variables
 
 | المتغير | الافتراضي | الوصف |
@@ -124,6 +143,13 @@ backend/.venv/bin/python demo/seed_demo.py
 
 # Tests — the two release gates (grounding + tenant isolation)
 cd backend && .venv/bin/python -m pytest
+
+# E2E UI suite (Playwright) — needs the full stack running (Quickstart above,
+# or: docker compose --profile go --profile e2e up -d --wait)
+cd e2e && npm install && npx playwright install chromium && npx playwright test
+# PR fast lane:
+#   npx playwright test --grep "@smoke|@critical|@permission|@i18n|@a11y" --grep-invert "@regression"
+# Details: docs/TEST_AUTOMATION_ARCHITECTURE.md
 ```
 
 **Key env vars:** `TRACEO_LLM_PROVIDER=mock|anthropic|auto`, `ANTHROPIC_API_KEY`, `TRACEO_DATABASE_URL`. See `backend/app/config.py`.
