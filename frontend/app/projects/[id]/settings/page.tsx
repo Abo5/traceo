@@ -5,6 +5,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useParams } from "next/navigation";
 import { API, api, getToken } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
+import { useCan } from "@/lib/permissions";
 import {
   Badge,
   Button,
@@ -68,12 +69,13 @@ async function downloadFile(path: string, filename: string): Promise<void> {
 }
 
 /** Inline toggle (36×20 track per spec §2.21) — ui.tsx has no Toggle. */
-function Toggle({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+function Toggle({ on, onChange, disabled, testId }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean; testId?: string }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={on}
+      data-testid={testId}
       disabled={disabled}
       onClick={() => onChange(!on)}
       style={{
@@ -130,6 +132,7 @@ export default function SettingsPage() {
   const { id } = useParams<{ id: string }>();
   const { lang } = useLang();
   const ar = lang === "ar";
+  const canDo = useCan();
 
   const L = ar
     ? {
@@ -465,17 +468,17 @@ export default function SettingsPage() {
   );
 
   return (
-    <div className="stack">
-      <PageHeader title={L.title} sub={L.sub} />
+    <div className="stack" data-testid="settings-page-root">
+      <PageHeader title={L.title} sub={L.sub} testId="settings-page-header" />
 
       <div className="row" style={{ gap: 6 }}>
-        <Pill active={tab === "keys"} onClick={() => setTab("keys")}>
+        <Pill active={tab === "keys"} testId="settings-tab-keys-pill" onClick={() => setTab("keys")}>
           {L.tabKeys}
         </Pill>
-        <Pill active={tab === "schedules"} onClick={() => setTab("schedules")}>
+        <Pill active={tab === "schedules"} testId="settings-tab-schedules-pill" onClick={() => setTab("schedules")}>
           {L.tabSchedules}
         </Pill>
-        <Pill active={tab === "export"} onClick={() => setTab("export")}>
+        <Pill active={tab === "export"} testId="settings-tab-export-pill" onClick={() => setTab("export")}>
           {L.tabExport}
         </Pill>
       </div>
@@ -489,9 +492,11 @@ export default function SettingsPage() {
             </span>
           }
           action={
-            <Button variant="primary" size="sm" onClick={() => { setKeyFormError(null); setCreatedKey(null); setKeyModalOpen(true); }}>
-              + {L.newKey}
-            </Button>
+            canDo("manage_projects") ? (
+              <Button variant="primary" size="sm" testId="settings-keys-new-button" onClick={() => { setKeyFormError(null); setCreatedKey(null); setKeyModalOpen(true); }}>
+                + {L.newKey}
+              </Button>
+            ) : undefined
           }
           pad={false}
         >
@@ -501,11 +506,11 @@ export default function SettingsPage() {
           ) : keysError ? (
             errorBox(keysError, loadKeys)
           ) : keys.length === 0 ? (
-            <Empty title={L.keysEmpty} hint={L.keysEmptyHint} />
+            <Empty title={L.keysEmpty} hint={L.keysEmptyHint} testId="settings-keys-empty-state" />
           ) : (
-            <Table head={[L.keyName, L.keyPrefix, L.created, L.lastUsed, L.state, L.actions]}>
+            <Table head={[L.keyName, L.keyPrefix, L.created, L.lastUsed, L.state, L.actions]} testId="settings-keys-table">
               {keys.map((k) => (
-                <tr key={k.id} style={k.revoked ? { opacity: 0.55 } : undefined}>
+                <tr key={k.id} data-testid="settings-keys-row" style={k.revoked ? { opacity: 0.55 } : undefined}>
                   <td style={{ fontSize: 13, color: "var(--text)" }}>{k.name}</td>
                   <td>
                     <Mono style={{ fontSize: 12, color: "var(--text-secondary)" }}>{k.prefix}…</Mono>
@@ -517,11 +522,11 @@ export default function SettingsPage() {
                     <DateTimeText value={k.last_used_at} style={{ color: "var(--text-secondary)" }} />
                   </td>
                   <td>
-                    <Badge tone={k.revoked ? "muted" : "success"}>{k.revoked ? L.revoked : L.active}</Badge>
+                    <Badge tone={k.revoked ? "muted" : "success"} testId="settings-keys-row-state-badge">{k.revoked ? L.revoked : L.active}</Badge>
                   </td>
                   <td>
-                    {!k.revoked && (
-                      <Button variant="danger" size="sm" onClick={() => setRevoking(k)}>
+                    {canDo("manage_projects") && !k.revoked && (
+                      <Button variant="danger" size="sm" testId="settings-keys-revoke-button" onClick={() => setRevoking(k)}>
                         {L.revoke}
                       </Button>
                     )}
@@ -542,9 +547,11 @@ export default function SettingsPage() {
             </span>
           }
           action={
-            <Button variant="primary" size="sm" onClick={openSchedCreate} disabled={envs.length === 0}>
-              + {L.newSched}
-            </Button>
+            canDo("manage_projects") ? (
+              <Button variant="primary" size="sm" testId="settings-schedules-new-button" onClick={openSchedCreate} disabled={envs.length === 0}>
+                + {L.newSched}
+              </Button>
+            ) : undefined
           }
           pad={false}
         >
@@ -554,11 +561,11 @@ export default function SettingsPage() {
           ) : schedError ? (
             errorBox(schedError, loadScheds)
           ) : scheds.length === 0 ? (
-            <Empty title={L.schedEmpty} hint={envs.length === 0 ? L.noEnvs : L.schedEmptyHint} />
+            <Empty title={L.schedEmpty} hint={envs.length === 0 ? L.noEnvs : L.schedEmptyHint} testId="settings-schedules-empty-state" />
           ) : (
-            <Table head={[L.schedName, L.env, L.interval, L.state, L.lastRun, L.nextRun, L.actions]}>
+            <Table head={[L.schedName, L.env, L.interval, L.state, L.lastRun, L.nextRun, L.actions]} testId="settings-schedules-table">
               {scheds.map((s) => (
-                <tr key={s.id}>
+                <tr key={s.id} data-testid="settings-schedules-row">
                   <td style={{ fontSize: 13, color: "var(--text)" }}>{s.name}</td>
                   <td style={{ fontSize: 13, color: "var(--text-secondary)" }}>{envName(s.environment_id)}</td>
                   <td style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>
@@ -568,7 +575,9 @@ export default function SettingsPage() {
                   </td>
                   <td>
                     <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-                      <Toggle on={s.enabled} onChange={(v) => toggleSched(s, v)} />
+                      {canDo("manage_projects") && (
+                        <Toggle on={s.enabled} onChange={(v) => toggleSched(s, v)} testId="settings-schedule-enabled-toggle" />
+                      )}
                       <span style={{ fontSize: 12, color: s.enabled ? "var(--success)" : "var(--text-muted)" }}>
                         {s.enabled ? L.enabled : L.disabled}
                       </span>
@@ -582,12 +591,16 @@ export default function SettingsPage() {
                   </td>
                   <td>
                     <span style={{ display: "inline-flex", gap: 6 }}>
-                      <Button variant="ghost" size="sm" onClick={() => openSchedEdit(s)}>
-                        {L.edit}
-                      </Button>
-                      <Button variant="danger" size="sm" onClick={() => setSchedDeleting(s)}>
-                        {L.del}
-                      </Button>
+                      {canDo("manage_projects") && (
+                        <Button variant="ghost" size="sm" testId="settings-schedule-edit-button" onClick={() => openSchedEdit(s)}>
+                          {L.edit}
+                        </Button>
+                      )}
+                      {canDo("manage_projects") && (
+                        <Button variant="danger" size="sm" testId="settings-schedule-delete-button" onClick={() => setSchedDeleting(s)}>
+                          {L.del}
+                        </Button>
+                      )}
                     </span>
                   </td>
                 </tr>
@@ -622,9 +635,11 @@ export default function SettingsPage() {
             </div>
             {exportError && <div className="error-text" style={{ fontSize: 13 }}>{exportError}</div>}
             <div>
-              <Button variant="primary" disabled={exporting} onClick={runExport}>
-                {exporting ? L.exporting : `⇩ ${L.exportBtn}`}
-              </Button>
+              {canDo("manage_members") && (
+                <Button variant="primary" testId="settings-export-button" disabled={exporting} onClick={runExport}>
+                  {exporting ? L.exporting : `⇩ ${L.exportBtn}`}
+                </Button>
+              )}
             </div>
           </div>
         </Card>
@@ -638,6 +653,7 @@ export default function SettingsPage() {
           setCreatedKey(null);
         }}
         title={createdKey ? L.keyCreated : L.newKey}
+        testId="settings-key-modal"
       >
         {createdKey ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -645,6 +661,7 @@ export default function SettingsPage() {
             <div
               className="code-block"
               dir="ltr"
+              data-testid="settings-key-value"
               style={{ overflowWrap: "anywhere", display: "flex", gap: 10, alignItems: "center", justifyContent: "space-between" }}
             >
               <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>{createdKey.key}</span>
@@ -664,6 +681,7 @@ export default function SettingsPage() {
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <Button
                 variant="primary"
+                testId="settings-key-done-button"
                 onClick={() => {
                   setKeyModalOpen(false);
                   setCreatedKey(null);
@@ -679,6 +697,7 @@ export default function SettingsPage() {
               <Input
                 required
                 maxLength={100}
+                testId="settings-key-name-input"
                 placeholder={ar ? "مثال: CI Pipeline" : "e.g. CI Pipeline"}
                 value={keyName}
                 onChange={(e) => setKeyName(e.target.value)}
@@ -686,10 +705,10 @@ export default function SettingsPage() {
             </Field>
             {keyFormError && <div className="error-text" style={{ fontSize: 13 }}>{keyFormError}</div>}
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <Button variant="ghost" onClick={() => setKeyModalOpen(false)}>
+              <Button variant="ghost" testId="settings-key-cancel-button" onClick={() => setKeyModalOpen(false)}>
                 {L.cancel}
               </Button>
-              <Button type="submit" variant="primary" disabled={keyBusy || !keyName.trim()}>
+              <Button type="submit" variant="primary" testId="settings-key-submit-button" disabled={keyBusy || !keyName.trim()}>
                 {keyBusy ? L.creating : L.create}
               </Button>
             </div>
@@ -698,7 +717,7 @@ export default function SettingsPage() {
       </Modal>
 
       {/* ---------- Revoke confirm ---------- */}
-      <Modal open={!!revoking} onClose={() => setRevoking(null)} title={L.revokeTitle}>
+      <Modal open={!!revoking} onClose={() => setRevoking(null)} title={L.revokeTitle} testId="settings-revoke-modal">
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ fontSize: 13.5, color: "var(--text-secondary)" }}>
             <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>
@@ -707,10 +726,10 @@ export default function SettingsPage() {
             {L.revokeConfirm}
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Button variant="ghost" onClick={() => setRevoking(null)}>
+            <Button variant="ghost" testId="settings-revoke-cancel-button" onClick={() => setRevoking(null)}>
               {L.cancel}
             </Button>
-            <Button variant="danger" disabled={revokeBusy} onClick={revokeKey}>
+            <Button variant="danger" testId="settings-revoke-confirm-button" disabled={revokeBusy} onClick={revokeKey}>
               {L.confirm}
             </Button>
           </div>
@@ -718,12 +737,13 @@ export default function SettingsPage() {
       </Modal>
 
       {/* ---------- Schedule modal ---------- */}
-      <Modal open={schedModalOpen} onClose={() => setSchedModalOpen(false)} title={schedEditing ? L.editSched : L.newSched}>
+      <Modal open={schedModalOpen} onClose={() => setSchedModalOpen(false)} title={schedEditing ? L.editSched : L.newSched} testId="settings-schedule-modal">
         <form onSubmit={saveSched} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Field label={L.schedName}>
             <Input
               required
               maxLength={100}
+              testId="settings-schedule-name-input"
               placeholder={ar ? "مثال: تشغيل ليلي" : "e.g. Nightly run"}
               value={schedForm.name}
               onChange={(e) => setSchedForm((f) => ({ ...f, name: e.target.value }))}
@@ -732,6 +752,7 @@ export default function SettingsPage() {
           <Field label={L.env}>
             <Select
               required
+              testId="settings-schedule-env-select"
               value={schedForm.environment_id}
               onChange={(e) => setSchedForm((f) => ({ ...f, environment_id: e.target.value }))}
             >
@@ -745,6 +766,7 @@ export default function SettingsPage() {
           </Field>
           <Field label={L.interval}>
             <Select
+              testId="settings-schedule-interval-select"
               value={String(schedForm.interval_minutes)}
               onChange={(e) => setSchedForm((f) => ({ ...f, interval_minutes: Number(e.target.value) }))}
             >
@@ -758,17 +780,18 @@ export default function SettingsPage() {
           <label
             style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: "var(--text-secondary)", cursor: "pointer" }}
           >
-            <Toggle on={schedForm.enabled} onChange={(v) => setSchedForm((f) => ({ ...f, enabled: v }))} />
+            <Toggle on={schedForm.enabled} onChange={(v) => setSchedForm((f) => ({ ...f, enabled: v }))} testId="settings-schedule-form-enabled-toggle" />
             {L.enabled}
           </label>
           {schedFormError && <div className="error-text" style={{ fontSize: 13 }}>{schedFormError}</div>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Button variant="ghost" onClick={() => setSchedModalOpen(false)}>
+            <Button variant="ghost" testId="settings-schedule-cancel-button" onClick={() => setSchedModalOpen(false)}>
               {L.cancel}
             </Button>
             <Button
               type="submit"
               variant="primary"
+              testId="settings-schedule-submit-button"
               disabled={schedBusy || !schedForm.name.trim() || !schedForm.environment_id}
             >
               {schedEditing ? L.save : L.create}
@@ -778,17 +801,17 @@ export default function SettingsPage() {
       </Modal>
 
       {/* ---------- Schedule delete confirm ---------- */}
-      <Modal open={!!schedDeleting} onClose={() => setSchedDeleting(null)} title={L.delSchedTitle}>
+      <Modal open={!!schedDeleting} onClose={() => setSchedDeleting(null)} title={L.delSchedTitle} testId="settings-schedule-delete-modal">
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ fontSize: 13.5, color: "var(--text-secondary)" }}>
             <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>{schedDeleting?.name}</div>
             {L.delSchedConfirm}
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Button variant="ghost" onClick={() => setSchedDeleting(null)}>
+            <Button variant="ghost" testId="settings-schedule-delete-cancel-button" onClick={() => setSchedDeleting(null)}>
               {L.cancel}
             </Button>
-            <Button variant="danger" disabled={schedDeleteBusy} onClick={deleteSched}>
+            <Button variant="danger" testId="settings-schedule-delete-confirm-button" disabled={schedDeleteBusy} onClick={deleteSched}>
               {L.confirm}
             </Button>
           </div>

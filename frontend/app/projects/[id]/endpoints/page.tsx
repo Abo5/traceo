@@ -5,6 +5,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
+import { useCan } from "@/lib/permissions";
 import { Badge, Button, Card, Empty, Input, PageHeader, Pill, Progress, RefChip, StatusDot, Table } from "@/components/ui";
 
 function asList(x: any): any[] {
@@ -54,13 +55,14 @@ function MethodBadge({ method }: { method: string }) {
   );
 }
 
-function Toggle({ on, onChange, disabled }: { on: boolean; onChange: () => void; disabled?: boolean }) {
+function Toggle({ on, onChange, disabled, testId }: { on: boolean; onChange: () => void; disabled?: boolean; testId?: string }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={on}
       disabled={disabled}
+      data-testid={testId}
       onClick={onChange}
       style={{
         width: 38,
@@ -95,6 +97,7 @@ function Toggle({ on, onChange, disabled }: { on: boolean; onChange: () => void;
 export default function EndpointsPage() {
   const { id } = useParams<{ id: string }>();
   const { lang } = useLang();
+  const canDo = useCan();
 
   const L =
     lang === "ar"
@@ -242,15 +245,16 @@ export default function EndpointsPage() {
   const warnings: any[] = Array.isArray(result?.warnings) ? result.warnings : [];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      <PageHeader title={L.title} sub={L.sub} actions={<RefChip id="FR-024" />} />
+    <div data-testid="endpoints-page-root" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <PageHeader title={L.title} sub={L.sub} actions={<RefChip id="FR-024" />} testId="endpoints-page-header" />
 
-      <Card title={L.importCard}>
+      {canDo("import_spec") && (
+      <Card title={L.importCard} testId="endpoints-import-card">
         <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
-          <Pill active={tab === "url"} onClick={() => setTab("url")}>
+          <Pill active={tab === "url"} onClick={() => setTab("url")} testId="endpoints-import-url-pill">
             {L.tabUrl}
           </Pill>
-          <Pill active={tab === "file"} onClick={() => setTab("file")}>
+          <Pill active={tab === "file"} onClick={() => setTab("file")} testId="endpoints-import-file-pill">
             {L.tabFile}
           </Pill>
         </div>
@@ -262,9 +266,10 @@ export default function EndpointsPage() {
               placeholder={L.urlPh}
               value={url}
               onChange={(e: any) => setUrl(e.target.value)}
+              testId="endpoints-import-url-input"
               style={{ flex: 1, minWidth: 260, fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12 }}
             />
-            <Button disabled={importing || !url.trim()} onClick={() => doImport({ url: url.trim() })}>
+            <Button disabled={importing || !url.trim()} onClick={() => doImport({ url: url.trim() })} testId="endpoints-import-submit-button">
               {importing ? L.importing : L.fetchBtn}
             </Button>
           </div>
@@ -272,6 +277,7 @@ export default function EndpointsPage() {
           <div>
             <input
               ref={fileRef}
+              data-testid="endpoints-import-file-input"
               type="file"
               accept=".json,.yaml,.yml"
               style={{ display: "none" }}
@@ -281,7 +287,7 @@ export default function EndpointsPage() {
                 e.target.value = "";
               }}
             />
-            <Button variant="secondary" disabled={importing} onClick={() => fileRef.current?.click()}>
+            <Button variant="secondary" disabled={importing} onClick={() => fileRef.current?.click()} testId="endpoints-import-file-button">
               {importing ? L.importing : L.filePick}
             </Button>
           </div>
@@ -297,7 +303,7 @@ export default function EndpointsPage() {
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{L.importResult}:</span>
                 {diffEntries.map(([k, label]) => (
-                  <Badge key={k} tone={k === "removed" ? "error" : k === "updated" ? "warning" : k === "added" ? "success" : "muted"}>
+                  <Badge key={k} tone={k === "removed" ? "error" : k === "updated" ? "warning" : k === "added" ? "success" : "muted"} testId={`endpoints-import-${k}-badge`}>
                     {label} <M style={{ fontSize: 11 }}>{result[k]}</M>
                   </Badge>
                 ))}
@@ -327,8 +333,9 @@ export default function EndpointsPage() {
           </div>
         )}
       </Card>
+      )}
 
-      <Card title={`${L.inventory}${eps.length ? ` (${eps.length})` : ""}`} pad={false}>
+      <Card title={`${L.inventory}${eps.length ? ` (${eps.length})` : ""}`} pad={false} testId="endpoints-inventory-card">
         {loading ? (
           <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 13 }}>…</div>
         ) : error ? (
@@ -339,6 +346,7 @@ export default function EndpointsPage() {
             <Button
               variant="secondary"
               size="sm"
+              testId="endpoints-inventory-retry-button"
               onClick={() => {
                 setError(null);
                 setLoading(true);
@@ -351,9 +359,9 @@ export default function EndpointsPage() {
             </Button>
           </div>
         ) : eps.length === 0 ? (
-          <Empty title={L.empty} hint={L.emptyHint} />
+          <Empty title={L.empty} hint={L.emptyHint} testId="endpoints-empty-state" />
         ) : (
-          <Table head={[L.method, L.path, L.summary, L.params, L.tests, L.coverage, L.lastOutcome, L.security, L.included]}>
+          <Table head={[L.method, L.path, L.summary, L.params, L.tests, L.coverage, L.lastOutcome, L.security, L.included]} testId="endpoints-table-root">
             {eps.map((ep) => {
               const params = Array.isArray(ep.parameters) ? ep.parameters.length : 0;
               const secured = Array.isArray(ep.security) ? ep.security.length > 0 : !!ep.security;
@@ -362,6 +370,7 @@ export default function EndpointsPage() {
               return (
                 <tr
                   key={ep.id}
+                  data-testid="endpoints-row"
                   style={{
                     opacity: ep.excluded ? 0.5 : 1,
                     background: !ep.excluded && testCount === 0 ? "rgba(255,197,61,.07)" : undefined,
@@ -395,7 +404,7 @@ export default function EndpointsPage() {
                   <td>
                     {ep.last_outcome ? (
                       <span className="row" style={{ gap: 6, alignItems: "center" }}>
-                        <StatusDot state={ep.last_outcome} />
+                        <StatusDot state={ep.last_outcome} testId="endpoints-row-outcome-dot" />
                         <M style={{ fontSize: 10.5 }}>{ep.last_outcome}</M>
                       </span>
                     ) : (
@@ -406,7 +415,9 @@ export default function EndpointsPage() {
                     <Badge tone={secured ? "info" : "muted"}>{secured ? L.secured : L.open}</Badge>
                   </td>
                   <td>
-                    <Toggle on={!ep.excluded} disabled={busyRow === ep.id} onChange={() => toggleRow(ep)} />
+                    {canDo("import_spec") && (
+                      <Toggle on={!ep.excluded} disabled={busyRow === ep.id} onChange={() => toggleRow(ep)} testId="endpoints-row-include-toggle" />
+                    )}
                   </td>
                 </tr>
               );

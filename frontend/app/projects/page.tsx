@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
+import { useCan } from "@/lib/permissions";
 import {
   Badge,
   Button,
@@ -29,6 +30,7 @@ export default function ProjectsPage() {
   const router = useRouter();
   const { lang } = useLang();
   const ar = lang === "ar";
+  const canDo = useCan();
 
   const L = ar
     ? {
@@ -167,29 +169,34 @@ export default function ProjectsPage() {
   }
 
   return (
-    <div className="stack">
+    <div className="stack" data-testid="projects-page-root">
       <PageHeader
         title={L.title}
         sub={L.sub}
+        testId="projects-page-header"
         actions={
-          <Button variant="primary" onClick={() => setCreateOpen(true)}>
-            + {L.newProject}
-          </Button>
+          canDo("manage_projects") ? (
+            <Button variant="primary" testId="projects-list-create-button" onClick={() => setCreateOpen(true)}>
+              + {L.newProject}
+            </Button>
+          ) : undefined
         }
       />
 
-      {error && <div className="error-text">{error}</div>}
+      {error && <div className="error-text" data-testid="projects-page-error-text">{error}</div>}
 
       {loading ? (
         <div style={{ color: "var(--text-muted)", fontSize: 13 }}>{L.loading}</div>
       ) : projects.length === 0 ? (
-        <Empty title={L.empty} hint={L.emptyHint} />
+        <Empty title={L.empty} hint={L.emptyHint} testId="projects-empty-state" />
       ) : (
-        <div className="grid-cards">
+        <div className="grid-cards" data-testid="projects-list-grid">
           {projects.map((p) => (
             <div
               key={p.id}
               className="card"
+              data-testid="projects-list-card"
+              data-state={p.status}
               style={{
                 padding: 18,
                 display: "flex",
@@ -201,6 +208,7 @@ export default function ProjectsPage() {
               <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
                 <Link
                   href={`/projects/${p.id}`}
+                  data-testid="projects-card-open-link"
                   style={{
                     fontSize: 16,
                     fontWeight: 700,
@@ -212,8 +220,10 @@ export default function ProjectsPage() {
                 >
                   {p.name}
                 </Link>
-                <Badge tone="accent">{p.language === "ar" ? L.arabic : L.english}</Badge>
-                {p.status === "archived" && <Badge tone="muted">{L.archived}</Badge>}
+                <Badge tone="accent" testId="projects-card-language-badge">{p.language === "ar" ? L.arabic : L.english}</Badge>
+                {p.status === "archived" && (
+                  <Badge tone="muted" testId="projects-card-status-badge" state={p.status}>{L.archived}</Badge>
+                )}
               </div>
               {p.created_at && (
                 <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
@@ -221,29 +231,34 @@ export default function ProjectsPage() {
                 </div>
               )}
               <div className="row" style={{ marginTop: "auto" }}>
-                <Button variant="secondary" size="sm" onClick={() => router.push(`/projects/${p.id}`)}>
+                <Button variant="secondary" size="sm" testId="projects-card-open-button" onClick={() => router.push(`/projects/${p.id}`)}>
                   {L.open}
                 </Button>
-                {p.status === "archived" ? (
-                  <Button variant="ghost" size="sm" onClick={() => unarchive(p)}>
-                    {L.unarchive}
-                  </Button>
-                ) : (
+                {canDo("manage_projects") &&
+                  (p.status === "archived" ? (
+                    <Button variant="ghost" size="sm" testId="projects-card-unarchive-button" onClick={() => unarchive(p)}>
+                      {L.unarchive}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      testId="projects-card-archive-button"
+                      onClick={() => setConfirming({ project: p, action: "archive" })}
+                    >
+                      {L.archive}
+                    </Button>
+                  ))}
+                {canDo("manage_projects") && (
                   <Button
-                    variant="ghost"
+                    variant="danger"
                     size="sm"
-                    onClick={() => setConfirming({ project: p, action: "archive" })}
+                    testId="projects-card-delete-button"
+                    onClick={() => setConfirming({ project: p, action: "delete" })}
                   >
-                    {L.archive}
+                    {L.del}
                   </Button>
                 )}
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={() => setConfirming({ project: p, action: "delete" })}
-                >
-                  {L.del}
-                </Button>
               </div>
             </div>
           ))}
@@ -251,9 +266,9 @@ export default function ProjectsPage() {
       )}
 
       {/* create modal */}
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title={L.newProject}>
+      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title={L.newProject} testId="projects-create-modal">
         <form onSubmit={create} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <Field label={L.name}>
+          <Field label={L.name} testId="projects-create-name-input">
             <Input
               required
               maxLength={200}
@@ -261,7 +276,7 @@ export default function ProjectsPage() {
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
             />
           </Field>
-          <Field label={L.language}>
+          <Field label={L.language} testId="projects-create-language-select">
             <Select
               value={form.language}
               onChange={(e) => setForm((f) => ({ ...f, language: e.target.value }))}
@@ -270,12 +285,12 @@ export default function ProjectsPage() {
               <option value="en">{L.english}</option>
             </Select>
           </Field>
-          {createError && <div className="error-text">{createError}</div>}
+          {createError && <div className="error-text" data-testid="projects-create-error-text">{createError}</div>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Button variant="ghost" onClick={() => setCreateOpen(false)}>
+            <Button variant="ghost" testId="projects-create-cancel-button" onClick={() => setCreateOpen(false)}>
               {L.cancel}
             </Button>
-            <Button type="submit" variant="primary" disabled={creating || !form.name.trim()}>
+            <Button type="submit" variant="primary" testId="projects-create-submit-button" disabled={creating || !form.name.trim()}>
               {L.create}
             </Button>
           </div>
@@ -287,6 +302,7 @@ export default function ProjectsPage() {
         open={!!confirming}
         onClose={() => setConfirming(null)}
         title={confirming?.action === "delete" ? L.confirmDeleteTitle : L.confirmArchiveTitle}
+        testId="projects-confirm-modal"
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ fontSize: 13.5, color: "var(--text-secondary)", lineHeight: 1.7 }}>
@@ -296,12 +312,13 @@ export default function ProjectsPage() {
             {confirming?.action === "delete" ? L.confirmDelete : L.confirmArchive}
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Button variant="ghost" onClick={() => setConfirming(null)}>
+            <Button variant="ghost" testId="projects-confirm-cancel-button" onClick={() => setConfirming(null)}>
               {L.cancel}
             </Button>
             <Button
               variant={confirming?.action === "delete" ? "danger" : "primary"}
               disabled={confirmBusy}
+              testId="projects-confirm-submit-button"
               onClick={runConfirm}
             >
               {L.confirm}

@@ -335,8 +335,9 @@ export default function RunReportPage() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div data-testid="runs-report-page-root" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <PageHeader
+        testId="runs-report-page-header"
         title={
           <span style={{ display: "inline-flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
             {L.title}{" "}
@@ -345,8 +346,8 @@ export default function RunReportPage() {
             </M>
             {run.state && (
               <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                <StatusDot state={run.state} />
-                <Badge tone={stateTone(run.state)}>{run.state}</Badge>
+                <StatusDot state={run.state} testId="runs-report-status-dot" />
+                <Badge tone={stateTone(run.state)} testId="runs-report-state-badge" state={run.state}>{run.state}</Badge>
               </span>
             )}
           </span>
@@ -368,7 +369,7 @@ export default function RunReportPage() {
           </span>
         }
         actions={
-          <Button variant="secondary" onClick={openHtmlReport} title={L.exportHint}>
+          <Button variant="secondary" testId="runs-report-export-button" onClick={openHtmlReport} title={L.exportHint}>
             {L.exportHtml}
           </Button>
         }
@@ -377,21 +378,21 @@ export default function RunReportPage() {
       {error && <div style={{ fontSize: 13, color: "var(--error)" }}>{error}</div>}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
-        <StatCard value={counts.total ?? cases.length} label={L.total} />
-        <StatCard value={counts.passed ?? 0} label={L.passed} color="var(--success)" />
-        <StatCard value={counts.failed ?? 0} label={L.failed} color="var(--error)" />
-        <StatCard value={counts.errored ?? 0} label={L.errored} color="var(--warning)" />
-        <StatCard value={fmtDur(durationMs)} label={L.duration} />
+        <StatCard value={counts.total ?? cases.length} label={L.total} testId="runs-report-total-stat" />
+        <StatCard value={counts.passed ?? 0} label={L.passed} color="var(--success)" testId="runs-report-passed-stat" />
+        <StatCard value={counts.failed ?? 0} label={L.failed} color="var(--error)" testId="runs-report-failed-stat" />
+        <StatCard value={counts.errored ?? 0} label={L.errored} color="var(--warning)" testId="runs-report-errored-stat" />
+        <StatCard value={fmtDur(durationMs)} label={L.duration} testId="runs-report-duration-stat" />
       </div>
 
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        <Pill active={tab === "failures"} onClick={() => setTab("failures")}>
+        <Pill active={tab === "failures"} testId="runs-report-tab-failures-pill" onClick={() => setTab("failures")}>
           {L.tabFailures} ({failures.length})
         </Pill>
-        <Pill active={tab === "all"} onClick={() => setTab("all")}>
+        <Pill active={tab === "all"} testId="runs-report-tab-all-pill" onClick={() => setTab("all")}>
           {L.tabAll} ({cases.length})
         </Pill>
-        <Pill active={tab === "compare"} onClick={() => setTab("compare")}>
+        <Pill active={tab === "compare"} testId="runs-report-tab-compare-pill" onClick={() => setTab("compare")}>
           {L.tabCompare}
         </Pill>
       </div>
@@ -400,7 +401,7 @@ export default function RunReportPage() {
       {tab === "failures" &&
         (failures.length === 0 ? (
           <Card>
-            <Empty icon="✓" title={L.noFailures} hint={L.noFailuresHint} />
+            <Empty icon="✓" title={L.noFailures} hint={L.noFailuresHint} testId="runs-report-no-failures-empty" />
           </Card>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -411,7 +412,7 @@ export default function RunReportPage() {
                 ["major", L.sevMajor],
                 ["minor", L.sevMinor],
               ].map(([v, label]) => (
-                <Pill key={v} active={sevF === v} onClick={() => setSevF(v)}>
+                <Pill key={v} active={sevF === v} testId={`runs-report-severity-${v}-pill`} onClick={() => setSevF(v)}>
                   {label}
                   {v !== "all" && (
                     <M style={{ fontSize: 10, marginInlineStart: 4 }}>
@@ -433,6 +434,7 @@ export default function RunReportPage() {
               return (
                 <div
                   key={key}
+                  data-testid="runs-report-failure-row"
                   style={{
                     border: `1px solid ${isOpen ? toneColor : "var(--border)"}`,
                     borderRadius: 14,
@@ -442,6 +444,7 @@ export default function RunReportPage() {
                 >
                   <button
                     type="button"
+                    data-testid="runs-report-failure-toggle-button"
                     onClick={() =>
                       setExpanded((prev) => {
                         const n = new Set(prev);
@@ -469,8 +472,8 @@ export default function RunReportPage() {
                         {r.external_id ?? r.id}
                       </M>
                     ))}
-                    <SeverityBadge severity={c.severity ?? c.test_case?.severity} />
-                    <Badge tone={tone}>{outcomeLabel(c.outcome)}</Badge>
+                    <SeverityBadge severity={c.severity ?? c.test_case?.severity} testId="runs-report-failure-severity-badge" />
+                    <Badge tone={tone} testId="runs-report-failure-outcome-badge" state={c.outcome}>{outcomeLabel(c.outcome)}</Badge>
                     <span style={{ color: "var(--text-muted)", fontSize: 12 }}>{isOpen ? "▴" : "▾"}</span>
                   </button>
 
@@ -582,19 +585,19 @@ export default function RunReportPage() {
       {tab === "all" && (
         <Card pad={false}>
           {cases.length === 0 ? (
-            <Empty title={L.empty} hint={L.emptyHint} />
+            <Empty title={L.empty} hint={L.emptyHint} testId="runs-report-results-empty" />
           ) : (
-            <Table head={["ID", L.caseCol, L.outcome, L.durationCol, L.reqs]}>
+            <Table head={["ID", L.caseCol, L.outcome, L.durationCol, L.reqs]} testId="runs-report-table-root">
               {cases.map((c, i) => (
-                <tr key={caseId(c) || i}>
+                <tr key={caseId(c) || i} data-testid="runs-report-result-row">
                   <td>
                     <M style={{ color: "var(--text-muted)" }}>{shortId(caseId(c))}</M>
                   </td>
                   <td style={{ fontSize: 13, color: "var(--text)" }}>{caseTitle(c)}</td>
                   <td>
                     <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                      <StatusDot state={c.outcome} />
-                      <Badge tone={OUTCOME_TONE[c.outcome] ?? "muted"}>{outcomeLabel(c.outcome)}</Badge>
+                      <StatusDot state={c.outcome} testId="runs-report-result-status-dot" />
+                      <Badge tone={OUTCOME_TONE[c.outcome] ?? "muted"} testId="runs-report-result-outcome-badge" state={c.outcome}>{outcomeLabel(c.outcome)}</Badge>
                     </span>
                   </td>
                   <td>
@@ -621,7 +624,7 @@ export default function RunReportPage() {
         <Card title={L.compareWith}>
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div style={{ maxWidth: 420 }}>
-              <Select value={otherRun} onChange={(e: any) => setOtherRun(e.target.value)}>
+              <Select testId="runs-report-compare-select" value={otherRun} onChange={(e: any) => setOtherRun(e.target.value)}>
                 <option value="">{L.pickRun}</option>
                 {compareRuns.map((r) => (
                   <option key={r.id} value={r.id}>
@@ -735,7 +738,7 @@ export default function RunReportPage() {
           }
           pad={false}
         >
-          <Table head={[L.perfEndpoint, "p50", "p95", "max", L.perfCalls]}>
+          <Table head={[L.perfEndpoint, "p50", "p95", "max", L.perfCalls]} testId="runs-report-perf-table">
             {perf.map((p: any, i: number) => (
               <tr key={i}>
                 <td>

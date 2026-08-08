@@ -5,6 +5,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
+import { useCan } from "@/lib/permissions";
 import {
   Badge,
   Button,
@@ -75,6 +76,7 @@ function caseReqs(c: any): any[] {
 export default function ReviewPage() {
   const { id } = useParams<{ id: string }>();
   const { lang } = useLang();
+  const canDo = useCan();
 
   const L =
     lang === "ar"
@@ -420,10 +422,10 @@ export default function ReviewPage() {
     },
     approve() {
       const cid = selectedIdRef.current;
-      if (cid) approveCase(cid);
+      if (cid && canDo("approve_reject")) approveCase(cid);
     },
     openReject() {
-      if (selectedIdRef.current) setRejectOpen(true);
+      if (selectedIdRef.current && canDo("approve_reject")) setRejectOpen(true);
     },
     modalOpen: rejectOpen || editOpen,
   };
@@ -452,8 +454,9 @@ export default function ReviewPage() {
   const steps: any[] = Array.isArray(detail?.steps) ? detail.steps : [];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div data-testid="review-page-root" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <PageHeader
+        testId="review-page-header"
         title={L.title}
         sub={
           <span style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -468,15 +471,16 @@ export default function ReviewPage() {
           <div style={{ color: "var(--error)", fontSize: 13 }}>
             {L.loadError} — {error}
           </div>
-          <Button variant="secondary" size="sm" onClick={() => setError(null)}>
+          <Button variant="secondary" size="sm" onClick={() => setError(null)} testId="review-error-retry-button">
             {L.retry}
           </Button>
         </div>
       )}
 
       {/* bulk bar */}
-      {checked.size > 0 && (
+      {canDo("approve_reject") && checked.size > 0 && (
         <div
+          data-testid="review-bulk-bar"
           style={{
             display: "flex",
             alignItems: "center",
@@ -490,13 +494,13 @@ export default function ReviewPage() {
           <M style={{ color: "var(--accent)", fontWeight: 700 }}>{checked.size}</M>
           <span style={{ fontSize: 13, color: "var(--text)" }}>{L.bulkSelected}</span>
           <div style={{ marginInlineStart: "auto", display: "flex", gap: 8 }}>
-            <Button size="sm" disabled={busy} onClick={() => bulk("approve")}>
+            <Button size="sm" disabled={busy} onClick={() => bulk("approve")} testId="review-bulk-approve-button">
               {L.approveAll}
             </Button>
-            <Button size="sm" variant="danger" disabled={busy} onClick={() => bulk("reject")}>
+            <Button size="sm" variant="danger" disabled={busy} onClick={() => bulk("reject")} testId="review-bulk-reject-button">
               {L.rejectAll}
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => setChecked(new Set())}>
+            <Button size="sm" variant="ghost" onClick={() => setChecked(new Set())} testId="review-bulk-clear-button">
               {L.clear}
             </Button>
           </div>
@@ -506,7 +510,7 @@ export default function ReviewPage() {
       <div style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
         {/* Queue list — first in DOM = right side in RTL */}
         <div style={{ width: 380, flexShrink: 0 }}>
-          <Card title={L.queue} pad={false}>
+          <Card title={L.queue} pad={false} testId="review-queue-card">
             <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                 {[
@@ -516,12 +520,18 @@ export default function ReviewPage() {
                   ["rejected", L.rejected],
                   ["stale", L.stale],
                 ].map(([v, label]) => (
-                  <Pill key={v} active={stateF === v} onClick={() => setStateF(v)}>
+                  <Pill
+                    key={v}
+                    active={stateF === v}
+                    onClick={() => setStateF(v)}
+                    testId={`review-filter-${v}-pill`}
+                    state={v === "all" ? undefined : v}
+                  >
                     {label}
                   </Pill>
                 ))}
               </div>
-              <Input placeholder={L.search} value={q} onChange={(e: any) => setQ(e.target.value)} />
+              <Input placeholder={L.search} value={q} onChange={(e: any) => setQ(e.target.value)} testId="review-search-input" />
             </div>
 
             {loading ? (
@@ -530,6 +540,7 @@ export default function ReviewPage() {
               <Empty
                 title={hasFilters ? L.emptyFiltered : L.empty}
                 hint={hasFilters ? L.emptyFilteredHint : L.emptyHint}
+                testId="review-empty-state"
               />
             ) : (
               <div style={{ maxHeight: "62vh", overflowY: "auto" }}>
@@ -539,6 +550,8 @@ export default function ReviewPage() {
                   return (
                     <div
                       key={c.id ?? i}
+                      data-testid="review-case-row"
+                      data-state={c.state}
                       onClick={() => selectCase(c.id)}
                       style={{
                         display: "flex",
@@ -551,8 +564,10 @@ export default function ReviewPage() {
                         borderInlineStart: sel ? "3px solid var(--accent)" : "3px solid transparent",
                       }}
                     >
+                      {canDo("approve_reject") && (
                       <input
                         type="checkbox"
+                        data-testid="review-case-checkbox"
                         checked={checked.has(c.id)}
                         onClick={(e) => e.stopPropagation()}
                         onChange={() =>
@@ -565,9 +580,10 @@ export default function ReviewPage() {
                         }
                         style={{ marginTop: 4, accentColor: "var(--accent)" }}
                       />
+                      )}
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                          <StatusDot state={c.state} />
+                          <StatusDot state={c.state} testId="review-case-status-dot" />
                           <div
                             style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", flex: 1, minWidth: 0 }}
                             title={c.title}
@@ -587,7 +603,7 @@ export default function ReviewPage() {
                         </div>
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6, alignItems: "center" }}>
                           {c.technique && <Badge tone="info">{c.technique}</Badge>}
-                          <Badge tone={STATE_TONE[c.state] ?? "muted"}>{stateLabel(c.state)}</Badge>
+                          <Badge tone={STATE_TONE[c.state] ?? "muted"} testId="review-case-state-badge" state={c.state}>{stateLabel(c.state)}</Badge>
                           {reqs.slice(0, 2).map((r: any, j: number) => (
                             <M key={j} style={{ fontSize: 10, color: "var(--accent)" }}>
                               {r.external_id ?? r.id}
@@ -618,23 +634,30 @@ export default function ReviewPage() {
             </Card>
           ) : (
             <Card
+              testId="review-detail-card"
               title={
                 <span style={{ display: "inline-flex", gap: 10, alignItems: "center" }}>
-                  <StatusDot state={detail.state} />
+                  <StatusDot state={detail.state} testId="review-detail-status-dot" />
                   {detail.title}
                 </span>
               }
               action={
                 <div style={{ display: "flex", gap: 8 }}>
-                  <Button variant="ghost" size="sm" onClick={openEdit}>
-                    {L.edit}
-                  </Button>
-                  <Button variant="danger" size="sm" disabled={busy} onClick={() => setRejectOpen(true)}>
-                    {L.reject}
-                  </Button>
-                  <Button variant="primary" size="sm" disabled={busy || detail.state === "approved"} onClick={() => approveCase(detail.id)}>
-                    {L.approve}
-                  </Button>
+                  {canDo("edit_test_case") && (
+                    <Button variant="ghost" size="sm" onClick={openEdit} testId="review-case-edit-button">
+                      {L.edit}
+                    </Button>
+                  )}
+                  {canDo("approve_reject") && (
+                    <Button variant="danger" size="sm" disabled={busy} onClick={() => setRejectOpen(true)} testId="review-case-reject-button">
+                      {L.reject}
+                    </Button>
+                  )}
+                  {canDo("approve_reject") && (
+                    <Button variant="primary" size="sm" disabled={busy || detail.state === "approved"} onClick={() => approveCase(detail.id)} testId="review-case-approve-button">
+                      {L.approve}
+                    </Button>
+                  )}
                 </div>
               }
             >
@@ -798,9 +821,9 @@ export default function ReviewPage() {
       </div>
 
       {/* Reject modal */}
-      <Modal open={rejectOpen} onClose={() => setRejectOpen(false)} title={L.rejectTitle}>
+      <Modal open={rejectOpen} onClose={() => setRejectOpen(false)} title={L.rejectTitle} testId="review-reject-modal">
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <Field label={L.reason}>
+          <Field label={L.reason} testId="review-reject-reason-select">
             <Select value={rejectCode} onChange={(e: any) => setRejectCode(e.target.value)}>
               <option value="incorrect">{L.rIncorrect}</option>
               <option value="shallow">{L.rShallow}</option>
@@ -808,16 +831,17 @@ export default function ReviewPage() {
               <option value="other">{L.rOther}</option>
             </Select>
           </Field>
-          <Field label={L.reasonText}>
+          <Field label={L.reasonText} testId="review-reject-reason-textarea">
             <Textarea rows={3} value={rejectText} onChange={(e: any) => setRejectText(e.target.value)} />
           </Field>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Button variant="ghost" onClick={() => setRejectOpen(false)}>
+            <Button variant="ghost" onClick={() => setRejectOpen(false)} testId="review-reject-cancel-button">
               {L.cancel}
             </Button>
             <Button
               variant="danger"
               disabled={busy}
+              testId="review-reject-confirm-button"
               onClick={() => selectedId && rejectCase(selectedId, rejectCode, rejectText)}
             >
               {L.confirmReject}
@@ -827,19 +851,19 @@ export default function ReviewPage() {
       </Modal>
 
       {/* Edit modal */}
-      <Modal open={editOpen} onClose={() => setEditOpen(false)} title={L.editTitle}>
+      <Modal open={editOpen} onClose={() => setEditOpen(false)} title={L.editTitle} testId="review-edit-modal">
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <Field label={L.caseTitle}>
+          <Field label={L.caseTitle} testId="review-edit-title-input">
             <Input value={editForm.title} onChange={(e: any) => setEditForm((f) => ({ ...f, title: e.target.value }))} />
           </Field>
-          <Field label={L.description}>
+          <Field label={L.description} testId="review-edit-description-textarea">
             <Textarea
               rows={3}
               value={editForm.description}
               onChange={(e: any) => setEditForm((f) => ({ ...f, description: e.target.value }))}
             />
           </Field>
-          <Field label={L.priority}>
+          <Field label={L.priority} testId="review-edit-priority-select">
             <Select value={editForm.priority} onChange={(e: any) => setEditForm((f) => ({ ...f, priority: e.target.value }))}>
               {!["high", "medium", "low", ""].includes(editForm.priority) && (
                 <option value={editForm.priority}>{editForm.priority}</option>
@@ -849,7 +873,7 @@ export default function ReviewPage() {
               <option value="low">{L.low}</option>
             </Select>
           </Field>
-          <Field label={L.stepsJson}>
+          <Field label={L.stepsJson} testId="review-edit-steps-textarea">
             <Textarea
               dir="ltr"
               rows={8}
@@ -858,7 +882,7 @@ export default function ReviewPage() {
               onChange={(e: any) => setEditForm((f) => ({ ...f, steps: e.target.value }))}
             />
           </Field>
-          <Field label={L.assertionsJson}>
+          <Field label={L.assertionsJson} testId="review-edit-assertions-textarea">
             <Textarea
               dir="ltr"
               rows={5}
@@ -869,10 +893,10 @@ export default function ReviewPage() {
           </Field>
           {jsonError && <div style={{ fontSize: 13, color: "var(--error)" }}>{jsonError}</div>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Button variant="ghost" onClick={() => setEditOpen(false)}>
+            <Button variant="ghost" onClick={() => setEditOpen(false)} testId="review-edit-cancel-button">
               {L.cancel}
             </Button>
-            <Button variant="primary" disabled={saving} onClick={saveEdit}>
+            <Button variant="primary" disabled={saving} onClick={saveEdit} testId="review-edit-save-button">
               {L.save}
             </Button>
           </div>

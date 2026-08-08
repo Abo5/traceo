@@ -107,31 +107,32 @@ export default function AuditPage() {
   }
 
   return (
-    <div className="stack">
+    <div className="stack" data-testid="audit-page-root">
       <PageHeader
         title={L.title}
         sub={L.sub}
+        testId="audit-page-header"
         actions={
           <Link href="/settings/members">
-            <Button variant="ghost" size="sm">
+            <Button variant="ghost" size="sm" testId="audit-members-link-button">
               {L.members}
             </Button>
           </Link>
         }
       />
 
-      {error && <div className="error-text">{error}</div>}
+      {error && <div className="error-text" data-testid="audit-error-text">{error}</div>}
 
       {loading ? (
         <div style={{ color: "var(--text-muted)", fontSize: 13 }}>{L.loading}</div>
       ) : items.length === 0 ? (
-        <Empty title={L.empty} hint={L.emptyHint} />
+        <Empty title={L.empty} hint={L.emptyHint} testId="audit-empty-state" />
       ) : (
         <>
           <div className="card" style={{ padding: "6px 18px 12px" }}>
-            <Table head={[L.time, L.actor, L.action, L.object, L.detail]}>
+            <Table head={[L.time, L.actor, L.action, L.object, L.detail]} testId="audit-table-root">
               {items.map((e) => (
-                <tr key={e.id}>
+                <tr key={e.id} data-testid="audit-row">
                   <td>
                     <Mono style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>
                       {e.occurred_at ? e.occurred_at.slice(0, 19).replace("T", " ") : "—"}
@@ -143,7 +144,7 @@ export default function AuditPage() {
                     </Mono>
                   </td>
                   <td>
-                    <Badge tone={actionTone(e.action)}>
+                    <Badge tone={actionTone(e.action)} testId="audit-row-action-badge">
                       <Mono style={{ fontSize: 11 }}>{e.action}</Mono>
                     </Badge>
                   </td>
@@ -175,7 +176,7 @@ export default function AuditPage() {
           </div>
           {cursor && (
             <div style={{ display: "flex", justifyContent: "center" }}>
-              <Button variant="secondary" disabled={loadingMore} onClick={more}>
+              <Button variant="secondary" disabled={loadingMore} testId="audit-load-more-button" onClick={more}>
                 {L.loadMore}
               </Button>
             </div>

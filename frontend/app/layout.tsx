@@ -23,7 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           rel="stylesheet"
         />
       </head>
-      <body>
+      <body data-testid="nav-app-root">
         <Providers>{children}</Providers>
       </body>
     </html>

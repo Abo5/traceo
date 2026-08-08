@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { API, api, getToken } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
+import { useCan } from "@/lib/permissions";
 import { Badge, Button, Card, Empty, PageHeader, Pill, Progress, RefChip, StatCard, StatusDot } from "@/components/ui";
 
 type Tone = "success" | "warning" | "error" | "info" | "muted" | "accent";
@@ -46,6 +47,7 @@ async function downloadFile(path: string, filename: string): Promise<void> {
 export default function MatrixPage() {
   const { id } = useParams<{ id: string }>();
   const { lang } = useLang();
+  const canDo = useCan();
 
   const L =
     lang === "ar"
@@ -160,8 +162,9 @@ export default function MatrixPage() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div data-testid="matrix-page-root" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <PageHeader
+        testId="matrix-page-header"
         title={
           <span style={{ display: "inline-flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             {L.title} <RefChip id="FR-050" />
@@ -169,7 +172,7 @@ export default function MatrixPage() {
         }
         sub={L.sub}
         actions={
-          <Button variant="secondary" disabled={exporting} onClick={exportXlsx}>
+          <Button variant="secondary" testId="matrix-export-button" disabled={exporting} onClick={exportXlsx}>
             {exporting ? L.exporting : L.exportXlsx}
           </Button>
         }
@@ -191,8 +194,8 @@ export default function MatrixPage() {
       ) : (
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
-            <StatCard value={`${coverage}%`} label={L.coverage} color="var(--accent)" />
-            <StatCard value={gaps.length} label={L.gaps} color={gaps.length > 0 ? "var(--warning)" : "var(--success)"} />
+            <StatCard value={`${coverage}%`} label={L.coverage} color="var(--accent)" testId="matrix-coverage-stat" />
+            <StatCard value={gaps.length} label={L.gaps} color={gaps.length > 0 ? "var(--warning)" : "var(--success)"} testId="matrix-gaps-stat" />
           </div>
 
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -204,17 +207,18 @@ export default function MatrixPage() {
               ["failing", L.failing],
               ["errored", L.errored],
             ].map(([v, label]) => (
-              <Pill key={v} active={statusF === v} onClick={() => setStatusF(v)}>
+              <Pill key={v} active={statusF === v} testId={`matrix-filter-${v}-pill`} onClick={() => setStatusF(v)}>
                 {label}
               </Pill>
             ))}
           </div>
 
-          <Card title={L.matrix} pad={false}>
+          <Card title={L.matrix} pad={false} testId="matrix-table-root">
             {filtered.length === 0 ? (
               <Empty
                 title={statusF === "all" ? L.empty : L.emptyFiltered}
                 hint={statusF === "all" ? L.emptyHint : L.emptyFilteredHint}
+                testId="matrix-empty-state"
               />
             ) : (
               <div style={{ display: "flex", flexDirection: "column" }}>
@@ -227,6 +231,7 @@ export default function MatrixPage() {
                   return (
                     <div
                       key={req.id ?? i}
+                      data-testid="matrix-row"
                       style={{
                         display: "flex",
                         gap: 16,
@@ -261,6 +266,7 @@ export default function MatrixPage() {
                               <Link
                                 key={c.id ?? j}
                                 href={`/projects/${id}/review?case=${c.id}`}
+                                data-testid="matrix-row-case-link"
                                 style={{ textDecoration: "none" }}
                               >
                                 <span
@@ -278,7 +284,7 @@ export default function MatrixPage() {
                                     maxWidth: 220,
                                   }}
                                 >
-                                  <StatusDot state={c.latest_outcome ?? c.state} />
+                                  <StatusDot state={c.latest_outcome ?? c.state} testId="matrix-case-status-dot" />
                                   <span
                                     dir="auto"
                                     style={{
@@ -298,9 +304,9 @@ export default function MatrixPage() {
                         </div>
                       </div>
                       <div style={{ width: 150, flexShrink: 0, display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
-                        <Badge tone={tone}>{statusLabel(row.status)}</Badge>
+                        <Badge tone={tone} testId="matrix-row-status-badge" state={row.status}>{statusLabel(row.status)}</Badge>
                         <div style={{ width: "100%" }}>
-                          <Progress pct={pct} tone={row.status === "failing" ? "error" : row.status === "passing" ? "success" : undefined} />
+                          <Progress pct={pct} tone={row.status === "failing" ? "error" : row.status === "passing" ? "success" : undefined} testId="matrix-row-progress" />
                         </div>
                         <M style={{ fontSize: 10, color: "var(--text-muted)" }}>
                           {passed}/{cases.length} {L.cases}
@@ -321,6 +327,7 @@ export default function MatrixPage() {
                 {gaps.map((g, i) => (
                   <div
                     key={g.requirement_id ?? i}
+                    data-testid="matrix-gap-card"
                     style={{
                       border: "1px solid var(--warning)",
                       background: "var(--warning-subtle, rgba(255,197,61,.16))",
@@ -348,13 +355,15 @@ export default function MatrixPage() {
                     {g.next_action && (
                       <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{g.next_action}</div>
                     )}
-                    <div>
-                      <Link href={`/projects/${id}/generate?req=${g.requirement_id}`}>
-                        <Button variant="secondary" size="sm">
-                          {L.targetGen}
-                        </Button>
-                      </Link>
-                    </div>
+                    {canDo("generate") && (
+                      <div>
+                        <Link href={`/projects/${id}/generate?req=${g.requirement_id}`}>
+                          <Button variant="secondary" size="sm" testId="matrix-gap-generate-button">
+                            {L.targetGen}
+                          </Button>
+                        </Link>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { API, api, getToken } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
+import { useCan } from "@/lib/permissions";
 import {
   Badge,
   Button,
@@ -86,6 +87,7 @@ export default function IntegrationsPage() {
   const { id } = useParams<{ id: string }>();
   const { lang } = useLang();
   const ar = lang === "ar";
+  const canDo = useCan();
 
   const L = ar
     ? {
@@ -377,8 +379,8 @@ export default function IntegrationsPage() {
     typeof s === "number" ? (s >= 200 && s < 300 ? "success" : "error") : "muted";
 
   return (
-    <div className="stack">
-      <PageHeader title={L.title} sub={L.sub} />
+    <div className="stack" data-testid="integrations-page-root">
+      <PageHeader title={L.title} sub={L.sub} testId="integrations-page-header" />
 
       <div
         style={{
@@ -396,9 +398,11 @@ export default function IntegrationsPage() {
             </span>
           }
           action={
-            <Button variant="secondary" size="sm" onClick={openWhCreate}>
-              + {L.newWh}
-            </Button>
+            canDo("manage_projects") ? (
+              <Button variant="secondary" size="sm" testId="integrations-webhooks-new-button" onClick={openWhCreate}>
+                + {L.newWh}
+              </Button>
+            ) : undefined
           }
         >
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -415,13 +419,14 @@ export default function IntegrationsPage() {
                 </Button>
               </div>
             ) : hooks.length === 0 ? (
-              <Empty title={L.whEmpty} hint={L.whEmptyHint} />
+              <Empty title={L.whEmpty} hint={L.whEmptyHint} testId="integrations-webhooks-empty-state" />
             ) : (
               hooks.map((w) => {
                 const tr = testResults[w.id];
                 return (
                   <div
                     key={w.id}
+                    data-testid="integrations-webhook-card"
                     style={{
                       background: "var(--surface-2)",
                       borderRadius: 10,
@@ -433,22 +438,28 @@ export default function IntegrationsPage() {
                   >
                     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                       <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{w.name}</span>
-                      <Badge tone={w.enabled ? "success" : "muted"}>{w.enabled ? L.enabled : L.disabled}</Badge>
+                      <Badge tone={w.enabled ? "success" : "muted"} testId="integrations-webhook-enabled-badge">{w.enabled ? L.enabled : L.disabled}</Badge>
                       {typeof w.last_status === "number" && (
                         <Badge tone={statusTone(w.last_status)}>
                           {L.lastStatus} · <Mono style={{ fontSize: 10.5 }}>{w.last_status}</Mono>
                         </Badge>
                       )}
                       <span style={{ marginInlineStart: "auto", display: "inline-flex", gap: 6 }}>
-                        <Button variant="secondary" size="sm" disabled={testingId === w.id} onClick={() => testWh(w)}>
-                          {testingId === w.id ? L.testing : L.test}
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => openWhEdit(w)}>
-                          {L.edit}
-                        </Button>
-                        <Button variant="danger" size="sm" onClick={() => setWhDeleting(w)}>
-                          {L.del}
-                        </Button>
+                        {canDo("manage_projects") && (
+                          <Button variant="secondary" size="sm" testId="integrations-webhook-test-button" disabled={testingId === w.id} onClick={() => testWh(w)}>
+                            {testingId === w.id ? L.testing : L.test}
+                          </Button>
+                        )}
+                        {canDo("manage_projects") && (
+                          <Button variant="ghost" size="sm" testId="integrations-webhook-edit-button" onClick={() => openWhEdit(w)}>
+                            {L.edit}
+                          </Button>
+                        )}
+                        {canDo("manage_projects") && (
+                          <Button variant="danger" size="sm" testId="integrations-webhook-delete-button" onClick={() => setWhDeleting(w)}>
+                            {L.del}
+                          </Button>
+                        )}
                       </span>
                     </div>
                     <Mono style={{ fontSize: 11.5, color: "var(--text-secondary)", overflowWrap: "anywhere", display: "block" }}>
@@ -493,6 +504,7 @@ export default function IntegrationsPage() {
                     type="number"
                     min={0}
                     max={100}
+                    testId="integrations-gate-min-coverage-input"
                     value={minCoverage}
                     onChange={(e) => setMinCoverage(e.target.value)}
                   />
@@ -504,13 +516,14 @@ export default function IntegrationsPage() {
                     dir="ltr"
                     type="number"
                     min={0}
+                    testId="integrations-gate-max-critical-input"
                     value={maxCritical}
                     onChange={(e) => setMaxCritical(e.target.value)}
                   />
                 </Field>
               </div>
               <div style={{ paddingBottom: 2 }}>
-                <Button variant="secondary" size="sm" disabled={gateLoading} onClick={loadGate}>
+                <Button variant="secondary" size="sm" testId="integrations-gate-check-button" disabled={gateLoading} onClick={loadGate}>
                   {gateLoading ? L.checking : L.checkGate}
                 </Button>
               </div>
@@ -528,7 +541,7 @@ export default function IntegrationsPage() {
             ) : gate ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                  <Badge tone={gate.pass ? "success" : "error"}>{gate.pass ? L.gatePass : L.gateFail}</Badge>
+                  <Badge tone={gate.pass ? "success" : "error"} testId="integrations-gate-result-badge">{gate.pass ? L.gatePass : L.gateFail}</Badge>
                   {gate.coverage_pct !== undefined && (
                     <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
                       {L.coverage} <Mono style={{ fontSize: 12, color: "var(--accent)" }}>{Math.round(gate.coverage_pct)}%</Mono>
@@ -619,7 +632,7 @@ export default function IntegrationsPage() {
             ) : (
               <>
                 <Field label={L.run}>
-                  <Select value={runId} onChange={(e) => setRunId(e.target.value)}>
+                  <Select testId="integrations-xray-run-select" value={runId} onChange={(e) => setRunId(e.target.value)}>
                     <option value="">{L.pickRun}</option>
                     {runs.map((r) => (
                       <option key={r.id} value={r.id}>
@@ -630,10 +643,10 @@ export default function IntegrationsPage() {
                   </Select>
                 </Field>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <Button variant="secondary" size="sm" disabled={!runId || dlBusy !== null} onClick={() => download("xray")}>
+                  <Button variant="secondary" size="sm" testId="integrations-xray-download-button" disabled={!runId || dlBusy !== null} onClick={() => download("xray")}>
                     ⇩ {L.dlXray}
                   </Button>
-                  <Button variant="secondary" size="sm" disabled={!runId || dlBusy !== null} onClick={() => download("defects")}>
+                  <Button variant="secondary" size="sm" testId="integrations-defects-download-button" disabled={!runId || dlBusy !== null} onClick={() => download("defects")}>
                     ⇩ {L.dlDefects}
                   </Button>
                 </div>
@@ -667,12 +680,13 @@ export default function IntegrationsPage() {
       </div>
 
       {/* ---------- Webhook modal ---------- */}
-      <Modal open={whModalOpen} onClose={() => setWhModalOpen(false)} title={whEditing ? L.editWh : L.newWh}>
+      <Modal open={whModalOpen} onClose={() => setWhModalOpen(false)} title={whEditing ? L.editWh : L.newWh} testId="integrations-webhook-modal">
         <form onSubmit={saveWh} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Field label={L.whName}>
             <Input
               required
               maxLength={100}
+              testId="integrations-webhook-name-input"
               placeholder={ar ? "مثال: قناة الجودة في Slack" : "e.g. QA Slack channel"}
               value={whForm.name}
               onChange={(e) => setWhForm((f) => ({ ...f, name: e.target.value }))}
@@ -682,6 +696,7 @@ export default function IntegrationsPage() {
             <Input
               required
               dir="ltr"
+              testId="integrations-webhook-url-input"
               placeholder="https://hooks.slack.com/services/…"
               value={whForm.url}
               onChange={(e) => setWhForm((f) => ({ ...f, url: e.target.value }))}
@@ -692,6 +707,7 @@ export default function IntegrationsPage() {
               dir="ltr"
               type="password"
               autoComplete="off"
+              testId="integrations-webhook-secret-input"
               value={whForm.secret}
               onChange={(e) => setWhForm((f) => ({ ...f, secret: e.target.value }))}
             />
@@ -701,6 +717,7 @@ export default function IntegrationsPage() {
           >
             <input
               type="checkbox"
+              data-testid="integrations-webhook-enabled-checkbox"
               checked={whForm.enabled}
               onChange={(e) => setWhForm((f) => ({ ...f, enabled: e.target.checked }))}
               style={{ accentColor: "var(--accent)" }}
@@ -709,12 +726,13 @@ export default function IntegrationsPage() {
           </label>
           {whFormError && <div className="error-text" style={{ fontSize: 13 }}>{whFormError}</div>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Button variant="ghost" onClick={() => setWhModalOpen(false)}>
+            <Button variant="ghost" testId="integrations-webhook-cancel-button" onClick={() => setWhModalOpen(false)}>
               {L.cancel}
             </Button>
             <Button
               type="submit"
               variant="primary"
+              testId="integrations-webhook-submit-button"
               disabled={whBusy || !whForm.name.trim() || !whForm.url.trim()}
             >
               {whBusy ? L.saving : whEditing ? L.save : L.create}
@@ -724,17 +742,17 @@ export default function IntegrationsPage() {
       </Modal>
 
       {/* ---------- Webhook delete confirm ---------- */}
-      <Modal open={!!whDeleting} onClose={() => setWhDeleting(null)} title={L.delWhTitle}>
+      <Modal open={!!whDeleting} onClose={() => setWhDeleting(null)} title={L.delWhTitle} testId="integrations-webhook-delete-modal">
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ fontSize: 13.5, color: "var(--text-secondary)" }}>
             <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>{whDeleting?.name}</div>
             {L.delWhConfirm}
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Button variant="ghost" onClick={() => setWhDeleting(null)}>
+            <Button variant="ghost" testId="integrations-webhook-delete-cancel-button" onClick={() => setWhDeleting(null)}>
               {L.cancel}
             </Button>
-            <Button variant="danger" disabled={whDeleteBusy} onClick={deleteWh}>
+            <Button variant="danger" testId="integrations-webhook-delete-confirm-button" disabled={whDeleteBusy} onClick={deleteWh}>
               {L.confirm}
             </Button>
           </div>

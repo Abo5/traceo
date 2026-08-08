@@ -35,7 +35,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="auth-wrap">
+    <div className="auth-wrap" data-testid="login-page-root">
       <div className="auth-card">
         <h1 className="auth-title">{ar ? "تسجيل الدخول" : "Log in"}</h1>
         <p className="auth-sub">
@@ -46,9 +46,10 @@ export default function LoginPage() {
 
         <form
           onSubmit={submit}
+          data-testid="login-form-root"
           style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 24 }}
         >
-          <Field label={ar ? "البريد الإلكتروني" : "Email"}>
+          <Field label={ar ? "البريد الإلكتروني" : "Email"} testId="login-form-email-input">
             <Input
               type="email"
               dir="ltr"
@@ -58,7 +59,7 @@ export default function LoginPage() {
               onChange={(e) => setEmail(e.target.value)}
             />
           </Field>
-          <Field label={ar ? "كلمة المرور" : "Password"}>
+          <Field label={ar ? "كلمة المرور" : "Password"} testId="login-form-password-input">
             <Input
               type="password"
               dir="ltr"
@@ -69,9 +70,9 @@ export default function LoginPage() {
             />
           </Field>
 
-          {error && <div className="error-text">{error}</div>}
+          {error && <div className="error-text" data-testid="login-form-error-text">{error}</div>}
 
-          <Button type="submit" variant="primary" disabled={busy}>
+          <Button type="submit" variant="primary" disabled={busy} testId="login-form-submit-button">
             {busy ? (ar ? "جارٍ الدخول…" : "Signing in…") : ar ? "تسجيل الدخول" : "Log in"}
           </Button>
         </form>
@@ -97,7 +98,11 @@ export default function LoginPage() {
           }}
         >
           <span>{ar ? "ليس لديك حساب؟" : "Don't have an account?"}</span>
-          <Link href="/register" style={{ color: "var(--accent)", fontWeight: 600 }}>
+          <Link
+            href="/register"
+            data-testid="login-register-link"
+            style={{ color: "var(--accent)", fontWeight: 600 }}
+          >
             {ar ? "إنشاء حساب" : "Create account"}
           </Link>
         </div>

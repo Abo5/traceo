@@ -52,9 +52,9 @@ function Sidebar({ projectId }: { projectId: string }) {
   const base = `/projects/${projectId}`;
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" data-testid="nav-project-sidebar">
       <div className="sidebar-head">
-        <div className="sidebar-project" title={project?.name ?? ""}>
+        <div className="sidebar-project" title={project?.name ?? ""} data-testid="nav-project-name">
           {project?.name ?? "…"}
         </div>
         <div className="row" style={{ gap: 6 }}>
@@ -64,7 +64,7 @@ function Sidebar({ projectId }: { projectId: string }) {
             </Badge>
           )}
           {project?.status === "archived" && (
-            <Badge tone="muted">{ar ? "مؤرشف" : "Archived"}</Badge>
+            <Badge tone="muted" testId="nav-project-archived-badge">{ar ? "مؤرشف" : "Archived"}</Badge>
           )}
         </div>
       </div>
@@ -87,6 +87,7 @@ function Sidebar({ projectId }: { projectId: string }) {
                   key={item.seg || "overview"}
                   href={href}
                   className={`nav-item ${active ? "nav-item-active" : ""}`}
+                  data-testid={`nav-link-${item.seg || "overview"}`}
                 >
                   {ar ? item.ar : item.en}
                 </Link>
@@ -105,7 +106,7 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
 
   return (
     <ProjectProvider projectId={id}>
-      <div className="project-shell">
+      <div className="project-shell" data-testid="nav-project-shell">
         <Sidebar projectId={id} />
         <div className="project-main">{children}</div>
       </div>

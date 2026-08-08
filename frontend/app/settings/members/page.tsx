@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api, getUser } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
+import { useCan } from "@/lib/permissions";
 import {
   Badge,
   Button,
@@ -37,6 +38,7 @@ const ROLE_TONES: Record<string, "accent" | "info" | "success" | "muted"> = {
 export default function MembersPage() {
   const { lang } = useLang();
   const ar = lang === "ar";
+  const canDo = useCan();
 
   const L = ar
     ? {
@@ -179,35 +181,40 @@ export default function MembersPage() {
   }
 
   return (
-    <div className="stack">
+    <div className="stack" data-testid="members-page-root">
       <PageHeader
         title={L.title}
         sub={L.sub}
+        testId="members-page-header"
         actions={
           <>
-            <Link href="/settings/audit">
-              <Button variant="ghost" size="sm">
-                {L.audit}
+            {canDo("view_audit_log") && (
+              <Link href="/settings/audit">
+                <Button variant="ghost" size="sm" testId="members-audit-link-button">
+                  {L.audit}
+                </Button>
+              </Link>
+            )}
+            {canDo("manage_members") && (
+              <Button variant="primary" testId="members-invite-button" onClick={() => setInviteOpen(true)}>
+                + {L.invite}
               </Button>
-            </Link>
-            <Button variant="primary" onClick={() => setInviteOpen(true)}>
-              + {L.invite}
-            </Button>
+            )}
           </>
         }
       />
 
-      {error && <div className="error-text">{error}</div>}
+      {error && <div className="error-text" data-testid="members-error-text">{error}</div>}
 
       {loading ? (
         <div style={{ color: "var(--text-muted)", fontSize: 13 }}>{L.loading}</div>
       ) : members.length === 0 ? (
-        <Empty title={L.empty} />
+        <Empty title={L.empty} testId="members-empty-state" />
       ) : (
         <div className="card" style={{ padding: "6px 18px 12px" }}>
-          <Table head={[L.name, L.email, L.role, L.joined, L.actions]}>
+          <Table head={[L.name, L.email, L.role, L.joined, L.actions]} testId="members-table-root">
             {members.map((m) => (
-              <tr key={m.id}>
+              <tr key={m.id} data-testid="members-row">
                 <td style={{ fontWeight: 600 }}>
                   {m.name}
                   {me?.id === m.id && (
@@ -217,23 +224,26 @@ export default function MembersPage() {
                   )}
                 </td>
                 <td>
-                  <Mono style={{ fontSize: 12 }}>{m.email}</Mono>
+                  <Mono style={{ fontSize: 12 }} testId="members-row-email-text">{m.email}</Mono>
                 </td>
                 <td>
                   <div className="row" style={{ gap: 8, flexWrap: "nowrap" }}>
-                    <Badge tone={ROLE_TONES[m.role] ?? "muted"}>{L.roles[m.role] ?? m.role}</Badge>
-                    <Select
-                      value={m.role}
-                      disabled={roleBusy === m.id}
-                      style={{ width: 150 }}
-                      onChange={(e) => changeRole(m, e.target.value)}
-                    >
-                      {ROLES.map((r) => (
-                        <option key={r} value={r}>
-                          {L.roles[r]}
-                        </option>
-                      ))}
-                    </Select>
+                    <Badge tone={ROLE_TONES[m.role] ?? "muted"} testId="members-row-role-badge">{L.roles[m.role] ?? m.role}</Badge>
+                    {canDo("manage_members") && (
+                      <Select
+                        value={m.role}
+                        disabled={roleBusy === m.id}
+                        style={{ width: 150 }}
+                        testId="members-row-role-select"
+                        onChange={(e) => changeRole(m, e.target.value)}
+                      >
+                        {ROLES.map((r) => (
+                          <option key={r} value={r}>
+                            {L.roles[r]}
+                          </option>
+                        ))}
+                      </Select>
+                    )}
                   </div>
                 </td>
                 <td>
@@ -242,8 +252,8 @@ export default function MembersPage() {
                   </Mono>
                 </td>
                 <td>
-                  {me?.id !== m.id && (
-                    <Button variant="danger" size="sm" onClick={() => setRemoving(m)}>
+                  {canDo("manage_members") && me?.id !== m.id && (
+                    <Button variant="danger" size="sm" testId="members-row-remove-button" onClick={() => setRemoving(m)}>
                       {L.remove}
                     </Button>
                   )}
@@ -255,9 +265,9 @@ export default function MembersPage() {
       )}
 
       {/* invite modal */}
-      <Modal open={inviteOpen} onClose={() => setInviteOpen(false)} title={L.invite}>
+      <Modal open={inviteOpen} onClose={() => setInviteOpen(false)} title={L.invite} testId="members-invite-modal">
         <form onSubmit={invite} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <Field label={L.name}>
+          <Field label={L.name} testId="members-invite-name-input">
             <Input
               required
               maxLength={200}
@@ -265,7 +275,7 @@ export default function MembersPage() {
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
             />
           </Field>
-          <Field label={L.email}>
+          <Field label={L.email} testId="members-invite-email-input">
             <Input
               type="email"
               dir="ltr"
@@ -274,7 +284,7 @@ export default function MembersPage() {
               onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
             />
           </Field>
-          <Field label={L.role}>
+          <Field label={L.role} testId="members-invite-role-select">
             <Select
               value={form.role}
               onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}
@@ -286,7 +296,7 @@ export default function MembersPage() {
               ))}
             </Select>
           </Field>
-          <Field label={L.tempPassword} hint={L.tempHint}>
+          <Field label={L.tempPassword} hint={L.tempHint} testId="members-invite-password-input">
             <Input
               type="password"
               dir="ltr"
@@ -297,12 +307,12 @@ export default function MembersPage() {
               onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
             />
           </Field>
-          {inviteError && <div className="error-text">{inviteError}</div>}
+          {inviteError && <div className="error-text" data-testid="members-invite-error-text">{inviteError}</div>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Button variant="ghost" onClick={() => setInviteOpen(false)}>
+            <Button variant="ghost" testId="members-invite-cancel-button" onClick={() => setInviteOpen(false)}>
               {L.cancel}
             </Button>
-            <Button type="submit" variant="primary" disabled={inviting}>
+            <Button type="submit" variant="primary" disabled={inviting} testId="members-invite-submit-button">
               {L.invite}
             </Button>
           </div>
@@ -310,7 +320,7 @@ export default function MembersPage() {
       </Modal>
 
       {/* remove confirm */}
-      <Modal open={!!removing} onClose={() => setRemoving(null)} title={L.confirmRemoveTitle}>
+      <Modal open={!!removing} onClose={() => setRemoving(null)} title={L.confirmRemoveTitle} testId="members-remove-modal">
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ fontSize: 13.5, color: "var(--text-secondary)" }}>
             <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>
@@ -319,10 +329,10 @@ export default function MembersPage() {
             {L.confirmRemove}
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Button variant="ghost" onClick={() => setRemoving(null)}>
+            <Button variant="ghost" testId="members-remove-cancel-button" onClick={() => setRemoving(null)}>
               {L.cancel}
             </Button>
-            <Button variant="danger" disabled={removeBusy} onClick={runRemove}>
+            <Button variant="danger" disabled={removeBusy} testId="members-remove-confirm-button" onClick={runRemove}>
               {L.confirm}
             </Button>
           </div>

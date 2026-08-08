@@ -43,7 +43,7 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="auth-wrap">
+    <div className="auth-wrap" data-testid="register-page-root">
       <div className="auth-card">
         <h1 className="auth-title">{ar ? "إنشاء حساب" : "Create account"}</h1>
         <p className="auth-sub">
@@ -54,9 +54,10 @@ export default function RegisterPage() {
 
         <form
           onSubmit={submit}
+          data-testid="register-form-root"
           style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 24 }}
         >
-          <Field label={ar ? "اسم المنشأة" : "Organisation name"}>
+          <Field label={ar ? "اسم المنشأة" : "Organisation name"} testId="register-form-org-name-input">
             <Input
               required
               maxLength={200}
@@ -64,7 +65,7 @@ export default function RegisterPage() {
               onChange={(e) => setOrgName(e.target.value)}
             />
           </Field>
-          <Field label={ar ? "الاسم" : "Name"}>
+          <Field label={ar ? "الاسم" : "Name"} testId="register-form-name-input">
             <Input
               required
               maxLength={200}
@@ -73,7 +74,7 @@ export default function RegisterPage() {
               onChange={(e) => setName(e.target.value)}
             />
           </Field>
-          <Field label={ar ? "البريد الإلكتروني" : "Email"}>
+          <Field label={ar ? "البريد الإلكتروني" : "Email"} testId="register-form-email-input">
             <Input
               type="email"
               dir="ltr"
@@ -86,6 +87,7 @@ export default function RegisterPage() {
           <Field
             label={ar ? "كلمة المرور" : "Password"}
             hint={ar ? "8 أحرف على الأقل" : "At least 8 characters"}
+            testId="register-form-password-input"
           >
             <Input
               type="password"
@@ -98,9 +100,9 @@ export default function RegisterPage() {
             />
           </Field>
 
-          {error && <div className="error-text">{error}</div>}
+          {error && <div className="error-text" data-testid="register-form-error-text">{error}</div>}
 
-          <Button type="submit" variant="primary" disabled={busy}>
+          <Button type="submit" variant="primary" disabled={busy} testId="register-form-submit-button">
             {busy
               ? ar
                 ? "جارٍ الإنشاء…"
@@ -121,7 +123,11 @@ export default function RegisterPage() {
           }}
         >
           <span>{ar ? "لديك حساب بالفعل؟" : "Already have an account?"}</span>
-          <Link href="/login" style={{ color: "var(--accent)", fontWeight: 600 }}>
+          <Link
+            href="/login"
+            data-testid="register-login-link"
+            style={{ color: "var(--accent)", fontWeight: 600 }}
+          >
             {ar ? "تسجيل الدخول" : "Log in"}
           </Link>
         </div>

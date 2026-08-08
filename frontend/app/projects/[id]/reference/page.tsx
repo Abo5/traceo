@@ -122,8 +122,8 @@ export default function ReferencePage() {
   const p0Count = features.filter((f) => f.priority === "P0").length;
 
   return (
-    <div className="stack">
-      <PageHeader title={L.title} sub={L.sub} />
+    <div className="stack" data-testid="reference-page-root">
+      <PageHeader title={L.title} sub={L.sub} testId="reference-page-header" />
 
       {loading ? (
         <div style={{ color: "var(--text-muted)", fontSize: 13 }}>{L.loading}</div>
@@ -132,7 +132,7 @@ export default function ReferencePage() {
           <span className="error-text" style={{ fontSize: 13 }}>
             {L.loadError} — {error}
           </span>
-          <Button variant="secondary" size="sm" onClick={load}>
+          <Button variant="secondary" size="sm" onClick={load} testId="reference-retry-button">
             {L.retry}
           </Button>
         </div>
@@ -150,21 +150,21 @@ export default function ReferencePage() {
           {/* filters */}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             <div style={{ width: 260 }}>
-              <Input placeholder={L.search} value={q} onChange={(e) => setQ(e.target.value)} />
+              <Input placeholder={L.search} value={q} onChange={(e) => setQ(e.target.value)} testId="reference-search-input" />
             </div>
             <div className="row" style={{ gap: 4, flexWrap: "wrap" }}>
-              <Pill active={group === ""} onClick={() => setGroup("")}>
+              <Pill active={group === ""} onClick={() => setGroup("")} testId="reference-group-all-pill">
                 {L.all}
               </Pill>
               {groups.map((g) => (
-                <Pill key={g} active={group === g} onClick={() => setGroup(group === g ? "" : g)}>
+                <Pill key={g} active={group === g} onClick={() => setGroup(group === g ? "" : g)} testId={`reference-group-${g}-pill`}>
                   {groupLabel(g)}
                 </Pill>
               ))}
             </div>
             <div className="row" style={{ gap: 4 }}>
               {["P0", "P1", "P2"].map((p) => (
-                <Pill key={p} active={priority === p} onClick={() => setPriority(priority === p ? "" : p)}>
+                <Pill key={p} active={priority === p} onClick={() => setPriority(priority === p ? "" : p)} testId={`reference-priority-${p.toLowerCase()}-pill`}>
                   <span className="mono" dir="ltr" style={{ fontSize: 11.5 }}>
                     {p}
                   </span>
@@ -175,12 +175,14 @@ export default function ReferencePage() {
 
           {/* rows */}
           {filtered.length === 0 ? (
-            <Empty title={L.empty} hint={L.emptyHint} />
+            <Empty title={L.empty} hint={L.emptyHint} testId="reference-empty-state" />
           ) : (
-            <Card pad={false}>
+            <Card pad={false} testId="reference-list-card">
               {filtered.map((f, i) => (
                 <div
                   key={f.id}
+                  data-testid="reference-feature-row"
+                  data-state={f.status}
                   style={{
                     display: "flex",
                     gap: 14,
@@ -190,7 +192,7 @@ export default function ReferencePage() {
                   }}
                 >
                   <div style={{ paddingTop: 2, flexShrink: 0 }}>
-                    <RefChip id={f.id} />
+                    <RefChip id={f.id} testId="reference-feature-refchip" />
                   </div>
                   <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
                     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -203,7 +205,7 @@ export default function ReferencePage() {
                           {f.priority}
                         </span>
                       </Badge>
-                      <Badge tone={f.status === "built" ? "success" : "muted"}>
+                      <Badge tone={f.status === "built" ? "success" : "muted"} testId="reference-feature-status-badge" state={f.status}>
                         {f.status === "built" ? L.built : L.planned}
                       </Badge>
                     </div>

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { api, pollJob } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
+import { useCan } from "@/lib/permissions";
 import { Badge, Button, Card, Empty, PageHeader, Pill, Progress, StatCard } from "@/components/ui";
 
 function asList(x: any): any[] {
@@ -31,6 +32,7 @@ function GenerateInner() {
   const { id } = useParams<{ id: string }>();
   const search = useSearchParams();
   const { lang } = useLang();
+  const canDo = useCan();
 
   const L =
     lang === "ar"
@@ -198,16 +200,17 @@ function GenerateInner() {
   }, [reqs]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      <PageHeader title={L.title} sub={L.sub} />
+    <div data-testid="generate-page-root" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <PageHeader title={L.title} sub={L.sub} testId="generate-page-header" />
 
       <div style={{ display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" }}>
         {/* Checklist */}
         <div style={{ flex: 1, minWidth: 340, display: "flex", flexDirection: "column", gap: 20 }}>
           <Card
             title={L.reqs}
+            testId="generate-requirements-card"
             action={
-              <Button variant="ghost" size="sm" onClick={toggleAll} disabled={filtered.length === 0}>
+              <Button variant="ghost" size="sm" onClick={toggleAll} disabled={filtered.length === 0} testId="generate-select-all-button">
                 {allFilteredSelected ? L.clearAll : L.selectAll}
               </Button>
             }
@@ -219,7 +222,7 @@ function GenerateInner() {
                 ["medium", L.medium],
                 ["low", L.low],
               ].map(([v, label]) => (
-                <Pill key={v} active={prioF === v} onClick={() => setPrioF(v)}>
+                <Pill key={v} active={prioF === v} onClick={() => setPrioF(v)} testId={`generate-filter-${v}-pill`}>
                   {label}
                 </Pill>
               ))}
@@ -232,17 +235,18 @@ function GenerateInner() {
                 <div style={{ color: "var(--error)", fontSize: 13 }}>
                   {L.loadError} — {error}
                 </div>
-                <Button variant="secondary" size="sm" onClick={() => load()}>
+                <Button variant="secondary" size="sm" onClick={() => load()} testId="generate-requirements-retry-button">
                   {L.retry}
                 </Button>
               </div>
             ) : filtered.length === 0 ? (
-              <Empty title={L.empty} hint={L.emptyHint} />
+              <Empty title={L.empty} hint={L.emptyHint} testId="generate-empty-state" />
             ) : (
               <div style={{ display: "flex", flexDirection: "column" }}>
                 {filtered.map((r, i) => (
                   <label
                     key={r.id}
+                    data-testid="generate-requirement-row"
                     style={{
                       display: "flex",
                       gap: 12,
@@ -254,6 +258,7 @@ function GenerateInner() {
                   >
                     <input
                       type="checkbox"
+                      data-testid="generate-requirement-checkbox"
                       checked={selected.has(r.id)}
                       onChange={() => toggle(r.id)}
                       style={{ marginTop: 4, accentColor: "var(--accent)" }}
@@ -278,12 +283,13 @@ function GenerateInner() {
             )}
           </Card>
 
-          <Card title={L.depth}>
+          <Card title={L.depth} testId="generate-depth-card">
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {DEPTHS.map((d) => (
                 <button
                   key={d.v}
                   type="button"
+                  data-testid={`generate-depth-${d.v}-button`}
                   onClick={() => setDepth(d.v)}
                   style={{
                     display: "flex",
@@ -322,7 +328,7 @@ function GenerateInner() {
 
         {/* Sticky summary */}
         <div style={{ width: 320, flexShrink: 0, position: "sticky", top: 84 }}>
-          <Card title={L.summary}>
+          <Card title={L.summary} testId="generate-summary-card">
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
                 <M style={{ fontSize: 24, fontWeight: 700, color: "var(--text)" }}>{selected.size}</M>
@@ -350,13 +356,15 @@ function GenerateInner() {
               {job ? (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   <div style={{ fontSize: 13, color: "var(--text)" }}>{job.msg}</div>
-                  <Progress pct={job.pct} tone="accent" />
+                  <Progress pct={job.pct} tone="accent" testId="generate-job-progress" />
                   <M style={{ color: "var(--text-muted)" }}>{job.pct}%</M>
                 </div>
               ) : (
-                <Button disabled={selected.size === 0} onClick={generate}>
-                  {L.generate}
-                </Button>
+                canDo("generate") && (
+                  <Button disabled={selected.size === 0} onClick={generate} testId="generate-submit-button">
+                    {L.generate}
+                  </Button>
+                )
               )}
 
               {genError && <div style={{ fontSize: 13, color: "var(--error)" }}>{genError}</div>}
@@ -367,11 +375,11 @@ function GenerateInner() {
 
       {/* Result panel */}
       {result && (
-        <Card title={L.result}>
+        <Card title={L.result} testId="generate-result-card">
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
-              <StatCard value={result.generated ?? 0} label={L.generated} color="var(--success)" />
-              <StatCard value={result.discarded ?? 0} label={L.discarded} color="var(--error)" />
+              <StatCard value={result.generated ?? 0} label={L.generated} color="var(--success)" testId="generate-generated-stat" />
+              <StatCard value={result.discarded ?? 0} label={L.discarded} color="var(--error)" testId="generate-discarded-stat" />
             </div>
 
             {unmappable.length > 0 && (
@@ -420,7 +428,7 @@ function GenerateInner() {
 
             <div>
               <Link href={`/projects/${id}/review`}>
-                <Button variant="secondary">{L.toReview} ←</Button>
+                <Button variant="secondary" testId="generate-to-review-button">{L.toReview} ←</Button>
               </Link>
             </div>
           </div>

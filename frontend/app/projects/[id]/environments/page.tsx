@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
+import { useCan } from "@/lib/permissions";
 import {
   Badge,
   Button,
@@ -71,6 +72,7 @@ export default function EnvironmentsPage() {
   const { id } = useParams<{ id: string }>();
   const { lang } = useLang();
   const ar = lang === "ar";
+  const canDo = useCan();
 
   const L = ar
     ? {
@@ -311,6 +313,7 @@ export default function EnvironmentsPage() {
               <Input
                 dir="ltr"
                 placeholder="X-API-Key"
+                testId="environments-auth-header-input"
                 value={form.header}
                 onChange={(e) => setForm((f) => ({ ...f, header: e.target.value }))}
               />
@@ -320,6 +323,7 @@ export default function EnvironmentsPage() {
                 dir="ltr"
                 type="password"
                 autoComplete="off"
+                testId="environments-auth-key-input"
                 value={form.key}
                 onChange={(e) => setForm((f) => ({ ...f, key: e.target.value }))}
               />
@@ -333,6 +337,7 @@ export default function EnvironmentsPage() {
               <Input
                 dir="ltr"
                 autoComplete="off"
+                testId="environments-auth-username-input"
                 value={form.username}
                 onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
               />
@@ -342,6 +347,7 @@ export default function EnvironmentsPage() {
                 dir="ltr"
                 type="password"
                 autoComplete="off"
+                testId="environments-auth-password-input"
                 value={form.password}
                 onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
               />
@@ -355,6 +361,7 @@ export default function EnvironmentsPage() {
               dir="ltr"
               type="password"
               autoComplete="off"
+              testId="environments-auth-token-input"
               value={form.token}
               onChange={(e) => setForm((f) => ({ ...f, token: e.target.value }))}
             />
@@ -367,6 +374,7 @@ export default function EnvironmentsPage() {
               <Input
                 dir="ltr"
                 placeholder="https://auth.example.com/oauth/token"
+                testId="environments-auth-token-url-input"
                 value={form.token_url}
                 onChange={(e) => setForm((f) => ({ ...f, token_url: e.target.value }))}
               />
@@ -375,6 +383,7 @@ export default function EnvironmentsPage() {
               <Input
                 dir="ltr"
                 autoComplete="off"
+                testId="environments-auth-client-id-input"
                 value={form.client_id}
                 onChange={(e) => setForm((f) => ({ ...f, client_id: e.target.value }))}
               />
@@ -384,6 +393,7 @@ export default function EnvironmentsPage() {
                 dir="ltr"
                 type="password"
                 autoComplete="off"
+                testId="environments-auth-client-secret-input"
                 value={form.client_secret}
                 onChange={(e) => setForm((f) => ({ ...f, client_secret: e.target.value }))}
               />
@@ -396,14 +406,17 @@ export default function EnvironmentsPage() {
   };
 
   return (
-    <div className="stack">
+    <div className="stack" data-testid="environments-page-root">
       <PageHeader
         title={L.title}
         sub={L.sub}
+        testId="environments-page-header"
         actions={
-          <Button variant="primary" onClick={openCreate}>
-            + {L.newEnv}
-          </Button>
+          canDo("manage_environments") ? (
+            <Button variant="primary" testId="environments-create-button" onClick={openCreate}>
+              + {L.newEnv}
+            </Button>
+          ) : undefined
         }
       />
 
@@ -412,7 +425,7 @@ export default function EnvironmentsPage() {
       {loading ? (
         <div style={{ color: "var(--text-muted)", fontSize: 13 }}>{L.loading}</div>
       ) : envs.length === 0 ? (
-        <Empty title={L.empty} hint={L.emptyHint} />
+        <Empty title={L.empty} hint={L.emptyHint} testId="environments-empty-state" />
       ) : (
         <div className="grid-cards" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}>
           {envs.map((env) => {
@@ -421,6 +434,7 @@ export default function EnvironmentsPage() {
               <div
                 key={env.id}
                 className="card"
+                data-testid="environments-env-card"
                 style={{ padding: 18, display: "flex", flexDirection: "column", gap: 12 }}
               >
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
@@ -453,7 +467,7 @@ export default function EnvironmentsPage() {
 
                 {res && (
                   <div className="row" style={{ gap: 8 }}>
-                    <Badge tone={res.reachable ? "success" : "error"}>
+                    <Badge tone={res.reachable ? "success" : "error"} testId="environments-env-check-badge">
                       {res.reachable ? L.reachable : L.unreachable}
                       {res.status_code !== undefined ? ` · ${res.status_code}` : ""}
                     </Badge>
@@ -472,20 +486,27 @@ export default function EnvironmentsPage() {
                 )}
 
                 <div className="row" style={{ marginTop: "auto" }}>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={checking === env.id}
-                    onClick={() => check(env)}
-                  >
-                    {checking === env.id ? L.checking : L.check}
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => openEdit(env)}>
-                    {L.edit}
-                  </Button>
-                  <Button variant="danger" size="sm" onClick={() => setDeleting(env)}>
-                    {L.del}
-                  </Button>
+                  {canDo("trigger_run") && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      testId="environments-env-check-button"
+                      disabled={checking === env.id}
+                      onClick={() => check(env)}
+                    >
+                      {checking === env.id ? L.checking : L.check}
+                    </Button>
+                  )}
+                  {canDo("manage_environments") && (
+                    <Button variant="ghost" size="sm" testId="environments-env-edit-button" onClick={() => openEdit(env)}>
+                      {L.edit}
+                    </Button>
+                  )}
+                  {canDo("manage_environments") && (
+                    <Button variant="danger" size="sm" testId="environments-env-delete-button" onClick={() => setDeleting(env)}>
+                      {L.del}
+                    </Button>
+                  )}
                 </div>
               </div>
             );
@@ -498,12 +519,14 @@ export default function EnvironmentsPage() {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         title={editing ? L.editEnv : L.newEnv}
+        testId="environments-form-modal"
       >
         <form onSubmit={save} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Field label={L.name}>
             <Input
               required
               maxLength={100}
+              testId="environments-name-input"
               value={form.name}
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
             />
@@ -513,12 +536,14 @@ export default function EnvironmentsPage() {
               required
               dir="ltr"
               placeholder="https://staging.example.com"
+              testId="environments-base-url-input"
               value={form.base_url}
               onChange={(e) => setForm((f) => ({ ...f, base_url: e.target.value }))}
             />
           </Field>
           <Field label={L.authType}>
             <Select
+              testId="environments-auth-type-select"
               value={form.auth_type}
               onChange={(e) => setForm((f) => ({ ...f, auth_type: e.target.value }))}
             >
@@ -542,6 +567,7 @@ export default function EnvironmentsPage() {
             <Textarea
               dir="ltr"
               rows={3}
+              testId="environments-variables-textarea"
               placeholder={"admin_token=...\nuser_id=42"}
               value={form.variablesText}
               onChange={(e) => setForm((f) => ({ ...f, variablesText: e.target.value }))}
@@ -560,6 +586,7 @@ export default function EnvironmentsPage() {
           >
             <input
               type="checkbox"
+              data-testid="environments-tls-checkbox"
               checked={form.tls_strict}
               onChange={(e) => setForm((f) => ({ ...f, tls_strict: e.target.checked }))}
             />
@@ -569,12 +596,13 @@ export default function EnvironmentsPage() {
           {formError && <div className="error-text">{formError}</div>}
 
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Button variant="ghost" onClick={() => setModalOpen(false)}>
+            <Button variant="ghost" testId="environments-form-cancel-button" onClick={() => setModalOpen(false)}>
               {L.cancel}
             </Button>
             <Button
               type="submit"
               variant="primary"
+              testId="environments-form-submit-button"
               disabled={saving || !form.name.trim() || !form.base_url.trim()}
             >
               {editing ? L.save : L.create}
@@ -584,7 +612,7 @@ export default function EnvironmentsPage() {
       </Modal>
 
       {/* delete confirm */}
-      <Modal open={!!deleting} onClose={() => setDeleting(null)} title={L.confirmDeleteTitle}>
+      <Modal open={!!deleting} onClose={() => setDeleting(null)} title={L.confirmDeleteTitle} testId="environments-delete-modal">
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ fontSize: 13.5, color: "var(--text-secondary)" }}>
             <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>
@@ -593,10 +621,10 @@ export default function EnvironmentsPage() {
             {L.confirmDelete}
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Button variant="ghost" onClick={() => setDeleting(null)}>
+            <Button variant="ghost" testId="environments-delete-cancel-button" onClick={() => setDeleting(null)}>
               {L.cancel}
             </Button>
-            <Button variant="danger" disabled={deleteBusy} onClick={runDelete}>
+            <Button variant="danger" testId="environments-delete-confirm-button" disabled={deleteBusy} onClick={runDelete}>
               {L.confirm}
             </Button>
           </div>

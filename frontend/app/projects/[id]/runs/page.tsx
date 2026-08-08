@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
+import { useCan } from "@/lib/permissions";
 import { Badge, Button, Card, DateTimeText, Empty, Field, Input, Modal, PageHeader, Select, StatusDot, Table, stateTone } from "@/components/ui";
 
 function asList(x: any): any[] {
@@ -55,6 +56,7 @@ function NumberedChip({ n, color }: { n: string; color: string }) {
 export default function RunsPage() {
   const { id } = useParams<{ id: string }>();
   const { lang } = useLang();
+  const canDo = useCan();
 
   const L =
     lang === "ar"
@@ -274,8 +276,8 @@ export default function RunsPage() {
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      <PageHeader title={L.title} sub={L.sub} />
+    <div data-testid="runs-page-root" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <PageHeader title={L.title} sub={L.sub} testId="runs-page-header" />
 
       {error && (
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -302,7 +304,7 @@ export default function RunsPage() {
                 <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end" }}>
                   <div style={{ minWidth: 240 }}>
                     <Field label={L.env}>
-                      <Select value={envId} onChange={(e: any) => setEnvId(e.target.value)}>
+                      <Select testId="runs-launch-env-select" value={envId} onChange={(e: any) => setEnvId(e.target.value)}>
                         <option value="">{L.pickEnv}</option>
                         {envs.map((e) => (
                           <option key={e.id} value={e.id}>
@@ -333,9 +335,11 @@ export default function RunsPage() {
                     <M style={{ fontSize: 20, fontWeight: 700, color: "var(--success)" }}>{approved.length}</M>
                     <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>{L.approvedCount}</span>
                   </span>
-                  <Button variant="secondary" size="sm" onClick={() => setSubsetOpen(true)} disabled={approved.length === 0}>
-                    {L.subset}
-                  </Button>
+                  {canDo("trigger_run") && (
+                    <Button variant="secondary" size="sm" testId="runs-launch-subset-button" onClick={() => setSubsetOpen(true)} disabled={approved.length === 0}>
+                      {L.subset}
+                    </Button>
+                  )}
                   {subset.size > 0 && (
                     <Badge tone="accent">
                       <M style={{ fontSize: 11 }}>{subset.size}</M> {L.subsetPicked}
@@ -380,14 +384,17 @@ export default function RunsPage() {
             </div>
 
             {/* launch */}
+            {canDo("trigger_run") && (
             <div style={{ display: "flex", justifyContent: "flex-end", borderTop: "1px solid var(--border)", paddingTop: 14 }}>
               <Button
+                testId="runs-launch-run-button"
                 disabled={launching || !envId || approved.length === 0 || (!!live && !liveTerminal)}
                 onClick={launch}
               >
                 {launching ? L.launching : `${L.run} ▶`}
               </Button>
             </div>
+            )}
 
             {envs.length === 0 && <div style={{ fontSize: 13, color: "var(--warning)" }}>{L.noEnvs}</div>}
             {approved.length === 0 && <div style={{ fontSize: 13, color: "var(--warning)" }}>{L.noApproved}</div>}
@@ -396,6 +403,7 @@ export default function RunsPage() {
             {/* Live panel */}
             {liveRunId && live && (
               <div
+                data-testid="runs-live-panel"
                 style={{
                   border: `1px solid ${liveTerminal ? "var(--border-strong)" : "var(--accent)"}`,
                   background: "var(--surface-2)",
@@ -410,17 +418,19 @@ export default function RunsPage() {
                   <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{L.live}</span>
                   <M style={{ color: "var(--text-muted)" }}>{shortId(liveRunId)}</M>
                   <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                    <StatusDot state={live.state} />
-                    <Badge tone={stateTone(live.state)}>{stateLabel(live.state)}</Badge>
+                    <StatusDot state={live.state} testId="runs-live-status-dot" />
+                    <Badge tone={stateTone(live.state)} testId="runs-live-state-badge" state={live.state}>{stateLabel(live.state)}</Badge>
                   </span>
                   <div style={{ marginInlineStart: "auto", display: "flex", gap: 8 }}>
                     {!liveTerminal ? (
-                      <Button variant="danger" size="sm" disabled={cancelling} onClick={cancelRun}>
-                        {L.cancel}
-                      </Button>
+                      canDo("trigger_run") && (
+                        <Button variant="danger" size="sm" testId="runs-live-cancel-button" disabled={cancelling} onClick={cancelRun}>
+                          {L.cancel}
+                        </Button>
+                      )
                     ) : (
                       <Link href={`/projects/${id}/runs/${liveRunId}`}>
-                        <Button variant="secondary" size="sm">
+                        <Button variant="secondary" size="sm" testId="runs-live-report-button">
                           {L.report} ←
                         </Button>
                       </Link>
@@ -457,22 +467,22 @@ export default function RunsPage() {
         {loading ? (
           <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 13 }}>…</div>
         ) : runs.length === 0 ? (
-          <Empty title={L.noRuns} hint={L.noRunsHint} />
+          <Empty title={L.noRuns} hint={L.noRunsHint} testId="runs-empty-state" />
         ) : (
-          <Table head={[L.runId, L.state, L.counts, L.started, L.finished, L.initiator]}>
+          <Table head={[L.runId, L.state, L.counts, L.started, L.finished, L.initiator]} testId="runs-table-root">
             {runs.map((r) => {
               const c = r.counts ?? {};
               return (
-                <tr key={r.id}>
+                <tr key={r.id} data-testid="runs-row">
                   <td>
-                    <Link href={`/projects/${id}/runs/${r.id}`} style={{ textDecoration: "none" }}>
+                    <Link href={`/projects/${id}/runs/${r.id}`} data-testid="runs-row-link" style={{ textDecoration: "none" }}>
                       <M style={{ color: "var(--accent)" }}>{r.display_id ? `#${r.display_id}` : shortId(r.id)}</M>
                     </Link>
                   </td>
                   <td>
                     <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                      <StatusDot state={r.state} />
-                      <Badge tone={stateTone(r.state)}>{stateLabel(r.state)}</Badge>
+                      <StatusDot state={r.state} testId="runs-row-status-dot" />
+                      <Badge tone={stateTone(r.state)} testId="runs-row-state-badge" state={r.state}>{stateLabel(r.state)}</Badge>
                     </span>
                   </td>
                   <td>
@@ -501,10 +511,10 @@ export default function RunsPage() {
       </Card>
 
       {/* Subset modal */}
-      <Modal open={subsetOpen} onClose={() => setSubsetOpen(false)} title={L.subsetTitle}>
+      <Modal open={subsetOpen} onClose={() => setSubsetOpen(false)} title={L.subsetTitle} testId="runs-subset-modal">
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{L.subsetHint}</div>
-          <Input placeholder={L.search} value={subsetQ} onChange={(e: any) => setSubsetQ(e.target.value)} />
+          <Input placeholder={L.search} testId="runs-subset-search-input" value={subsetQ} onChange={(e: any) => setSubsetQ(e.target.value)} />
           <div style={{ maxHeight: "40vh", overflowY: "auto", border: "1px solid var(--border)", borderRadius: 10 }}>
             {subsetFiltered.map((c, i) => (
               <label
@@ -539,10 +549,10 @@ export default function RunsPage() {
             )}
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Button variant="ghost" onClick={() => setSubset(new Set())}>
+            <Button variant="ghost" testId="runs-subset-clear-button" onClick={() => setSubset(new Set())}>
               {L.clear}
             </Button>
-            <Button variant="primary" onClick={() => setSubsetOpen(false)}>
+            <Button variant="primary" testId="runs-subset-apply-button" onClick={() => setSubsetOpen(false)}>
               {L.apply}
             </Button>
           </div>
