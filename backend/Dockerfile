@@ -31,6 +31,7 @@ COPY app ./app
 # Shipped so the container can bring the schema up to date before serving.
 COPY alembic.ini ./
 COPY migrations ./migrations
+COPY db_adopt.py ./
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
