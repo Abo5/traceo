@@ -318,7 +318,7 @@ export default function RunReportPage() {
   }
 
   if (loading) {
-    return <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 13 }}>…</div>;
+    return <div style={{ padding: 24, color: "var(--text-secondary)", fontSize: 13 }}>…</div>;
   }
 
   if (error && !report) {
@@ -474,7 +474,7 @@ export default function RunReportPage() {
                     ))}
                     <SeverityBadge severity={c.severity ?? c.test_case?.severity} testId="runs-report-failure-severity-badge" />
                     <Badge tone={tone} testId="runs-report-failure-outcome-badge" state={c.outcome}>{outcomeLabel(c.outcome)}</Badge>
-                    <span style={{ color: "var(--text-muted)", fontSize: 12 }}>{isOpen ? "▴" : "▾"}</span>
+                    <span style={{ color: "var(--text-secondary)", fontSize: 12 }}>{isOpen ? "▴" : "▾"}</span>
                   </button>
 
                   {isOpen && (
@@ -490,7 +490,7 @@ export default function RunReportPage() {
                     >
                       {c.failure_reason && (
                         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }}>
+                          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-secondary)" }}>
                             {L.failReason}
                           </div>
                           {renderFailureReason(c.failure_reason)}
@@ -499,7 +499,7 @@ export default function RunReportPage() {
 
                       {reproSteps.length > 0 && (
                         <div>
-                          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)", marginBottom: 6 }}>
+                          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-secondary)", marginBottom: 6 }}>
                             {L.stepsRepro}
                           </div>
                           <ol style={{ margin: 0, paddingInlineStart: 20, display: "flex", flexDirection: "column", gap: 4 }}>
@@ -518,7 +518,7 @@ export default function RunReportPage() {
                         <div key={j} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                           {ev.request && (
                             <div>
-                              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>
+                              <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>
                                 {L.request} <M style={{ fontSize: 10 }}>#{j + 1}</M>
                               </div>
                               <JsonBlock value={ev.request} />
@@ -526,12 +526,12 @@ export default function RunReportPage() {
                           )}
                           {ev.response && (
                             <div>
-                              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>
+                              <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>
                                 {L.response}
                                 {typeof ev.elapsed_ms === "number" && (
                                   <>
                                     {" — "}
-                                    <M style={{ fontSize: 10, color: "var(--text-muted)", whiteSpace: "nowrap" }}>{ev.elapsed_ms} ms</M>
+                                    <M style={{ fontSize: 10, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{ev.elapsed_ms} ms</M>
                                   </>
                                 )}
                               </div>
@@ -540,7 +540,7 @@ export default function RunReportPage() {
                           )}
                           {Array.isArray(ev.assertions) && ev.assertions.length > 0 && (
                             <div>
-                              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>{L.evidence}</div>
+                              <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>{L.evidence}</div>
                               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                                 {ev.assertions.map((a: any, k: number) => (
                                   <div key={k} style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
@@ -591,7 +591,7 @@ export default function RunReportPage() {
               {cases.map((c, i) => (
                 <tr key={caseId(c) || i} data-testid="runs-report-result-row">
                   <td>
-                    <M style={{ color: "var(--text-muted)" }}>{shortId(caseId(c))}</M>
+                    <M style={{ color: "var(--text-secondary)" }}>{shortId(caseId(c))}</M>
                   </td>
                   <td style={{ fontSize: 13, color: "var(--text)" }}>{caseTitle(c)}</td>
                   <td>
@@ -634,7 +634,7 @@ export default function RunReportPage() {
               </Select>
             </div>
 
-            {compareLoading && <div style={{ color: "var(--text-muted)", fontSize: 13 }}>…</div>}
+            {compareLoading && <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>…</div>}
             {compareError && <div style={{ color: "var(--error)", fontSize: 13 }}>{compareError}</div>}
 
             {compare && !compareLoading && (
@@ -687,7 +687,7 @@ export default function RunReportPage() {
                     {L.newlyFailing} ({newlyFailing.length})
                   </div>
                   {newlyFailing.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{L.noDiff}</div>
+                    <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{L.noDiff}</div>
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       {newlyFailing.map((x, i) => (
@@ -711,7 +711,7 @@ export default function RunReportPage() {
                     {L.newlyPassing} ({newlyPassing.length})
                   </div>
                   {newlyPassing.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{L.noDiff}</div>
+                    <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{L.noDiff}</div>
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       {newlyPassing.map((x, i) => (

@@ -73,7 +73,7 @@ function Sidebar({ projectId }: { projectId: string }) {
           <div key={group.en} style={{ marginBottom: 6 }}>
             <div
               className="eyebrow"
-              style={{ padding: "10px 12px 4px", fontSize: 10.5, color: "var(--text-muted)" }}
+              style={{ padding: "10px 12px 4px", fontSize: 10.5, color: "var(--text-secondary)" }}
             >
               {ar ? group.ar : group.en}
             </div>

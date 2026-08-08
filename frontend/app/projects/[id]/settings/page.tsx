@@ -453,7 +453,7 @@ export default function SettingsPage() {
   const envName = (envId: string) => envs.find((e) => e.id === envId)?.name ?? "—";
 
   const loadingBox = (
-    <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 13 }}>{L.loading}</div>
+    <div style={{ padding: 24, color: "var(--text-secondary)", fontSize: 13 }}>{L.loading}</div>
   );
 
   const errorBox = (msg: string, retry: () => void) => (
@@ -500,7 +500,7 @@ export default function SettingsPage() {
           }
           pad={false}
         >
-          <div style={{ padding: "8px 16px 0", fontSize: 12, color: "var(--text-muted)" }}>{L.keysSub}</div>
+          <div style={{ padding: "8px 16px 0", fontSize: 12, color: "var(--text-secondary)" }}>{L.keysSub}</div>
           {keysLoading ? (
             loadingBox
           ) : keysError ? (
@@ -555,7 +555,7 @@ export default function SettingsPage() {
           }
           pad={false}
         >
-          <div style={{ padding: "8px 16px 0", fontSize: 12, color: "var(--text-muted)" }}>{L.schedSub}</div>
+          <div style={{ padding: "8px 16px 0", fontSize: 12, color: "var(--text-secondary)" }}>{L.schedSub}</div>
           {schedLoading ? (
             loadingBox
           ) : schedError ? (
@@ -578,7 +578,7 @@ export default function SettingsPage() {
                       {canDo("manage_projects") && (
                         <Toggle on={s.enabled} onChange={(v) => toggleSched(s, v)} testId="settings-schedule-enabled-toggle" />
                       )}
-                      <span style={{ fontSize: 12, color: s.enabled ? "var(--success)" : "var(--text-muted)" }}>
+                      <span style={{ fontSize: 12, color: s.enabled ? "var(--success)" : "var(--text-secondary)" }}>
                         {s.enabled ? L.enabled : L.disabled}
                       </span>
                     </span>
@@ -620,7 +620,7 @@ export default function SettingsPage() {
           }
         >
           <div style={{ display: "flex", flexDirection: "column", gap: 14, maxWidth: 640 }}>
-            <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>{L.exportSub}</div>
+            <div style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>{L.exportSub}</div>
             <div
               style={{
                 background: "var(--accent-subtle)",

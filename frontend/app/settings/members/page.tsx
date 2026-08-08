@@ -207,7 +207,7 @@ export default function MembersPage() {
       {error && <div className="error-text" data-testid="members-error-text">{error}</div>}
 
       {loading ? (
-        <div style={{ color: "var(--text-muted)", fontSize: 13 }}>{L.loading}</div>
+        <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>{L.loading}</div>
       ) : members.length === 0 ? (
         <Empty title={L.empty} testId="members-empty-state" />
       ) : (
@@ -247,7 +247,7 @@ export default function MembersPage() {
                   </div>
                 </td>
                 <td>
-                  <Mono style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
+                  <Mono style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>
                     {m.created_at ? m.created_at.slice(0, 10) : "—"}
                   </Mono>
                 </td>

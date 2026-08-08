@@ -423,7 +423,7 @@ export default function EnvironmentsPage() {
       {error && <div className="error-text">{error}</div>}
 
       {loading ? (
-        <div style={{ color: "var(--text-muted)", fontSize: 13 }}>{L.loading}</div>
+        <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>{L.loading}</div>
       ) : envs.length === 0 ? (
         <Empty title={L.empty} hint={L.emptyHint} testId="environments-empty-state" />
       ) : (

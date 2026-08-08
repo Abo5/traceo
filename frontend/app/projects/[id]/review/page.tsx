@@ -463,7 +463,7 @@ export default function ReviewPage() {
             {L.sub} <RefChip id="FR-035" /> <RefChip id="FR-036" />
           </span>
         }
-        actions={<M style={{ color: "var(--text-muted)", fontSize: 11 }}>{L.kbd}</M>}
+        actions={<M style={{ color: "var(--text-secondary)", fontSize: 11 }}>{L.kbd}</M>}
       />
 
       {error && (
@@ -535,7 +535,7 @@ export default function ReviewPage() {
             </div>
 
             {loading ? (
-              <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 13 }}>…</div>
+              <div style={{ padding: 24, color: "var(--text-secondary)", fontSize: 13 }}>…</div>
             ) : cases.length === 0 ? (
               <Empty
                 title={hasFilters ? L.emptyFiltered : L.empty}
@@ -610,7 +610,7 @@ export default function ReviewPage() {
                             </M>
                           ))}
                           {reqs.length > 2 && (
-                            <M style={{ fontSize: 10, color: "var(--text-muted)" }}>+{reqs.length - 2}</M>
+                            <M style={{ fontSize: 10, color: "var(--text-secondary)" }}>+{reqs.length - 2}</M>
                           )}
                         </div>
                       </div>
@@ -630,7 +630,7 @@ export default function ReviewPage() {
             </Card>
           ) : detailLoading && !detail ? (
             <Card>
-              <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 13 }}>…</div>
+              <div style={{ padding: 24, color: "var(--text-secondary)", fontSize: 13 }}>…</div>
             </Card>
           ) : (
             <Card
@@ -680,7 +680,7 @@ export default function ReviewPage() {
                         fontSize: 11,
                         textTransform: "uppercase",
                         letterSpacing: "0.08em",
-                        color: "var(--text-muted)",
+                        color: "var(--text-secondary)",
                       }}
                     >
                       {L.linkedReq}
@@ -724,7 +724,7 @@ export default function ReviewPage() {
 
                 {detail.preconditions && (
                   <div>
-                    <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)", marginBottom: 6 }}>
+                    <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-secondary)", marginBottom: 6 }}>
                       {L.preconditions}
                     </div>
                     <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.7 }}>
@@ -735,7 +735,7 @@ export default function ReviewPage() {
 
                 {/* Steps */}
                 <div>
-                  <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)", marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-secondary)", marginBottom: 8 }}>
                     {L.steps} ({steps.length})
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -756,7 +756,7 @@ export default function ReviewPage() {
                           }}
                         >
                           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                            <M style={{ color: "var(--text-muted)", fontSize: 11 }}>#{s.order ?? i + 1}</M>
+                            <M style={{ color: "var(--text-secondary)", fontSize: 11 }}>#{s.order ?? i + 1}</M>
                             <M style={{ color: "var(--text)", fontWeight: 700, whiteSpace: "nowrap" }}>
                               {(s.method ?? "").toUpperCase()} {s.path}
                             </M>
@@ -764,14 +764,14 @@ export default function ReviewPage() {
 
                           {s.request !== undefined && s.request !== null && (
                             <div>
-                              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>{L.request}</div>
+                              <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>{L.request}</div>
                               <JsonBlock value={s.request} />
                             </div>
                           )}
 
                           {assertions.length > 0 && (
                             <div>
-                              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>{L.assertions}</div>
+                              <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>{L.assertions}</div>
                               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                                 {assertions.map((a: any, j: number) => (
                                   <div key={j} style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
@@ -799,7 +799,7 @@ export default function ReviewPage() {
 
                           {extractions.length > 0 && (
                             <div>
-                              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>{L.extractions}</div>
+                              <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>{L.extractions}</div>
                               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                                 {extractions.map((x: any, j: number) => (
                                   <M key={j} style={{ color: "var(--c-cyan)", fontSize: 11 }}>

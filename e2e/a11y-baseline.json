@@ -1,128 +1,16 @@
 {
-  "login": [
-    "color-contrast:.brand-tagline",
-    "color-contrast:.eyebrow"
-  ],
-  "project:endpoints": [
-    "color-contrast:.brand-tagline",
-    "color-contrast:.empty-hint",
-    "color-contrast:div:nth-child(1) > .eyebrow",
-    "color-contrast:div:nth-child(2) > .eyebrow",
-    "color-contrast:div:nth-child(3) > .eyebrow",
-    "color-contrast:div:nth-child(4) > .eyebrow"
-  ],
-  "project:environments": [
-    "color-contrast:.brand-tagline",
-    "color-contrast:.empty-hint",
-    "color-contrast:div:nth-child(1) > .eyebrow",
-    "color-contrast:div:nth-child(2) > .eyebrow",
-    "color-contrast:div:nth-child(3) > .eyebrow",
-    "color-contrast:div:nth-child(4) > .eyebrow"
-  ],
-  "project:generate": [
-    "color-contrast:.brand-tagline",
-    "color-contrast:.empty-hint",
-    "color-contrast:button[data-testid=\"generate-depth-smoke-button\"] > span:nth-child(2) > span:nth-child(1) > span[dir=\"ltr\"]",
-    "color-contrast:button[data-testid=\"generate-depth-standard-button\"] > span:nth-child(2) > span:nth-child(1) > span[dir=\"ltr\"]",
-    "color-contrast:button[type=\"button\"]:nth-child(3) > span:nth-child(2) > span:nth-child(1) > span[dir=\"ltr\"]",
-    "color-contrast:div:nth-child(1) > .eyebrow",
-    "color-contrast:div:nth-child(2) > .eyebrow",
-    "color-contrast:div:nth-child(3) > .eyebrow",
-    "color-contrast:div:nth-child(4) > .eyebrow"
-  ],
-  "project:integrations": [
-    "color-contrast:.brand-tagline",
-    "color-contrast:.card:nth-child(1) > .card-body > div > div:nth-child(1)",
-    "color-contrast:.card:nth-child(1) > .card-body > div > div:nth-child(3)",
-    "color-contrast:.card:nth-child(1) > .card-head > .card-action > .badge-muted.badge",
-    "color-contrast:.card:nth-child(2) > .card-body > div > div:nth-child(1)",
-    "color-contrast:.card:nth-child(2) > .card-head > .card-action > .badge-muted.badge",
-    "color-contrast:.card:nth-child(3) > .card-body > div > div:nth-child(1)",
-    "color-contrast:.empty-hint",
-    "color-contrast:div:nth-child(1) > .eyebrow",
-    "color-contrast:div:nth-child(2) > .eyebrow",
-    "color-contrast:div:nth-child(3) > .eyebrow",
-    "color-contrast:div:nth-child(4) > .card:nth-child(1) > .card-body > div",
-    "color-contrast:div:nth-child(4) > .card:nth-child(1) > .card-head > .card-title > span",
-    "color-contrast:div:nth-child(4) > .card:nth-child(1) > .card-head > .card-title > span > .mono[dir=\"ltr\"]",
-    "color-contrast:div:nth-child(4) > .card:nth-child(2) > .card-body > div",
-    "color-contrast:div:nth-child(4) > .card:nth-child(2) > .card-head > .card-title > span",
-    "color-contrast:div:nth-child(4) > .eyebrow",
-    "color-contrast:div:nth-child(4) > div:nth-child(2) > span"
-  ],
-  "project:matrix": [
-    "color-contrast:.brand-tagline",
-    "color-contrast:.empty-hint",
-    "color-contrast:div:nth-child(1) > .eyebrow",
-    "color-contrast:div:nth-child(2) > .eyebrow",
-    "color-contrast:div:nth-child(3) > .eyebrow",
-    "color-contrast:div:nth-child(4) > .eyebrow"
-  ],
-  "project:overview": [
-    "color-contrast:.brand-tagline",
-    "color-contrast:div:nth-child(1) > .eyebrow",
-    "color-contrast:div:nth-child(2) > .eyebrow",
-    "color-contrast:div:nth-child(3) > .eyebrow",
-    "color-contrast:div:nth-child(4) > .eyebrow",
-    "color-contrast:div:nth-child(7) > .eyebrow",
-    "color-contrast:div[data-testid=\"dashboard-coverage-trend-card\"] > .card-body > div",
-    "color-contrast:div[data-testid=\"dashboard-latest-run-card\"] > .card-body > div"
-  ],
-  "project:reference": [
-    "color-contrast:.brand-tagline",
-    "color-contrast:.stack > .mono[dir=\"ltr\"]",
-    "color-contrast:div:nth-child(1) > .eyebrow",
-    "color-contrast:div:nth-child(2) > .eyebrow",
-    "color-contrast:div:nth-child(3) > .eyebrow",
-    "color-contrast:div:nth-child(4) > .eyebrow"
-  ],
-  "project:requirements": [
-    "color-contrast:.brand-tagline",
-    "color-contrast:div:nth-child(1) > .eyebrow",
-    "color-contrast:div:nth-child(2) > .eyebrow",
-    "color-contrast:div:nth-child(3) > .eyebrow",
-    "color-contrast:div:nth-child(3) > span[dir=\"ltr\"]",
-    "color-contrast:div:nth-child(4) > .eyebrow",
-    "color-contrast:div[data-testid=\"requirements-documents-card\"] > .card-body > .empty > .empty-hint",
-    "color-contrast:div[data-testid=\"requirements-empty-state\"] > .empty-hint",
-    "select-name:select[data-testid=\"requirements-priority-select\"]",
-    "select-name:select[data-testid=\"requirements-type-select\"]"
-  ],
-  "project:review": [
-    "color-contrast:.brand-tagline",
-    "color-contrast:.card-body > .empty > .empty-hint",
-    "color-contrast:.page-actions > span[dir=\"ltr\"]",
-    "color-contrast:div:nth-child(1) > .eyebrow",
-    "color-contrast:div:nth-child(2) > .eyebrow",
-    "color-contrast:div:nth-child(3) > .eyebrow",
-    "color-contrast:div:nth-child(4) > .eyebrow",
-    "color-contrast:div[data-testid=\"review-empty-state\"] > .empty-hint"
-  ],
-  "project:runs": [
-    "color-contrast:.brand-tagline",
-    "color-contrast:.empty-hint",
-    "color-contrast:div:nth-child(1) > .eyebrow",
-    "color-contrast:div:nth-child(2) > .eyebrow",
-    "color-contrast:div:nth-child(2) > span:nth-child(2)",
-    "color-contrast:div:nth-child(2) > span[dir=\"ltr\"]",
-    "color-contrast:div:nth-child(3) > .eyebrow",
-    "color-contrast:div:nth-child(4) > .eyebrow"
-  ],
-  "project:settings": [
-    "color-contrast:.brand-tagline",
-    "color-contrast:.card-body-flush > div:nth-child(1)",
-    "color-contrast:.empty-hint",
-    "color-contrast:div:nth-child(1) > .eyebrow",
-    "color-contrast:div:nth-child(2) > .eyebrow",
-    "color-contrast:div:nth-child(3) > .eyebrow",
-    "color-contrast:div:nth-child(4) > .eyebrow"
-  ],
-  "projects": [
-    "color-contrast:.brand-tagline",
-    "color-contrast:.empty-hint"
-  ],
-  "register": [
-    "color-contrast:.brand-tagline",
-    "color-contrast:.field-hint"
-  ]
+  "login": [],
+  "project:endpoints": [],
+  "project:environments": [],
+  "project:generate": [],
+  "project:integrations": [],
+  "project:matrix": [],
+  "project:overview": [],
+  "project:reference": [],
+  "project:requirements": [],
+  "project:review": [],
+  "project:runs": [],
+  "project:settings": [],
+  "projects": [],
+  "register": []
 }

@@ -383,12 +383,12 @@ export default function RequirementsPage() {
           <div style={{ maxWidth: 480, margin: "0 auto", display: "flex", flexDirection: "column", gap: 10 }}>
             <div style={{ fontSize: 14, color: "var(--text)" }}>{job.msg}</div>
             <Progress pct={job.pct} tone="accent" testId="requirements-upload-progress" />
-            <M style={{ color: "var(--text-muted)" }}>{job.pct}%</M>
+            <M style={{ color: "var(--text-secondary)" }}>{job.pct}%</M>
           </div>
         ) : (
           <>
             <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text)" }}>{L.dropTitle}</div>
-            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 6 }}>
               <M>{L.dropHint}</M>
             </div>
           </>
@@ -438,7 +438,7 @@ export default function RequirementsPage() {
         action={
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <Input placeholder={L.search} value={q} onChange={(e: any) => setQ(e.target.value)} testId="requirements-search-input" />
-            <Select value={typeF} onChange={(e: any) => setTypeF(e.target.value)} testId="requirements-type-select">
+            <Select value={typeF} onChange={(e: any) => setTypeF(e.target.value)} testId="requirements-type-select" aria-label="filter by type">
               <option value="">{L.anyType}</option>
               {typeOptions.map((t) => (
                 <option key={t} value={t}>
@@ -446,7 +446,7 @@ export default function RequirementsPage() {
                 </option>
               ))}
             </Select>
-            <Select value={prioF} onChange={(e: any) => setPrioF(e.target.value)} testId="requirements-priority-select">
+            <Select value={prioF} onChange={(e: any) => setPrioF(e.target.value)} testId="requirements-priority-select" aria-label="filter by priority">
               <option value="">{L.anyPriority}</option>
               {prioOptions.map((p) => (
                 <option key={p} value={p}>
@@ -478,7 +478,7 @@ export default function RequirementsPage() {
         </div>
 
         {loading ? (
-          <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 13 }}>…</div>
+          <div style={{ padding: 24, color: "var(--text-secondary)", fontSize: 13 }}>…</div>
         ) : error ? (
           <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-start" }}>
             <div style={{ color: "var(--error)", fontSize: 13 }}>
@@ -538,7 +538,7 @@ export default function RequirementsPage() {
                         </Badge>
                       )}
                       {Array.isArray(r.acceptance_criteria) && r.acceptance_criteria.length > 0 && (
-                        <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                        <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
                           {r.acceptance_criteria.length} {L.criteria}
                         </span>
                       )}
@@ -550,7 +550,7 @@ export default function RequirementsPage() {
                         fontSize: 11,
                         textTransform: "uppercase",
                         letterSpacing: "0.08em",
-                        color: "var(--text-muted)",
+                        color: "var(--text-secondary)",
                         marginBottom: 6,
                       }}
                     >

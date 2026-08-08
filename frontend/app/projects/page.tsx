@@ -186,7 +186,7 @@ export default function ProjectsPage() {
       {error && <div className="error-text" data-testid="projects-page-error-text">{error}</div>}
 
       {loading ? (
-        <div style={{ color: "var(--text-muted)", fontSize: 13 }}>{L.loading}</div>
+        <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>{L.loading}</div>
       ) : projects.length === 0 ? (
         <Empty title={L.empty} hint={L.emptyHint} testId="projects-empty-state" />
       ) : (
@@ -226,7 +226,7 @@ export default function ProjectsPage() {
                 )}
               </div>
               {p.created_at && (
-                <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
+                <div style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>
                   {L.createdAt} <Mono style={{ fontSize: 11 }}>{p.created_at.slice(0, 10)}</Mono>
                 </div>
               )}

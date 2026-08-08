@@ -243,7 +243,7 @@ export default function ProjectDashboardPage() {
           </div>
         </Card>
       ) : loading || !dash ? (
-        <div style={{ color: "var(--text-muted)", fontSize: 13 }}>{L.loading}</div>
+        <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>{L.loading}</div>
       ) : (
         <>
           {/* KPI row — v2 */}
@@ -290,7 +290,7 @@ export default function ProjectDashboardPage() {
               {trend.length > 0 ? (
                 <TrendBars data={trend} height={130} testId="dashboard-coverage-trendbars" />
               ) : (
-                <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{L.noRuns}</div>
+                <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>{L.noRuns}</div>
               )}
             </Card>
             <Card title={L.latestRun} testId="dashboard-latest-run-card">
@@ -305,7 +305,7 @@ export default function ProjectDashboardPage() {
                   <div className="stack" style={{ gap: 8 }}>
                     <div className="row" style={{ gap: 8 }}>
                       <Badge tone={stateTone(run.state)} testId="dashboard-latest-run-state-badge" state={run.state}>{run.state}</Badge>
-                      <Mono style={{ fontSize: 11, color: "var(--text-muted)" }}>{runLabel}</Mono>
+                      <Mono style={{ fontSize: 11, color: "var(--text-secondary)" }}>{runLabel}</Mono>
                     </div>
                     <div style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>
                       <span style={{ color: "var(--success)" }}>{counts.passed ?? 0} {L.passed}</span>
@@ -320,7 +320,7 @@ export default function ProjectDashboardPage() {
                   </div>
                 </div>
               ) : (
-                <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{L.noRuns}</div>
+                <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>{L.noRuns}</div>
               )}
             </Card>
           </div>
@@ -403,7 +403,7 @@ export default function ProjectDashboardPage() {
                         )}
                       </div>
                       {g.next_action && (
-                        <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 4 }}>
+                        <div style={{ fontSize: 11.5, color: "var(--text-secondary)", marginTop: 4 }}>
                           {g.next_action}
                         </div>
                       )}

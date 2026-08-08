@@ -229,7 +229,7 @@ function GenerateInner() {
             </div>
 
             {loading ? (
-              <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 13 }}>…</div>
+              <div style={{ padding: 24, color: "var(--text-secondary)", fontSize: 13 }}>…</div>
             ) : error ? (
               <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-start" }}>
                 <div style={{ color: "var(--error)", fontSize: 13 }}>
@@ -359,7 +359,7 @@ function GenerateInner() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   <div style={{ fontSize: 13, color: "var(--text)" }}>{job.msg}</div>
                   <Progress pct={job.pct} tone="accent" testId="generate-job-progress" />
-                  <M style={{ color: "var(--text-muted)" }}>{job.pct}%</M>
+                  <M style={{ color: "var(--text-secondary)" }}>{job.pct}%</M>
                 </div>
               ) : (
                 canDo("generate") && (
@@ -417,7 +417,7 @@ function GenerateInner() {
                           {reasonLabel ?? <bdi style={{ whiteSpace: "nowrap" }}>{u.reason}</bdi>}
                         </span>
                         {u.next_action && (
-                          <span dir="auto" style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                          <span dir="auto" style={{ fontSize: 11, color: "var(--text-secondary)" }}>
                             {u.next_action}
                           </span>
                         )}

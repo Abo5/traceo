@@ -124,7 +124,7 @@ export default function AuditPage() {
       {error && <div className="error-text" data-testid="audit-error-text">{error}</div>}
 
       {loading ? (
-        <div style={{ color: "var(--text-muted)", fontSize: 13 }}>{L.loading}</div>
+        <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>{L.loading}</div>
       ) : items.length === 0 ? (
         <Empty title={L.empty} hint={L.emptyHint} testId="audit-empty-state" />
       ) : (
@@ -139,7 +139,7 @@ export default function AuditPage() {
                     </Mono>
                   </td>
                   <td>
-                    <Mono style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
+                    <Mono style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>
                       {e.actor_id ? e.actor_id.slice(0, 8) : "—"}
                     </Mono>
                   </td>
@@ -158,7 +158,7 @@ export default function AuditPage() {
                     <Mono
                       style={{
                         fontSize: 11,
-                        color: "var(--text-muted)",
+                        color: "var(--text-secondary)",
                         display: "block",
                         overflow: "hidden",
                         textOverflow: "ellipsis",

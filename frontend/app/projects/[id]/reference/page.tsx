@@ -126,7 +126,7 @@ export default function ReferencePage() {
       <PageHeader title={L.title} sub={L.sub} testId="reference-page-header" />
 
       {loading ? (
-        <div style={{ color: "var(--text-muted)", fontSize: 13 }}>{L.loading}</div>
+        <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>{L.loading}</div>
       ) : error ? (
         <div className="row" style={{ gap: 10 }}>
           <span className="error-text" style={{ fontSize: 13 }}>
@@ -139,7 +139,7 @@ export default function ReferencePage() {
       ) : (
         <>
           {/* counts summary */}
-          <div className="mono" dir="ltr" style={{ fontSize: 12, color: "var(--text-muted)", textAlign: ar ? "right" : "left" }}>
+          <div className="mono" dir="ltr" style={{ fontSize: 12, color: "var(--text-secondary)", textAlign: ar ? "right" : "left" }}>
             <span style={{ color: "var(--text)" }}>{features.length}</span> {L.features} ·{" "}
             <span style={{ color: "var(--success)" }}>{builtCount}</span> {L.built} ·{" "}
             <span style={{ color: "var(--text-secondary)" }}>{plannedCount}</span> {L.planned} ·{" "}

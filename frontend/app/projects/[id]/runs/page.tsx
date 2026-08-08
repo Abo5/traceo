@@ -272,7 +272,7 @@ export default function RunsPage() {
     [L.passed, counts.passed ?? 0, "var(--success)"],
     [L.failed, counts.failed ?? 0, "var(--error)"],
     [L.errored, counts.errored ?? 0, "var(--warning)"],
-    [L.skipped, counts.skipped ?? 0, "var(--text-muted)"],
+    [L.skipped, counts.skipped ?? 0, "var(--text-secondary)"],
   ];
 
   return (
@@ -293,7 +293,7 @@ export default function RunsPage() {
       {/* Launch card */}
       <Card title={L.launch}>
         {loading ? (
-          <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 13 }}>…</div>
+          <div style={{ padding: 24, color: "var(--text-secondary)", fontSize: 13 }}>…</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {/* 01 · target */}
@@ -316,7 +316,7 @@ export default function RunsPage() {
                   </div>
                   {envId && (
                     <div style={{ paddingBottom: 12 }}>
-                      <M style={{ fontSize: 12, color: "var(--text-muted)", overflowWrap: "anywhere" }}>
+                      <M style={{ fontSize: 12, color: "var(--text-secondary)", overflowWrap: "anywhere" }}>
                         {envs.find((e) => e.id === envId)?.base_url ?? ""}
                       </M>
                     </div>
@@ -327,7 +327,9 @@ export default function RunsPage() {
 
             {/* 02 · scope */}
             <div style={{ display: "flex", gap: 14, alignItems: "flex-start", borderTop: "1px solid var(--border)", paddingTop: 14 }}>
-              <NumberedChip n="02" color="#9B6BFF" />
+              {/* --c-blue, not --c-violet: violet on its 16% mix is 3.97:1 —
+                  fails WCAG AA 4.5:1 (axe color-contrast, @a11y delta gate) */}
+              <NumberedChip n="02" color="#4D9DFF" />
               <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{L.step2}</div>
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
@@ -378,7 +380,7 @@ export default function RunsPage() {
                       </span>
                     ))}
                   </span>
-                  <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{L.rulesHint}</span>
+                  <span style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>{L.rulesHint}</span>
                 </div>
               </div>
             </div>
@@ -416,7 +418,7 @@ export default function RunsPage() {
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{L.live}</span>
-                  <M style={{ color: "var(--text-muted)" }}>{shortId(liveRunId)}</M>
+                  <M style={{ color: "var(--text-secondary)" }}>{shortId(liveRunId)}</M>
                   <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
                     <StatusDot state={live.state} testId="runs-live-status-dot" />
                     <Badge tone={stateTone(live.state)} testId="runs-live-state-badge" state={live.state}>{stateLabel(live.state)}</Badge>
@@ -465,7 +467,7 @@ export default function RunsPage() {
       {/* History */}
       <Card title={L.history} pad={false}>
         {loading ? (
-          <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 13 }}>…</div>
+          <div style={{ padding: 24, color: "var(--text-secondary)", fontSize: 13 }}>…</div>
         ) : runs.length === 0 ? (
           <Empty title={L.noRuns} hint={L.noRunsHint} testId="runs-empty-state" />
         ) : (
@@ -513,7 +515,7 @@ export default function RunsPage() {
       {/* Subset modal */}
       <Modal open={subsetOpen} onClose={() => setSubsetOpen(false)} title={L.subsetTitle} testId="runs-subset-modal">
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{L.subsetHint}</div>
+          <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{L.subsetHint}</div>
           <Input placeholder={L.search} testId="runs-subset-search-input" value={subsetQ} onChange={(e: any) => setSubsetQ(e.target.value)} />
           <div style={{ maxHeight: "40vh", overflowY: "auto", border: "1px solid var(--border)", borderRadius: 10 }}>
             {subsetFiltered.map((c, i) => (
@@ -545,7 +547,7 @@ export default function RunsPage() {
               </label>
             ))}
             {subsetFiltered.length === 0 && (
-              <div style={{ padding: 16, fontSize: 13, color: "var(--text-muted)" }}>—</div>
+              <div style={{ padding: 16, fontSize: 13, color: "var(--text-secondary)" }}>—</div>
             )}
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>

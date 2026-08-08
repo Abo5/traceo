@@ -181,7 +181,7 @@ export default function MatrixPage() {
       {exportError && <div style={{ fontSize: 13, color: "var(--error)" }}>{exportError}</div>}
 
       {loading ? (
-        <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 13 }}>…</div>
+        <div style={{ padding: 24, color: "var(--text-secondary)", fontSize: 13 }}>…</div>
       ) : error ? (
         <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-start" }}>
           <div style={{ color: "var(--error)", fontSize: 13 }}>
@@ -260,7 +260,7 @@ export default function MatrixPage() {
                         </div>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8, alignItems: "center" }}>
                           {cases.length === 0 ? (
-                            <span style={{ fontSize: 11, color: "var(--text-muted)" }}>—</span>
+                            <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>—</span>
                           ) : (
                             cases.map((c: any, j: number) => (
                               <Link
@@ -308,7 +308,7 @@ export default function MatrixPage() {
                         <div style={{ width: "100%" }}>
                           <Progress pct={pct} tone={row.status === "failing" ? "error" : row.status === "passing" ? "success" : undefined} testId="matrix-row-progress" />
                         </div>
-                        <M style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                        <M style={{ fontSize: 10, color: "var(--text-secondary)" }}>
                           {passed}/{cases.length} {L.cases}
                         </M>
                       </div>
@@ -353,7 +353,7 @@ export default function MatrixPage() {
                       </span>
                     </div>
                     {g.next_action && (
-                      <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{g.next_action}</div>
+                      <div style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>{g.next_action}</div>
                     )}
                     {canDo("generate") && (
                       <div>

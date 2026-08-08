@@ -406,9 +406,9 @@ export default function IntegrationsPage() {
           }
         >
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{L.whSub}</div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{L.whSub}</div>
             {whLoading ? (
-              <div style={{ color: "var(--text-muted)", fontSize: 13, padding: 8 }}>{L.loading}</div>
+              <div style={{ color: "var(--text-secondary)", fontSize: 13, padding: 8 }}>{L.loading}</div>
             ) : whError ? (
               <div className="row" style={{ gap: 10 }}>
                 <span className="error-text" style={{ fontSize: 13 }}>
@@ -467,7 +467,7 @@ export default function IntegrationsPage() {
                     </Mono>
                     <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                       {w.last_fired_at && (
-                        <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                        <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
                           {L.lastFired} <DateTimeText value={w.last_fired_at} style={{ color: "var(--text-secondary)" }} />
                         </span>
                       )}
@@ -482,7 +482,7 @@ export default function IntegrationsPage() {
                 );
               })
             )}
-            <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{L.whSlackHint}</div>
+            <div style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>{L.whSlackHint}</div>
           </div>
         </Card>
 
@@ -495,7 +495,7 @@ export default function IntegrationsPage() {
           }
         >
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{L.gateSub}</div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{L.gateSub}</div>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
               <div style={{ width: 160 }}>
                 <Field label={L.minCoverage}>
@@ -556,7 +556,7 @@ export default function IntegrationsPage() {
                     </span>
                   )}
                   {gate.latest_run?.display_id !== undefined && (
-                    <Mono style={{ fontSize: 11, color: "var(--text-muted)" }}>#{gate.latest_run.display_id}</Mono>
+                    <Mono style={{ fontSize: 11, color: "var(--text-secondary)" }}>#{gate.latest_run.display_id}</Mono>
                   )}
                 </div>
                 {!gate.pass &&
@@ -593,7 +593,7 @@ export default function IntegrationsPage() {
                   ))}
               </div>
             ) : gateLoading ? (
-              <div style={{ color: "var(--text-muted)", fontSize: 13 }}>{L.loading}</div>
+              <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>{L.loading}</div>
             ) : null}
 
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -602,7 +602,7 @@ export default function IntegrationsPage() {
               </div>
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                 <CopyButton text={curl} label={L.copy} copied={L.copied} />
-                <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{L.curlHint}</span>
+                <span style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>{L.curlHint}</span>
               </div>
             </div>
           </div>
@@ -617,7 +617,7 @@ export default function IntegrationsPage() {
           }
         >
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{L.xraySub}</div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{L.xraySub}</div>
             {runsError ? (
               <div className="row" style={{ gap: 10 }}>
                 <span className="error-text" style={{ fontSize: 13 }}>
@@ -660,21 +660,19 @@ export default function IntegrationsPage() {
         <div style={{ display: "grid", gap: 16 }}>
           <Card
             title={
-              <span style={{ display: "inline-flex", gap: 8, alignItems: "center", color: "var(--text-muted)" }}>
+              <span style={{ display: "inline-flex", gap: 8, alignItems: "center", color: "var(--text-secondary)" }}>
                 {L.confluenceTitle} <RefChip id="FR-011" />
               </span>
             }
             action={<Badge tone="muted">{L.soon}</Badge>}
-            style={{ opacity: 0.65 }}
           >
-            <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>{L.confluenceSub}</div>
+            <div style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>{L.confluenceSub}</div>
           </Card>
           <Card
-            title={<span style={{ color: "var(--text-muted)" }}>{L.jiraSyncTitle}</span>}
+            title={<span style={{ color: "var(--text-secondary)" }}>{L.jiraSyncTitle}</span>}
             action={<Badge tone="muted">{L.soon}</Badge>}
-            style={{ opacity: 0.65 }}
           >
-            <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>{L.jiraSyncSub}</div>
+            <div style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>{L.jiraSyncSub}</div>
           </Card>
         </div>
       </div>

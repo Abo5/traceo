@@ -337,7 +337,7 @@ export default function EndpointsPage() {
 
       <Card title={`${L.inventory}${eps.length ? ` (${eps.length})` : ""}`} pad={false} testId="endpoints-inventory-card">
         {loading ? (
-          <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 13 }}>…</div>
+          <div style={{ padding: 24, color: "var(--text-secondary)", fontSize: 13 }}>…</div>
         ) : error ? (
           <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-start" }}>
             <div style={{ color: "var(--error)", fontSize: 13 }}>
@@ -391,7 +391,7 @@ export default function EndpointsPage() {
                   </td>
                   <td style={{ minWidth: 90 }}>
                     {covPct == null ? (
-                      <span style={{ color: "var(--text-muted)" }}>—</span>
+                      <span style={{ color: "var(--text-secondary)" }}>—</span>
                     ) : (
                       <div className="row" style={{ gap: 6, alignItems: "center" }}>
                         <div style={{ width: 52 }}>
@@ -408,7 +408,7 @@ export default function EndpointsPage() {
                         <M style={{ fontSize: 10.5 }}>{ep.last_outcome}</M>
                       </span>
                     ) : (
-                      <span style={{ color: "var(--text-muted)" }}>—</span>
+                      <span style={{ color: "var(--text-secondary)" }}>—</span>
                     )}
                   </td>
                   <td>
