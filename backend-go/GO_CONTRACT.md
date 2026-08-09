@@ -40,6 +40,9 @@ httpx.User(c) *models.User
 httpx.ProjectScoped(c, projectID) (*models.Project, bool)  // org check; writes 404 + returns false
 httpx.Audit(orgID, actorID, action, objType, objID string, detail models.JSONMap)
 jobs.Submit(kind string, fn func(j *jobs.Job) (any, error)) *jobs.Job
+jobs.SubmitForProject(kind, projectID, fn) *jobs.Job   // tracked for the autopilot guard
+jobs.TrySubmitForProject(kind, projectID, fn) (*jobs.Job, bool) // atomic double-trigger guard
+jobs.ActiveForProject(kind, projectID) bool            // queued/running job of kind for project?
 jobs.Get(id string) *jobs.Job             // Job{ID,Kind,Status,Progress,Message,Result,Error,CreatedAt}
 llm.Get().CompleteJSON(promptID, prompt string, schema map[string]any) (llm.Result, error)
 ```
@@ -83,10 +86,40 @@ Timestamps: RFC3339 UTC. IDs: uuid v4 strings. JSON tags snake_case on every res
   CI gate (+?exit=1→412), webhooks CRUD+test+FireWebhooks (HMAC, Slack text payload),
   xray.json + defects.csv (BOM), schedules CRUD + goroutine ticker scheduler, org export
 - **reference**: GET /reference/features static catalog (37 features)
+- **autopilot** (no routes — hooks called by ingestion/discovery): the v2 automation chain
+
+## Automation addendum (fixed contract — parity with the Python backend is mandatory)
+
+1. `POST /v1/projects` body: `name` (required), `language` OPTIONAL (`"ar"|"en"`; omitted/null
+   => auto-detect later), `automation` OPTIONAL (`"auto"|"manual"`, default `"auto"`).
+   Existing clients sending `language` keep working.
+2. `Project.language` is NULLABLE in the DB and API responses (null until detected).
+   `Project.automation` is NOT NULL, default `"auto"`. `PATCH /v1/projects/{id}` accepts both
+   fields — freedom to override anytime.
+3. Language auto-detection (deterministic, offline, NO LLM — `autopilot.DetectLanguage`):
+   when a document parse job succeeds and `project.language` is null, count Arabic-block
+   chars (U+0600–U+06FF) vs total alphabetic chars in the parsed text; ratio >= 0.25 =>
+   `"ar"` else `"en"`; persist on the project. Runs regardless of the automation mode.
+4. Autopilot chain — ONLY when `project.automation == "auto"`:
+   a. after a successful document parse: language detection (3), then confirm ALL of the
+      project's requirements currently in state `"extracted"`, then (b);
+   b. generation auto-trigger (also after a successful api-spec import): >= 1 included
+      endpoint AND >= 1 confirmed requirement AND no generation job for the project
+      queued/running (`jobs.TrySubmitForProject("generate", projectID, ...)` is the atomic
+      guard — manual generate jobs count too) => enqueue a standard-depth generation job
+      over all confirmed requirements (`generation.Run` with nil requirement ids);
+   c. approval and runs stay MANUAL — auto stops at draft cases ready for review (BO-07);
+   d. every auto step writes an AuditEntry with an `auto.`-prefixed action
+      (`auto.language.detect`, `auto.requirements.confirm_all`, `auto.generate`),
+      attributed to the user whose upload/import initiated the chain.
+5. All pre-existing manual endpoints keep working unchanged (confirm_all, generate, …) —
+   automation adds defaults, removes nothing.
 
 ## Quality gates
 backend-go/tests as Go tests (httptest against a fresh in-memory app+temp sqlite):
 grounding gate (adversarial fixtures — zero fabricated identifiers persisted), tenant
 isolation (org B gets 404/empty on all org A resources), e2e flow (register→project→upload
-md→confirm→import spec→generate→approve→matrix+xlsx), integrations (api key auth, gate).
+md→confirm→import spec→generate→approve→matrix+xlsx), integrations (api key auth, gate),
+autopilot (nullable language + automation defaults, detection rule, auto chain to draft
+cases, manual-mode opt-out, preset language kept, double-trigger guard).
 `go vet ./...` clean; `go build ./...` clean; `go test ./...` green.

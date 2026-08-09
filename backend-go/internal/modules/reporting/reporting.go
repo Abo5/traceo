@@ -426,7 +426,7 @@ func exportMatrix(c *gin.Context) {
 	if !ok {
 		return
 	}
-	rtl := project.Language == "ar"
+	rtl := project.Language != nil && *project.Language == "ar"
 
 	var reqs []models.Requirement
 	db.DB.Where("project_id = ? AND organisation_id = ? AND state != ?",

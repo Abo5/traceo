@@ -51,7 +51,12 @@ func isoPtr(t *time.Time) any {
 }
 
 func projectPayload(p *models.Project) gin.H {
-	return gin.H{"id": p.ID, "name": p.Name, "language": p.Language, "status": p.Status,
+	var language any // null until set or auto-detected (automation addendum)
+	if p.Language != nil {
+		language = *p.Language
+	}
+	return gin.H{"id": p.ID, "name": p.Name, "language": language,
+		"automation": p.Automation, "status": p.Status,
 		"created_at": iso(p.CreatedAt), "updated_at": iso(p.UpdatedAt)}
 }
 
@@ -113,6 +118,15 @@ func validLanguage(c *gin.Context, lang string) bool {
 	return false
 }
 
+func validAutomation(c *gin.Context, automation string) bool {
+	if automation == "auto" || automation == "manual" {
+		return true
+	}
+	httpx.Err(c, http.StatusUnprocessableEntity, "invalid_automation",
+		"Automation must be 'auto' or 'manual'")
+	return false
+}
+
 func cfgStr(m map[string]any, k string) string {
 	s, _ := m[k].(string)
 	return s
@@ -142,8 +156,9 @@ func Register(r *gin.RouterGroup) {
 func createProject(c *gin.Context) {
 	u := httpx.User(c)
 	var body struct {
-		Name     string  `json:"name"`
-		Language *string `json:"language"`
+		Name       string  `json:"name"`
+		Language   *string `json:"language"`   // optional; omitted/null => auto-detect later
+		Automation *string `json:"automation"` // optional; "auto" (default) | "manual"
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		httpx.Err(c, http.StatusUnprocessableEntity, "validation_error", "Invalid request body")
@@ -153,15 +168,22 @@ func createProject(c *gin.Context) {
 		httpx.Err(c, http.StatusUnprocessableEntity, "validation_error", "Invalid field length")
 		return
 	}
-	language := "en"
+	var language *string
 	if body.Language != nil {
-		language = *body.Language
+		if !validLanguage(c, *body.Language) {
+			return
+		}
+		language = body.Language
 	}
-	if !validLanguage(c, language) {
+	automation := "auto"
+	if body.Automation != nil {
+		automation = *body.Automation
+	}
+	if !validAutomation(c, automation) {
 		return
 	}
 	project := models.Project{OrganisationID: u.OrganisationID,
-		Name: strings.TrimSpace(body.Name), Language: language}
+		Name: strings.TrimSpace(body.Name), Language: language, Automation: automation}
 	if err := db.DB.Create(&project).Error; err != nil {
 		httpx.Err(c, http.StatusInternalServerError, "internal_error", "Could not create project")
 		return
@@ -197,9 +219,10 @@ func getProject(c *gin.Context) {
 func updateProject(c *gin.Context) {
 	u := httpx.User(c)
 	var body struct {
-		Name     *string `json:"name"`
-		Language *string `json:"language"`
-		Status   *string `json:"status"`
+		Name       *string `json:"name"`
+		Language   *string `json:"language"`
+		Automation *string `json:"automation"`
+		Status     *string `json:"status"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		httpx.Err(c, http.StatusUnprocessableEntity, "validation_error", "Invalid request body")
@@ -223,8 +246,19 @@ func updateProject(c *gin.Context) {
 		if !validLanguage(c, *body.Language) {
 			return
 		}
-		changes["language"] = map[string]any{"from": project.Language, "to": *body.Language}
-		project.Language = *body.Language
+		var from any // null when never set/detected
+		if project.Language != nil {
+			from = *project.Language
+		}
+		changes["language"] = map[string]any{"from": from, "to": *body.Language}
+		project.Language = body.Language // free override anytime (automation addendum)
+	}
+	if body.Automation != nil {
+		if !validAutomation(c, *body.Automation) {
+			return
+		}
+		changes["automation"] = map[string]any{"from": project.Automation, "to": *body.Automation}
+		project.Automation = *body.Automation
 	}
 	if body.Status != nil {
 		if *body.Status != "active" && *body.Status != "archived" {

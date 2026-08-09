@@ -12,7 +12,8 @@ import { api } from "@/lib/api";
 export type ProjectInfo = {
   id: string;
   name: string;
-  language: "ar" | "en" | string;
+  language: "ar" | "en" | string | null;
+  automation?: "auto" | "manual" | string;
   status: string;
   created_at?: string | null;
   updated_at?: string | null;

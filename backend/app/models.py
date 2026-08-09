@@ -41,7 +41,14 @@ class Project(TimestampMixin, Base):
     __tablename__ = "projects"
     organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
-    language: Mapped[str] = mapped_column(String(5), default="en")  # primary requirements language
+    # Primary requirements language. NULL until set explicitly or auto-detected
+    # from the first successfully parsed document (deterministic, offline).
+    language: Mapped[str | None] = mapped_column(String(5), nullable=True)  # ar|en|null
+    # Autopilot mode: "auto" chains parse -> language detect -> confirm_all ->
+    # generate; "manual" leaves every step to the user. Approval/runs stay
+    # manual either way (BO-07).
+    automation: Mapped[str] = mapped_column(String(10), default="auto",
+                                            server_default="auto")  # auto|manual
     status: Mapped[str] = mapped_column(String(20), default="active")  # active|archived
 
 

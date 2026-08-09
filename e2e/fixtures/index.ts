@@ -57,7 +57,9 @@ export const test = base.extend<TraceoFixtures, TraceoWorkerFixtures>({
   asViewer: async ({ browser }, use) => rolePage(browser, 'viewer', use),
 
   project: async ({ api }, use) => {
-    // manage_projects requires admin|qa_lead (backend/app/security.py)
+    // manage_projects requires admin|qa_lead (backend/app/security.py).
+    // projectFactory pins automation:"manual" so the autopilot never races the
+    // explicit API arrangement below (see test-data/project.factory.ts).
     const project = await api.as('qa_lead').projects.create(projectFactory());
     await use(project); // no teardown — the org is isolated and disposable
   },

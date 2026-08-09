@@ -828,6 +828,41 @@ def _run_generation(job, org_id: str, user_id: str, project_id: str,
         db.close()
 
 
+def try_autopilot_generation(db: Session, org_id: str, actor_id: str,
+                             project_id: str) -> str | None:
+    """Autopilot generation trigger (contract 4b) — callers have already checked
+    project.automation == "auto".
+
+    Enqueues a standard-depth generation job over ALL confirmed requirements when
+    the project has >= 1 included endpoint, >= 1 confirmed requirement, and no
+    generation job for this project is currently queued/running. Returns the job
+    id, or None when a precondition fails. Runs the exact same job body as the
+    manual POST /projects/{id}/generate route. Approval stays manual (BO-07)."""
+    has_endpoint = db.query(Endpoint.id).filter(
+        Endpoint.project_id == project_id,
+        Endpoint.organisation_id == org_id,
+        Endpoint.excluded == False).first()  # noqa: E712
+    if has_endpoint is None:
+        return None
+    has_confirmed = db.query(Requirement.id).filter(
+        Requirement.project_id == project_id,
+        Requirement.organisation_id == org_id,
+        Requirement.state == "confirmed").first()
+    if has_confirmed is None:
+        return None
+    if jobstore.has_active("generate", project_id):
+        return None  # double-trigger guard
+
+    audit(db, org_id, actor_id, "auto.generate", "project", project_id,
+          {"depth": "standard"})
+    db.commit()
+    job = jobstore.submit(
+        "generate",
+        lambda job: _run_generation(job, org_id, actor_id, project_id, None, "standard"),
+        project_id=project_id)
+    return job.id
+
+
 class GenerateRequest(BaseModel):
     requirement_ids: list[str] | None = None
     depth: str = "standard"
@@ -846,5 +881,6 @@ def start_generation(project_id: str, body: GenerateRequest,
     depth = body.depth
     job = jobstore.submit(
         "generate",
-        lambda job: _run_generation(job, org_id, user_id, project_id, requirement_ids, depth))
+        lambda job: _run_generation(job, org_id, user_id, project_id, requirement_ids, depth),
+        project_id=project_id)
     return {"job_id": job.id}

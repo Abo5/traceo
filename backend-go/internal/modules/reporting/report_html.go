@@ -340,7 +340,7 @@ func runReportHTML(c *gin.Context) {
 	counts := countsOf(run, entries)
 	displayID := runDisplayID(run)
 
-	arabic := hasProject && project.Language == "ar"
+	arabic := hasProject && project.Language != nil && *project.Language == "ar"
 	l := labelsEN
 	dirAttr, langAttr := "ltr", "en"
 	if arabic {

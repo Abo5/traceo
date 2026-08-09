@@ -73,10 +73,19 @@ func startGeneration(c *gin.Context) {
 	if len(body.RequirementIDs) > 0 {
 		requirementIDs = append(requirementIDs, body.RequirementIDs...)
 	}
-	job := jobs.Submit("generate", func(j *jobs.Job) (any, error) {
+	// Registered against the project so the autopilot double-trigger guard
+	// (automation contract 4b) sees manual generation jobs too.
+	job := jobs.SubmitForProject("generate", projectID, func(j *jobs.Job) (any, error) {
 		return runGeneration(j, orgID, userID, projectID, requirementIDs, depth)
 	})
 	c.JSON(http.StatusAccepted, gin.H{"job_id": job.ID})
+}
+
+// Run executes a generation job body synchronously — exported for the autopilot
+// auto-trigger. requirementIDs == nil means all confirmed requirements.
+func Run(job *jobs.Job, orgID, userID, projectID string,
+	requirementIDs []string, depth string) (any, error) {
+	return runGeneration(job, orgID, userID, projectID, requirementIDs, depth)
 }
 
 type dupKey struct {

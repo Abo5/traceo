@@ -30,6 +30,7 @@ import (
 	"traceo/internal/jobs"
 	"traceo/internal/llm"
 	"traceo/internal/models"
+	"traceo/internal/modules/autopilot"
 	"traceo/internal/modules/traceability"
 )
 
@@ -286,6 +287,16 @@ func runIngest(job *jobs.Job, documentID, projectID, orgID, actorID string) (any
 		result[k] = v
 	}
 	httpx.Audit(orgID, &actorID, "document.parsed", "source_document", doc.ID, detail)
+
+	// Autopilot chain (automation contract 3+4a): language detection over the
+	// parsed text, then — auto mode only — confirm extracted requirements and
+	// try the generation trigger. Runs synchronously so the parse job only
+	// reports completed once the chain has fired.
+	texts := make([]string, 0, len(pages))
+	for _, p := range pages {
+		texts = append(texts, p.Text)
+	}
+	autopilot.AfterParse(projectID, orgID, actorID, strings.Join(texts, "\n"))
 	return result, nil
 }
 
@@ -350,10 +361,14 @@ func uploadDocument(c *gin.Context) {
 			projectID, u.OrganisationID, filename).
 		Select("COALESCE(MAX(version), 0)").Scan(&priorMax)
 
+	docLanguage := "en" // project language may still be null (detected post-parse)
+	if project.Language != nil {
+		docLanguage = *project.Language
+	}
 	doc := models.SourceDocument{
 		OrganisationID: u.OrganisationID, ProjectID: projectID,
 		Filename: filename, MimeType: fh.Header.Get("Content-Type"), Size: int64(len(content)),
-		StorageKey: storageKey, Language: project.Language,
+		StorageKey: storageKey, Language: docLanguage,
 		Version: priorMax + 1, ParseStatus: "pending",
 	}
 	if err := db.DB.Create(&doc).Error; err != nil {

@@ -66,7 +66,10 @@ export interface Job {
 export interface Project {
   id: string;
   name: string;
-  language: 'en' | 'ar';
+  /** Nullable — null until auto-detected from the first parsed document (autopilot contract). */
+  language: 'en' | 'ar' | null;
+  /** Autopilot mode — "auto" chains detect→confirm→generate; "manual" changes nothing. */
+  automation: 'auto' | 'manual';
   status: 'active' | 'archived';
   created_at: string | null;
   updated_at: string | null;
@@ -74,7 +77,10 @@ export interface Project {
 
 export interface NewProject {
   name: string;
-  language: 'en' | 'ar';
+  /** Optional — omitted/null lets the backend auto-detect from the first parsed document. */
+  language?: 'en' | 'ar' | null;
+  /** Optional — server default is "auto"; test fixtures pin "manual" (see project.factory.ts). */
+  automation?: 'auto' | 'manual';
 }
 
 export interface Environment {

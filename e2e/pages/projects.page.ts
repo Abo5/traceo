@@ -60,13 +60,16 @@ export class ProjectsPage {
     await this.page.goto(routes.projects);
   }
 
-  /** Open the create modal, fill it, submit, and wait for the dialog to close. */
+  /**
+   * Open the create modal, fill it, submit, and wait for the dialog to close.
+   * The dialog has no language select any more — language is auto-detected from
+   * the first parsed document (autopilot contract).
+   */
   async createProject(project: NewProject): Promise<void> {
     await this.createButton.click();
     const modal = this.createModal;
     await modal.waitUntilOpen();
     await modal.control('projects-create-name-input').fill(project.name);
-    await modal.control('projects-create-language-select').selectOption(project.language);
     await modal.control('projects-create-submit-button').click();
     await modal.waitUntilClosed(); // closes only after the API call succeeds
   }

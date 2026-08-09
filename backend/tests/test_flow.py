@@ -21,7 +21,10 @@ REQ-002: يجب أن يكون عمر العميل بين 18 و120 عاماً ع�
 def test_full_flow_from_document_to_export(client, register_org, create_project,
                                            tmp_path):
     headers = register_org("شركة الجودة")
-    pid = create_project(headers, name="منصة الطلبات", language="ar")
+    # automation=manual: this test walks the MANUAL path end to end — the
+    # autopilot default would auto-confirm/auto-generate ahead of the steps below
+    pid = create_project(headers, name="منصة الطلبات", language="ar",
+                         automation="manual")
 
     # -- 1. upload the requirements document (multipart .md) and wait for the parse job
     doc_path = tmp_path / "requirements_ar.md"

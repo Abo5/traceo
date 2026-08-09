@@ -64,9 +64,11 @@ def register_org(client):
 @pytest.fixture()
 def create_project(client):
     """Returns a callable: create a project for the given auth headers -> project id."""
-    def _create(headers, name="مشروع اختبار", language="ar"):
-        r = client.post("/v1/projects", json={"name": name, "language": language},
-                        headers=headers)
+    def _create(headers, name="مشروع اختبار", language="ar", automation=None):
+        body = {"name": name, "language": language}
+        if automation is not None:
+            body["automation"] = automation
+        r = client.post("/v1/projects", json=body, headers=headers)
         assert r.status_code in (200, 201), f"create project failed: {r.status_code} {r.text}"
         data = r.json()
         pid = data.get("id") or (data.get("project") or {}).get("id")

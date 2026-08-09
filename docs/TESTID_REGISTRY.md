@@ -53,15 +53,14 @@
 | `projects-list-grid` | grid | Cards container |
 | `projects-list-card` | card (repeated) | One project card — identified by project name |
 | `projects-card-open-link` | Link | Project name link to the overview |
-| `projects-card-language-badge` | Badge | Project language (ar/en) |
+| `projects-card-language-badge` | Badge | Project language (ar/en) — `Project.language` is nullable now; rendered only once detected/set |
 | `projects-card-status-badge` | Badge | `data-state="active\|archived"` — shown when archived |
 | `projects-card-open-button` | Button | Open the project |
 | `projects-card-unarchive-button` | Button | Restore an archived project |
 | `projects-card-archive-button` | Button | Archive (opens confirm modal) |
 | `projects-card-delete-button` | Button | Delete (opens confirm modal) |
-| `projects-create-modal` | Modal | Create-project dialog |
+| `projects-create-modal` | Modal | Create-project dialog — no language select any more (language is auto-detected from the first parsed document) |
 | `projects-create-name-input` | Input | New project name |
-| `projects-create-language-select` | Select | New project language (`ar`/`en`) |
 | `projects-create-error-text` | text | Creation failure message |
 | `projects-create-cancel-button` | Button | Close the dialog |
 | `projects-create-submit-button` | Button | Create the project |
@@ -454,6 +453,11 @@
 |---|---|---|
 | `settings-page-root` | container | Project settings page root |
 | `settings-page-header` | PageHeader | Page title + actions |
+| `settings-tab-general-pill` | Pill | Tab: general (language + automation overrides) |
+| `settings-language-select` | Select | Project language override (`ar`/`en`; unset while still null/undetected) |
+| `settings-automation-select` | Select | Automation mode (`auto`/`manual`) — autopilot on/off |
+| `settings-general-save-button` | Button | Save the general settings (PATCH /projects/{id}) |
+| `settings-general-error-text` | text | General-settings save failure message |
 | `settings-tab-keys-pill` | Pill | Tab: API keys |
 | `settings-tab-schedules-pill` | Pill | Tab: schedules |
 | `settings-tab-export-pill` | Pill | Tab: export |

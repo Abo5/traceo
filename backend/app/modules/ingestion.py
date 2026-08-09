@@ -21,7 +21,8 @@ from ..config import settings
 from ..db import SessionLocal, get_db
 from ..deps import audit, get_project_scoped, require
 from ..llm import get_provider
-from ..models import Requirement, RequirementTestCase, SourceDocument, User
+from ..models import Project, Requirement, RequirementTestCase, SourceDocument, User
+from .generation import try_autopilot_generation
 
 router = APIRouter()
 
@@ -60,6 +61,25 @@ _DIGIT_TRANS = {ord(ch): str(i % 10) for i, ch in enumerate(_ARABIC_INDIC + _EXT
 def normalize_digits(text: str) -> str:
     """Normalize Arabic-Indic and Extended Arabic-Indic digits to ASCII (٠-٩/۰-۹ -> 0-9)."""
     return text.translate(_DIGIT_TRANS)
+
+
+ARABIC_RATIO_THRESHOLD = 0.25
+
+
+def detect_language(text: str) -> str:
+    """Deterministic, offline language detection (autopilot contract item 3).
+
+    Counts Arabic-block chars (U+0600–U+06FF) among all alphabetic chars;
+    ratio >= 0.25 => "ar", else "en". No text => "en". Pure function, NO LLM."""
+    arabic = alphabetic = 0
+    for ch in text:
+        if ch.isalpha():
+            alphabetic += 1
+            if "\u0600" <= ch <= "\u06ff":
+                arabic += 1
+    if not alphabetic:
+        return "en"
+    return "ar" if arabic / alphabetic >= ARABIC_RATIO_THRESHOLD else "en"
 
 
 # Requirement-ID openers: REQ-1 / FR-01 / BR_2 / NFR 3 / م-1 / numbered clauses "3.1.2"
@@ -201,6 +221,22 @@ def _structure_segment(provider, segment_text: str) -> dict:
     except (TypeError, ValueError):
         data["confidence"] = 0.5
     return data
+
+
+def confirm_all_extracted(db: Session, org_id: str, project_id: str) -> int:
+    """Flip every 'extracted' requirement to 'confirmed'; returns how many.
+
+    The single code path shared by the manual confirm_all endpoint and the
+    autopilot chain (contract 4a) — auditing is the caller's responsibility
+    because the action name differs (requirement.confirm_all vs
+    auto.requirements.confirm_all)."""
+    reqs = db.query(Requirement).filter(
+        Requirement.project_id == project_id,
+        Requirement.organisation_id == org_id,
+        Requirement.state == "extracted").all()
+    for r in reqs:
+        r.state = "confirmed"
+    return len(reqs)
 
 
 def _mark_stale(db: Session, requirement_id: str) -> None:
@@ -346,8 +382,40 @@ def _run_ingest(job, document_id: str, project_id: str, org_id: str, actor_id: s
         audit(db, org_id, actor_id, "document.parsed", "source_document", doc.id,
               {"filename": doc.filename, "version": doc.version,
                "segments": total, **counts})
+
+        result = {"document_id": doc.id, "segments": total, **counts}
+        # sessions run with autoflush=False — flush so the freshly persisted
+        # requirements are visible to the autopilot chain's queries below
+        db.flush()
+        project = db.get(Project, project_id)
+
+        # -- language auto-detection (contract item 3): unconditional — it fills a
+        #    NULL project.language whenever a parse succeeds, in any automation mode.
+        if project is not None and project.language is None:
+            detected = detect_language("\n".join(text for _page, text in pages))
+            project.language = detected
+            doc.language = detected
+            audit(db, org_id, actor_id, "auto.language.detect", "project", project_id,
+                  {"language": detected, "document_id": doc.id})
+            result["language_detected"] = detected
+
+        # -- autopilot chain (contract 4a): confirm ALL extracted requirements,
+        #    then try the generation trigger (4b). Auto stops at draft cases —
+        #    approval and runs stay manual (BO-07).
+        automation_on = project is not None and project.automation == "auto"
+        if automation_on:
+            job.message = "Autopilot: confirming extracted requirements"
+            confirmed = confirm_all_extracted(db, org_id, project_id)
+            audit(db, org_id, actor_id, "auto.requirements.confirm_all", "project",
+                  project_id, {"count": confirmed})
+            result["auto_confirmed"] = confirmed
         db.commit()
-        return {"document_id": doc.id, "segments": total, **counts}
+
+        if automation_on:
+            gen_job_id = try_autopilot_generation(db, org_id, actor_id, project_id)
+            if gen_job_id:
+                result["generation_job_id"] = gen_job_id
+        return result
     finally:
         db.close()
 
@@ -418,7 +486,7 @@ async def upload_document(project_id: str, file: UploadFile = File(...),
     doc = SourceDocument(
         organisation_id=user.organisation_id, project_id=project_id,
         filename=filename, mime_type=file.content_type or "", size=len(content),
-        storage_key=storage_key, language=project.language,
+        storage_key=storage_key, language=project.language or "",
         version=prior_max + 1, parse_status="pending",
     )
     db.add(doc)
@@ -581,13 +649,8 @@ def confirm_all_requirements(project_id: str,
                              user: User = Depends(require("edit_requirements")),
                              db: Session = Depends(get_db)):
     get_project_scoped(project_id, user, db)
-    reqs = db.query(Requirement).filter(
-        Requirement.project_id == project_id,
-        Requirement.organisation_id == user.organisation_id,
-        Requirement.state == "extracted").all()
-    for r in reqs:
-        r.state = "confirmed"
+    count = confirm_all_extracted(db, user.organisation_id, project_id)
     audit(db, user.organisation_id, user.id, "requirement.confirm_all",
-          "project", project_id, {"count": len(reqs)})
+          "project", project_id, {"count": count})
     db.commit()
-    return {"confirmed": len(reqs)}
+    return {"confirmed": count}

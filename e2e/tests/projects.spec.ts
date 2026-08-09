@@ -13,7 +13,9 @@ test.describe('projects @smoke', () => {
     const name = `e2e-ui-${uniqueSuffix()}`;
 
     await projects.goto();
-    await projects.createProject({ name, language: 'ar' });
+    // No language in the create dialog any more — it is auto-detected later
+    // from the first parsed document (autopilot contract).
+    await projects.createProject({ name });
 
     // Successful create redirects into the new project's overview
     // (frontend/app/projects/page.tsx — router.push after POST succeeds).

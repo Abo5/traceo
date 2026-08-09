@@ -98,8 +98,16 @@ type Project struct {
 	Base
 	OrganisationID string `gorm:"index" json:"organisation_id"`
 	Name           string `json:"name"`
-	Language       string `gorm:"default:en" json:"language"`
-	Status         string `gorm:"default:active" json:"status"` // active|archived
+	// Language is NULL until set explicitly at create/update or auto-detected
+	// from the first successfully parsed document ("ar"|"en") — automation
+	// addendum. No default tag: a nil pointer must persist as NULL, never "en".
+	Language *string `gorm:"size:5" json:"language"`
+	Status   string  `gorm:"default:active" json:"status"` // active|archived
+	// Automation "auto" runs the autopilot chain after parse/import (language
+	// detect -> confirm extracted requirements -> enqueue generation);
+	// "manual" preserves the hand-driven flow. Approval and runs stay manual
+	// either way (BO-07).
+	Automation string `gorm:"not null;default:auto" json:"automation"`
 }
 
 type Environment struct {

@@ -256,9 +256,12 @@ func seedOrgUser(t *testing.T, orgName, role string) (map[string]string, string,
 	return map[string]string{"Authorization": "Bearer " + tok}, org.ID, u.ID
 }
 
+// createProject makes a MANUAL-automation project — the flow/isolation/grounding
+// gates exercise the hand-driven endpoints; autopilot has its own gates.
 func createProject(t *testing.T, headers map[string]string, name, language string) string {
 	t.Helper()
-	w := do(t, "POST", "/v1/projects", M{"name": name, "language": language}, headers)
+	w := do(t, "POST", "/v1/projects",
+		M{"name": name, "language": language, "automation": "manual"}, headers)
 	if w.Code == 200 || w.Code == 201 {
 		data := jsonMap(t, w)
 		if id, _ := data["id"].(string); id != "" {
@@ -278,7 +281,12 @@ func createProject(t *testing.T, headers map[string]string, name, language strin
 // projects module is a stub.
 func seedProject(t *testing.T, orgID, name, language string) string {
 	t.Helper()
-	p := models.Project{OrganisationID: orgID, Name: name, Language: language, Status: "active"}
+	var lang *string
+	if language != "" {
+		lang = &language
+	}
+	p := models.Project{OrganisationID: orgID, Name: name, Language: lang,
+		Status: "active", Automation: "manual"}
 	if err := db.DB.Create(&p).Error; err != nil {
 		t.Fatalf("seed project: %v", err)
 	}

@@ -12,6 +12,7 @@ from typing import Any, Callable
 class Job:
     id: str
     kind: str  # ingest|generate|execute|report
+    project_id: str | None = None  # lets has_active() guard per-project double-triggers
     status: str = "queued"  # queued|running|completed|failed
     progress: float = 0.0
     message: str = ""
@@ -28,8 +29,8 @@ _jobs: dict[str, Job] = {}
 _lock = threading.Lock()
 
 
-def submit(kind: str, fn: Callable[[Job], Any]) -> Job:
-    job = Job(id=str(uuid.uuid4()), kind=kind)
+def submit(kind: str, fn: Callable[[Job], Any], project_id: str | None = None) -> Job:
+    job = Job(id=str(uuid.uuid4()), kind=kind, project_id=project_id)
     with _lock:
         _jobs[job.id] = job
 
@@ -50,3 +51,12 @@ def submit(kind: str, fn: Callable[[Job], Any]) -> Job:
 
 def get(job_id: str) -> Job | None:
     return _jobs.get(job_id)
+
+
+def has_active(kind: str, project_id: str) -> bool:
+    """True when a job of this kind for this project is queued or running —
+    the autopilot generation trigger's double-fire guard (contract 4b)."""
+    with _lock:
+        jobs = list(_jobs.values())
+    return any(j.kind == kind and j.project_id == project_id
+               and j.status in ("queued", "running") for j in jobs)

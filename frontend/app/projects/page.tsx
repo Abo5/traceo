@@ -15,13 +15,12 @@ import {
   Modal,
   Mono,
   PageHeader,
-  Select,
 } from "@/components/ui";
 
 type Project = {
   id: string;
   name: string;
-  language: string;
+  language: string | null;
   status: string;
   created_at?: string | null;
 };
@@ -38,7 +37,6 @@ export default function ProjectsPage() {
         sub: "اختر مشروعًا أو أنشئ واحدًا جديدًا",
         newProject: "مشروع جديد",
         name: "اسم المشروع",
-        language: "لغة المشروع",
         arabic: "العربية",
         english: "الإنجليزية",
         create: "إنشاء",
@@ -64,7 +62,6 @@ export default function ProjectsPage() {
         sub: "Pick a project or create a new one",
         newProject: "New project",
         name: "Project name",
-        language: "Project language",
         arabic: "Arabic",
         english: "English",
         create: "Create",
@@ -92,7 +89,7 @@ export default function ProjectsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", language: "ar" });
+  const [form, setForm] = useState({ name: "" });
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -125,10 +122,10 @@ export default function ProjectsPage() {
     setCreateError(null);
     try {
       const p = await api<Project>("/projects", {
-        body: { name: form.name.trim(), language: form.language },
+        body: { name: form.name.trim() },
       });
       setCreateOpen(false);
-      setForm({ name: "", language: "ar" });
+      setForm({ name: "" });
       router.push(`/projects/${p.id}`);
     } catch (err: any) {
       setCreateError(err?.message || String(err));
@@ -220,7 +217,9 @@ export default function ProjectsPage() {
                 >
                   {p.name}
                 </Link>
-                <Badge tone="accent" testId="projects-card-language-badge">{p.language === "ar" ? L.arabic : L.english}</Badge>
+                {p.language && (
+                  <Badge tone="accent" testId="projects-card-language-badge">{p.language === "ar" ? L.arabic : L.english}</Badge>
+                )}
                 {p.status === "archived" && (
                   <Badge tone="muted" testId="projects-card-status-badge" state={p.status}>{L.archived}</Badge>
                 )}
@@ -275,15 +274,6 @@ export default function ProjectsPage() {
               value={form.name}
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
             />
-          </Field>
-          <Field label={L.language} testId="projects-create-language-select">
-            <Select
-              value={form.language}
-              onChange={(e) => setForm((f) => ({ ...f, language: e.target.value }))}
-            >
-              <option value="ar">{L.arabic}</option>
-              <option value="en">{L.english}</option>
-            </Select>
           </Field>
           {createError && <div className="error-text" data-testid="projects-create-error-text">{createError}</div>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>

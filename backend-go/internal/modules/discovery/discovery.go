@@ -27,6 +27,7 @@ import (
 	"traceo/internal/db"
 	"traceo/internal/httpx"
 	"traceo/internal/models"
+	"traceo/internal/modules/autopilot"
 )
 
 const (
@@ -809,6 +810,10 @@ func importAPISpec(c *gin.Context) {
 	httpx.Audit(u.OrganisationID, &u.ID, "spec.imported", "api_spec", specRow.ID,
 		models.JSONMap{"source": source, "format": format, "version": specRow.Version,
 			"endpoints": len(newByKey), "warnings": len(warnings)})
+
+	// Autopilot generation trigger (automation contract 4b) — auto mode only;
+	// enqueues asynchronously, the import response is unchanged.
+	autopilot.AfterSpecImport(projectID, u.OrganisationID, u.ID)
 
 	c.JSON(http.StatusCreated, gin.H{
 		"spec_id":         specRow.ID,

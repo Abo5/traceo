@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { API, api, getToken } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
 import { useCan } from "@/lib/permissions";
+import { useProject } from "@/lib/project-context";
 import {
   Badge,
   Button,
@@ -69,12 +70,13 @@ async function downloadFile(path: string, filename: string): Promise<void> {
 }
 
 /** Inline toggle (36×20 track per spec §2.21) — ui.tsx has no Toggle. */
-function Toggle({ on, onChange, disabled, testId }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean; testId?: string }) {
+function Toggle({ on, onChange, disabled, testId, ariaLabel }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean; testId?: string; ariaLabel?: string }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={on}
+      aria-label={ariaLabel}
       data-testid={testId}
       disabled={disabled}
       onClick={() => onChange(!on)}
@@ -133,6 +135,7 @@ export default function SettingsPage() {
   const { lang } = useLang();
   const ar = lang === "ar";
   const canDo = useCan();
+  const { project, refresh } = useProject();
 
   const L = ar
     ? {
@@ -144,6 +147,17 @@ export default function SettingsPage() {
         loading: "جارٍ التحميل…",
         retry: "إعادة المحاولة",
         loadError: "تعذّر التحميل",
+        // general
+        generalTitle: "عام",
+        automation: "وضع الأتمتة",
+        automationHint:
+          "تلقائي: تأكيد المتطلبات وتوليد الحالات بعد التحليل — الاعتماد والتشغيل يبقيان يدويين",
+        autoMode: "تلقائي",
+        manualMode: "يدوي",
+        projLanguage: "لغة المشروع",
+        notDetected: "لم تُحدَّد بعد — تُكتشف تلقائيًا",
+        arabicOpt: "العربية",
+        englishOpt: "الإنجليزية",
         // keys
         keysTitle: "مفاتيح API",
         keysSub: "مفاتيح للوصول البرمجي وبوابة CI/CD — تُرسل في الترويسة X-API-Key",
@@ -216,6 +230,16 @@ export default function SettingsPage() {
         loading: "Loading…",
         retry: "Retry",
         loadError: "Failed to load",
+        generalTitle: "General",
+        automation: "Automation mode",
+        automationHint:
+          "Auto: confirm requirements and generate cases after parsing — approval and runs stay manual",
+        autoMode: "Auto",
+        manualMode: "Manual",
+        projLanguage: "Project language",
+        notDetected: "Not detected yet — auto-detected from documents",
+        arabicOpt: "Arabic",
+        englishOpt: "English",
         keysTitle: "API keys",
         keysSub: "Keys for programmatic access and the CI/CD gate — sent as X-API-Key header",
         newKey: "New key",
@@ -307,6 +331,23 @@ export default function SettingsPage() {
   // ---- Export state ----
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+
+  // ---- General (automation + language) state ----
+  const [generalBusy, setGeneralBusy] = useState(false);
+  const [generalError, setGeneralError] = useState<string | null>(null);
+
+  async function patchProject(body: { automation?: string; language?: string }) {
+    setGeneralBusy(true);
+    setGeneralError(null);
+    try {
+      await api(`/projects/${id}`, { method: "PATCH", body });
+      await refresh();
+    } catch (e: any) {
+      setGeneralError(e?.message || String(e));
+    } finally {
+      setGeneralBusy(false);
+    }
+  }
 
   function loadKeys() {
     setKeysLoading(true);
@@ -471,6 +512,53 @@ export default function SettingsPage() {
     <div className="stack" data-testid="settings-page-root">
       <PageHeader title={L.title} sub={L.sub} testId="settings-page-header" />
 
+      {/* ---------- General: automation mode + language override ---------- */}
+      <Card title={L.generalTitle}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 560 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{L.automation}</div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2, lineHeight: 1.6 }}>
+                {L.automationHint}
+              </div>
+            </div>
+            <span style={{ display: "inline-flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+              <Toggle
+                on={(project?.automation ?? "auto") !== "manual"}
+                disabled={generalBusy || !canDo("manage_projects")}
+                onChange={(v) => patchProject({ automation: v ? "auto" : "manual" })}
+                testId="settings-automation-toggle"
+                ariaLabel={L.automation}
+              />
+              <span
+                style={{
+                  fontSize: 12,
+                  color:
+                    (project?.automation ?? "auto") !== "manual" ? "var(--success)" : "var(--text-secondary)",
+                }}
+              >
+                {(project?.automation ?? "auto") !== "manual" ? L.autoMode : L.manualMode}
+              </span>
+            </span>
+          </div>
+          <Field label={L.projLanguage}>
+            <Select
+              testId="settings-language-select"
+              disabled={generalBusy || !canDo("manage_projects")}
+              value={project?.language ?? ""}
+              onChange={(e) => {
+                if (e.target.value) patchProject({ language: e.target.value });
+              }}
+            >
+              {!project?.language && <option value="">{L.notDetected}</option>}
+              <option value="ar">{L.arabicOpt}</option>
+              <option value="en">{L.englishOpt}</option>
+            </Select>
+          </Field>
+          {generalError && <div className="error-text" style={{ fontSize: 13 }}>{generalError}</div>}
+        </div>
+      </Card>
+
       <div className="row" style={{ gap: 6 }}>
         <Pill active={tab === "keys"} testId="settings-tab-keys-pill" onClick={() => setTab("keys")}>
           {L.tabKeys}
@@ -576,7 +664,7 @@ export default function SettingsPage() {
                   <td>
                     <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
                       {canDo("manage_projects") && (
-                        <Toggle on={s.enabled} onChange={(v) => toggleSched(s, v)} testId="settings-schedule-enabled-toggle" />
+                        <Toggle on={s.enabled} onChange={(v) => toggleSched(s, v)} testId="settings-schedule-enabled-toggle" ariaLabel={L.enabled} />
                       )}
                       <span style={{ fontSize: 12, color: s.enabled ? "var(--success)" : "var(--text-secondary)" }}>
                         {s.enabled ? L.enabled : L.disabled}
@@ -780,7 +868,7 @@ export default function SettingsPage() {
           <label
             style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: "var(--text-secondary)", cursor: "pointer" }}
           >
-            <Toggle on={schedForm.enabled} onChange={(v) => setSchedForm((f) => ({ ...f, enabled: v }))} testId="settings-schedule-form-enabled-toggle" />
+            <Toggle on={schedForm.enabled} onChange={(v) => setSchedForm((f) => ({ ...f, enabled: v }))} testId="settings-schedule-form-enabled-toggle" ariaLabel={L.enabled} />
             {L.enabled}
           </label>
           {schedFormError && <div className="error-text" style={{ fontSize: 13 }}>{schedFormError}</div>}

@@ -23,6 +23,7 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from ..db import get_db
 from ..deps import audit, get_project_scoped, require
 from ..models import ApiSpec, Endpoint, TestCase, TestResult, TestStep, User
+from .generation import try_autopilot_generation
 
 router = APIRouter()
 
@@ -318,7 +319,7 @@ def _endpoint_dict(e: Endpoint) -> dict:
 async def import_api_spec(project_id: str, request: Request,
                           user: User = Depends(require("import_spec")),
                           db: Session = Depends(get_db)):
-    get_project_scoped(project_id, user, db)
+    project = get_project_scoped(project_id, user, db)
 
     content_type = (request.headers.get("content-type") or "").lower()
     if content_type.startswith("multipart/"):
@@ -417,6 +418,12 @@ async def import_api_spec(project_id: str, request: Request,
           {"source": source, "format": fmt, "version": spec_row.version,
            "endpoints": len(new_by_key), "warnings": len(warnings)})
     db.commit()
+
+    # Autopilot (contract 4b): a successful spec import may complete the
+    # "endpoints + confirmed requirements" precondition — try the generation
+    # trigger, attributed to the importing user. No-op unless automation=auto.
+    if project.automation == "auto":
+        try_autopilot_generation(db, user.organisation_id, user.id, project_id)
 
     return {
         "spec_id": spec_row.id,

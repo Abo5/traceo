@@ -772,3 +772,22 @@ test.describe('test-case review @smoke @critical', () => {
 - **كل ادعاء عن المستودع مؤسَّس** — الحالات من `models.py`، الأدوار والقدرات من `security.py`، شكل الخطأ والعقد من `API_CONTRACT.md`، مفاتيح localStorage من `frontend/lib/api.ts`، وبوابات الإطلاق من `backend/tests/`. ✓
 
 **Pending:** لا شيء معماريّاً، والمراحل 0–3 مسلَّمة. المؤجَّل الوحيد هو sharding (§13) — قرار مقصود لا دَين: يُفعَّل فقط حين يبرره زمن الحائط.
+
+---
+
+## Addendum — Autopilot (automation) وقرار المصنع manual-by-default
+
+**عقد الـ Autopilot (ملخّص — التفصيل في `backend/API_CONTRACT_V2_ADDENDUM.md`):**
+
+- `POST /v1/projects`: حقل `language` صار **اختيارياً** (`ar`/`en`؛ حذفه/null ⇒ كشف تلقائي لاحقاً)، وأُضيف `automation` (`auto`/`manual`، الافتراضي على الخادم `auto`). حقل `Project.language` صار **nullable** في القاعدة والاستجابات — null حتى يُكتشف. حوار الإنشاء في الواجهة لم يعد يعرض اختيار اللغة (أُزيل `projects-create-language-select` من `docs/TESTID_REGISTRY.md`؛ التحكم اللاحق عبر تبويب general في إعدادات المشروع).
+- **كشف اللغة حتمي وبلا LLM:** عند نجاح job الـ parse ولغة المشروع null — نسبة محارف الكتلة العربية (U+0600–U+06FF) إلى مجموع المحارف الأبجدية ≥ 0.25 ⇒ `ar` وإلا `en`، وتُثبَّت على المشروع.
+- **السلسلة التلقائية (فقط حين `automation == "auto"`):** بعد نجاح الـ parse: كشف اللغة → تأكيد كل المتطلبات `extracted` → إطلاق generation بعمق standard إذا وُجد endpoint مُضمَّن واحد ومتطلب مؤكَّد واحد على الأقل ولا generation job قائم (وينطلق أيضاً بعد استيراد api-spec ناجح). **الاعتماد والتشغيل يبقيان يدويين** — بوابة الإنسان (BO-07) فلسفة منتج: التلقائي يتوقف عند drafts جاهزة للمراجعة.
+- **كل خطوة تلقائية تُدوَّن في AuditEntry** بأفعال تحمل البادئة `auto.` — `auto.language.detect` و`auto.requirements.confirm_all` و`auto.generate` — منسوبةً للمستخدم الذي بدأ السلسلة برفعه/استيراده.
+- كل المسارات اليدوية القائمة (`confirm_all`، `generate`، …) تعمل بلا تغيير — الأتمتة تضيف افتراضات ولا تحذف شيئاً.
+
+**قرار طبقة الاختبار — `projectFactory` يثبّت `automation: "manual"` افتراضياً:**
+
+افتراض الخادم `auto` صحيح للمنتج لكنه **غير حتمي للاختبارات**: الـ fixtures ترتّب الحالة عبر API صراحةً (§8/§9 — `uploadAndConfirm` ثم `generate`)، وعلى مشروع `auto` سيؤكِّد الـ autopilot المتطلبات ويطلق generation **بالتوازي** مع تلك الاستدعاءات الصريحة — سباق يجعل الحالة المرتَّبة (عدد الحالات، من أطلق الـ job، توقيت الحالات) غير قابل للتنبؤ. لذلك:
+
+- `e2e/test-data/project.factory.ts` يبني المشاريع بـ `automation: "manual"` افتراضياً (والتعليل موثَّق في تعليق داخل الملف)، ويحذف `language` افتراضياً مع بديل صريح `projectWithLanguage('ar'|'en')` للمواصفات التي تحتاج حتمية اللغة.
+- المستهلك الوحيد لوضع `auto` هو `e2e/tests/autopilot.spec.ts` (`@critical @regression`): يرفع الوثيقة العربية ويستورد الـ OpenAPI **دون أي `confirm_all` أو `generate`**، ثم عبر `expect.poll`/`JobPoller` (لا sleeps — §16) يثبت ظهور drafts، وكشف `language == "ar"`، ووجود قيود `auto.*` في سجل التدقيق، وظهور الـ drafts على صفحة المراجعة.

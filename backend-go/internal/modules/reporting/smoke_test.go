@@ -39,7 +39,8 @@ func TestSmoke(t *testing.T) {
 	u2 := models.User{OrganisationID: org2.ID, Email: "z@b.c", PasswordHash: h, Role: "admin"}
 	db.DB.Create(&u2)
 
-	p := models.Project{OrganisationID: org.ID, Name: "مشروع", Language: "ar"}
+	lang := "ar"
+	p := models.Project{OrganisationID: org.ID, Name: "مشروع", Language: &lang, Automation: "manual"}
 	db.DB.Create(&p)
 	env := models.Environment{OrganisationID: org.ID, ProjectID: p.ID, Name: "staging"}
 	db.DB.Create(&env)
