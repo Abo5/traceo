@@ -35,8 +35,17 @@ var requirementTypes = map[string]bool{
 // sortedTypesRepr mirrors Python's f"{sorted(REQUIREMENT_TYPES)}" in error messages.
 const sortedTypesRepr = "['business_rule', 'data', 'functional', 'interface', 'non_functional']"
 
+// extractPrompt/extractPromptSuffix frame the uploaded document segment as
+// untrusted DATA (prompt-injection hardening): the segment text is sandwiched
+// between llm.UntrustedOpen/Close after an explicit "data, not instructions"
+// note. The "SEGMENT:\n" sentinel the deterministic mock splits on is unchanged
+// and stays immediately before the text; the mock strips the closing delimiter,
+// so mock output is byte-identical to the unframed prompt.
 const extractPrompt = "Extract the software requirement from this segment. " +
-	"Preserve the original language.\nSEGMENT:\n"
+	"Preserve the original language.\n" + llm.UntrustedNote + llm.UntrustedOpen +
+	"\nSEGMENT:\n"
+
+const extractPromptSuffix = "\n" + llm.UntrustedClose
 
 var extractSchema = map[string]any{
 	"type": "object",
@@ -291,7 +300,8 @@ type extraction struct {
 // structureSegment makes one LLM call per segment. A failing segment degrades to a
 // raw-text requirement with confidence 0.3 — it is never silently dropped.
 func structureSegment(provider llm.Provider, segmentText string) extraction {
-	result, err := provider.CompleteJSON("extract_requirement", extractPrompt+segmentText, extractSchema)
+	result, err := provider.CompleteJSON("extract_requirement",
+		extractPrompt+segmentText+extractPromptSuffix, extractSchema)
 	if err != nil {
 		return extraction{
 			ExternalID:         "",

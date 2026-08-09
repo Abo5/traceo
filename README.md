@@ -7,11 +7,14 @@
 ```mermaid
 flowchart LR
     FE["Next.js RTL :3000"] --> API["FastAPI :8000 /v1"]
-    API --> ENG["5 محركات: تحليل، اكتشاف، توليد + بوابة تحقق، تنفيذ، تتبّع"]
+    API --> ENG["6 محركات: تحليل، اكتشاف، توليد + بوابة تحقق، تنفيذ، تتبّع، رؤى"]
     ENG --> DB[("SQLite / PostgreSQL")]
     ENG --> LLM["LLM Abstraction: mock | Claude | self-hosted"]
+    ENG -.->|"بلا LLM — حتمي ودون اتصال"| INS["وكيل الرؤى: حالات حواف مقيّدة بجرد الواجهات"]
     ENG -->|"HTTP"| SUT["النظام تحت الاختبار :9000"]
 ```
+
+**المحرك السادس — وكيل الرؤى (QA Insight Agent):** يقترح حالات حواف ضمن تسع فئات قانونية (حدود مفاجئة، مدخلات استثنائية، محارف تحكّم، تكرار العملية، إفساد الحالة، حواف الصلاحيات، التوقيت والتوقيت الصيفي، استنزاف الموارد، أعطال التبعيات). **حتمي 100%، صفر استدعاءات نماذج لغوية، ويعمل دون اتصال بالكامل** — وكل ما يولّده يمرّ ببوابة التأسيس نفسها قبل الحفظ: كل مسار وفعل وحقل مشتقّ من جرد الواجهات المكتشف، لا معرّفات مُختلقة (BO-07). المحرك اختياري بالكامل عبر واجهتيه (`GET /v1/projects/{id}/insights` و`POST /v1/projects/{id}/insights/generate`) ولا يغيّر أي مسار قائم.
 
 ## المتطلبات — Prerequisites
 
@@ -121,6 +124,8 @@ traceo/
 
 **Traceo (TADQEEQ)** — AI test design & traceability platform for the Saudi market.
 It turns a requirements document — Arabic or English — into an executable, requirement-linked API test suite grounded in an endpoint inventory discovered from an OpenAPI spec, with human review and a live traceability matrix exportable as contractual/audit evidence. **The model proposes, the system verifies** — a hard grounding gate guarantees zero fabricated identifiers (BO-07).
+
+**Six engines:** ingestion, discovery, generation (+ grounding gate), execution, traceability — and the **QA Insight Agent**, which proposes edge cases across nine canonical categories (boundary surprises, exotic input, control characters, idempotency, state corruption, permission edges, timing/DST, resource exhaustion, downstream failures). The insight engine is **100% deterministic, makes zero LLM calls and runs fully offline**, and every case it emits passes the same grounding gate before it is persisted. It is opt-in through its own endpoints (`GET /v1/projects/{id}/insights`, `POST /v1/projects/{id}/insights/generate`) and changes no existing flow.
 
 **Prerequisites:** Python 3.11+, Node 20+.
 

@@ -13,6 +13,7 @@ export const routes = {
   endpoints: (projectId: string) => `/projects/${projectId}/endpoints`,
   environments: (projectId: string) => `/projects/${projectId}/environments`,
   generate: (projectId: string) => `/projects/${projectId}/generate`,
+  insights: (projectId: string) => `/projects/${projectId}/insights`,
   review: (projectId: string) => `/projects/${projectId}/review`,
   runs: (projectId: string) => `/projects/${projectId}/runs`,
   run: (projectId: string, runId: string) => `/projects/${projectId}/runs/${runId}`,

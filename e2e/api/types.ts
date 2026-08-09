@@ -4,6 +4,8 @@
  */
 import type { Role } from '../constants/roles';
 import type {
+  EdgeCategory,
+  InsightStatus,
   JobKind,
   JobStatus,
   ParseStatus,
@@ -201,6 +203,53 @@ export interface GenerationJobResult {
   duplicates: number;
 }
 
+// --- insight — the sixth engine (QA Insight Agent / وكيل الرؤى) ---------------
+
+/** One taxonomy row of GET /projects/{id}/insights. */
+export interface InsightCategory {
+  id: EdgeCategory;
+  /** Non-archived cases of the project already belonging to this category. */
+  covered_count: number;
+  /** NEW cases the deterministic builders could ground right now (dry run). */
+  suggestable_count: number;
+  status: InsightStatus;
+}
+
+/** GET /projects/{id}/insights — deterministic, no job, capability "view". */
+export interface InsightsSummary {
+  categories: InsightCategory[];
+  total_cases: number;
+  total_covered: number;
+  total_suggestable: number;
+}
+
+/**
+ * POST /projects/{id}/insights/generate — capability "generate".
+ * `categories` is required and non-empty; ids outside EDGE_CATEGORIES are
+ * rejected with 422 {code: "invalid_category"} — hence `string[]`, so the
+ * negative path can send an illegal id without fighting the type system.
+ */
+export interface InsightGenerateBody {
+  categories: string[];
+  requirement_ids?: string[];
+}
+
+/** Job.result of a completed insight-generation job (kind "insight"). */
+export interface InsightJobResult {
+  /** Cases persisted after the grounding gate — the wire name of the counter. */
+  generated?: number;
+  /** Alias tolerated: the audit entry calls the same counter `created`. */
+  created?: number;
+  /** Cases the grounding gate rejected — counted, never persisted (BO-07). */
+  discarded: number;
+  /** Planned cases that already existed — deduplicated, not persisted. */
+  duplicates?: number;
+  /** The categories the run was asked for. */
+  categories?: string[];
+  /** Per-category tally of what was persisted. */
+  by_category?: Record<string, number>;
+}
+
 // --- review (modules/review.py `_case_dict` / `_case_detail`) -----------------
 
 export interface RequirementLink {
@@ -233,7 +282,14 @@ export interface TestCase {
   user_modified: boolean;
   model: string;
   prompt_version: string;
+  /** ep | bva | decision_table | negative | manual | edge_case (constants/states.ts). */
   technique: string;
+  /**
+   * Insight taxonomy id — one of the 9 canonical ids for cases produced by the
+   * QA Insight Agent, null for every other case (nullable column, present in
+   * test-case payloads).
+   */
+  edge_category: EdgeCategory | null;
   version: number;
   approved_by: string | null;
   approved_at: string | null;

@@ -22,6 +22,7 @@ const NAV_GROUPS: { ar: string; en: string; items: { seg: string; ar: string; en
     en: "Analysis",
     items: [
       { seg: "generate", ar: "التوليد", en: "Generate" },
+      { seg: "insights", ar: "الرؤى", en: "Insights" },
       { seg: "review", ar: "المراجعة", en: "Review" },
       { seg: "runs", ar: "التشغيلات", en: "Runs" },
       { seg: "matrix", ar: "المصفوفة", en: "Matrix" },

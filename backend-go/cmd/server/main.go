@@ -17,6 +17,7 @@ import (
 	"traceo/internal/modules/generation"
 	"traceo/internal/modules/identity"
 	"traceo/internal/modules/ingestion"
+	"traceo/internal/modules/insight"
 	"traceo/internal/modules/integrations"
 	"traceo/internal/modules/projects"
 	"traceo/internal/modules/reference"
@@ -55,7 +56,7 @@ func buildEngine() *gin.Engine {
 	for _, reg := range []func(*gin.RouterGroup){
 		identity.Register, projects.Register, ingestion.Register, discovery.Register,
 		generation.Register, review.Register, execution.Register, traceability.Register,
-		reporting.Register, integrations.Register, reference.Register,
+		reporting.Register, integrations.Register, reference.Register, insight.Register,
 	} {
 		reg(v1)
 	}

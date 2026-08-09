@@ -19,6 +19,9 @@ const KIND_TIMEOUTS_MS: Record<JobKind, number> = {
   generate: 120_000,
   execute: 180_000,
   report: 60_000,
+  // deterministic builders (no model call) but the same per-endpoint fan-out
+  // as generate — budgeted alike rather than optimistically.
+  insight: 120_000,
 };
 
 const DEFAULT_TIMEOUT_MS = 60_000;

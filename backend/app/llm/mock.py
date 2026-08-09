@@ -5,7 +5,7 @@ import re
 
 import jsonschema
 
-from .base import LLMResult
+from .base import LLMResult, strip_untrusted_frame
 
 AR_MUST = ("يجب", "ينبغي", "لا بد", "إلزامي")
 EN_MUST = ("shall", "must", "required to", "has to")
@@ -29,7 +29,11 @@ class MockProvider:
 
     # --- requirement structuring ---
     def _extract(self, segment: str) -> dict:
-        text = segment.split("SEGMENT:\n", 1)[-1].strip()
+        # SENTINEL CONTRACT: ingestion.EXTRACT_PROMPT ends with "SEGMENT:\n" and the
+        # segment itself is wrapped by llm.base.frame_untrusted. Stripping the frame
+        # here keeps this deterministic parse byte-identical to the pre-hardening
+        # behaviour — if either sentinel moves, it moves in both files at once.
+        text = strip_untrusted_frame(segment.split("SEGMENT:\n", 1)[-1])
         lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
         m = ID_RE.search(text)
         external_id = m.group(1).upper().replace(" ", "-").replace("_", "-") if m else ""
@@ -72,7 +76,8 @@ class MockProvider:
             payload = json.loads(prompt.split("PAYLOAD:\n", 1)[-1])
         except Exception:
             return {"selected": [], "confidence": 0.0}
-        req_text = (payload.get("requirement") or "").lower()
+        # the requirement text arrives framed as untrusted data — unwrap before scoring
+        req_text = strip_untrusted_frame(payload.get("requirement") or "").lower()
         tokens = set(re.findall(r"[a-zء-ي]{3,}", req_text))
         scored = []
         for i, cand in enumerate(payload.get("candidates", [])):

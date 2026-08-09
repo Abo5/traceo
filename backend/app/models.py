@@ -134,6 +134,19 @@ class Endpoint(TimestampMixin, Base):
     observed_count: Mapped[int] = mapped_column(Integer, default=0)
 
 
+# Legal TestCase.technique values. "localisation" is the FR-034 Arabic round-trip
+# probe; "edge_case" is produced only by the Insight engine (modules/insight.py)
+# and is always accompanied by a non-null edge_category.
+TECHNIQUES: tuple[str, ...] = (
+    "ep", "bva", "decision_table", "negative", "manual", "localisation", "edge_case",
+)
+
+
+def is_legal_technique(technique: str | None) -> bool:
+    """Technique validation — the single place that decides what may be stored."""
+    return technique in TECHNIQUES
+
+
 class TestCase(TimestampMixin, Base):
     __tablename__ = "test_cases"
     organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
@@ -148,7 +161,11 @@ class TestCase(TimestampMixin, Base):
     user_modified: Mapped[bool] = mapped_column(Boolean, default=False)  # FR-REV-03
     model: Mapped[str] = mapped_column(String(100), default="")  # provenance FR-GEN-09
     prompt_version: Mapped[str] = mapped_column(String(20), default="")
-    technique: Mapped[str] = mapped_column(String(30), default="")  # ep|bva|decision_table|negative|manual
+    technique: Mapped[str] = mapped_column(String(30), default="")  # see TECHNIQUES
+    # Insight engine taxonomy (the sixth engine). NULL for every case that does not
+    # belong to an edge-case family — which is every case generated before this
+    # engine existed, and every manually authored one.
+    edge_category: Mapped[str | None] = mapped_column(String(30), nullable=True)
     approved_by: Mapped[str | None] = mapped_column(String(36), nullable=True)  # FR-REV-05
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)  # FR-REV-06

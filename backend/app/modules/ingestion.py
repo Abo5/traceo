@@ -20,7 +20,7 @@ from .. import jobs as jobstore
 from ..config import settings
 from ..db import SessionLocal, get_db
 from ..deps import audit, get_project_scoped, require
-from ..llm import get_provider
+from ..llm import UNTRUSTED_NOTE, frame_untrusted, get_provider
 from ..models import Project, Requirement, RequirementTestCase, SourceDocument, User
 from .generation import try_autopilot_generation
 
@@ -32,9 +32,15 @@ MIN_SEGMENT_CHARS = 15
 
 REQUIREMENT_TYPES = {"functional", "business_rule", "data", "interface", "non_functional"}
 
+# The segment comes from a file the user uploaded, so it is untrusted input: it is
+# framed by llm.frame_untrusted and introduced by UNTRUSTED_NOTE before the
+# "SEGMENT:\n" sentinel. The sentinel itself is unchanged — MockProvider splits on
+# it (app/llm/mock.py) and strips the frame, so the offline path is unaffected.
 EXTRACT_PROMPT = (
     "Extract the software requirement from this segment. "
-    "Preserve the original language.\nSEGMENT:\n"
+    "Preserve the original language.\n"
+    + UNTRUSTED_NOTE
+    + "SEGMENT:\n"
 )
 
 EXTRACT_SCHEMA = {
@@ -199,7 +205,8 @@ def _structure_segment(provider, segment_text: str) -> dict:
     with confidence 0.3 — it is never silently dropped."""
     try:
         result = provider.complete_json(
-            "extract_requirement", EXTRACT_PROMPT + segment_text, EXTRACT_SCHEMA)
+            "extract_requirement", EXTRACT_PROMPT + frame_untrusted(segment_text),
+            EXTRACT_SCHEMA)
         data = dict(result.data)
     except Exception:
         return {

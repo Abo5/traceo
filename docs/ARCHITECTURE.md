@@ -7,7 +7,7 @@
 
 ## 1. البنية العامة للنظام — System Architecture
 
-النظام **Modular Monolith** على طبقة التطبيق: عميل ويب Next.js بواجهة RTL كاملة، يخاطب طبقة API مبنية على FastAPI تتولى Auth/RBAC/Validation، وتوزّع العمل على خمسة محركات متخصصة. المهام الطويلة (الاستخراج، التوليد، التنفيذ، التصدير) تعمل كـ Job Workers غير متزامنة — Threads في الـ MVP مع مسار جاهز إلى Celery. طبقة LLM Abstraction تعزل أي مزوّد نموذج خلف واجهة واحدة مقيّدة بـ JSON Schema، ومحرك التنفيذ هو الوحيد الذي يخرج نحو النظام تحت الاختبار عبر HTTP.
+النظام **Modular Monolith** على طبقة التطبيق: عميل ويب Next.js بواجهة RTL كاملة، يخاطب طبقة API مبنية على FastAPI تتولى Auth/RBAC/Validation، وتوزّع العمل على ستة محركات متخصصة. المهام الطويلة (الاستخراج، التوليد، التنفيذ، التصدير) تعمل كـ Job Workers غير متزامنة — Threads في الـ MVP مع مسار جاهز إلى Celery. طبقة LLM Abstraction تعزل أي مزوّد نموذج خلف واجهة واحدة مقيّدة بـ JSON Schema، ومحرك التنفيذ هو الوحيد الذي يخرج نحو النظام تحت الاختبار عبر HTTP.
 
 ```mermaid
 flowchart TB
@@ -16,12 +16,13 @@ flowchart TB
 
     WC -->|"HTTPS / JSON"| API
 
-    subgraph ENGINES["المحركات الخمسة — Engines"]
+    subgraph ENGINES["المحركات الستة — Engines"]
         RP["Requirements Parser"]
         DE["Discovery Engine — deterministic"]
         TG["Test Generator + Grounding Validator"]
         EX["Execution Engine"]
         TR["Traceability + Reporting"]
+        IN["QA Insight Agent — deterministic, offline"]
     end
 
     API --> RP
@@ -29,6 +30,7 @@ flowchart TB
     API --> TG
     API --> EX
     API --> TR
+    API --> IN
 
     subgraph JOBS["Job Workers"]
         JW["Threads في MVP — مسار إلى Celery"]
@@ -37,6 +39,7 @@ flowchart TB
     JW -.-> RP
     JW -.-> TG
     JW -.-> EX
+    JW -.-> IN
 
     DB[("SQLite في MVP / PostgreSQL هدفاً")]
     FS[("File Storage — الوثائق والمواصفات")]
@@ -45,6 +48,7 @@ flowchart TB
     TG --> DB
     EX --> DB
     TR --> DB
+    IN --> DB
     RP --> FS
     DE --> FS
 
@@ -60,7 +64,7 @@ flowchart TB
     EX -->|"HTTP — أدلة كاملة مع حجب الأسرار"| SUT
 ```
 
-المحرك الوحيد الذي لا يلمس النموذج اللغوي إطلاقاً هو **Discovery Engine** — حتميته هي ما يجعل بوابة التحقق (Grounding) ممكنة أصلاً: الجرد المكتشف هو مرجع الحقيقة الذي تُفحص ضده كل حالة مولَّدة. تعطُّل مزوّد النموذج يعطّل التوليد فقط؛ الاستيعاب والتنفيذ والتتبّع والتقارير تستمر (NFR-REL-03).
+المحركان اللذان لا يلمسان النموذج اللغوي إطلاقاً هما **Discovery Engine** و**QA Insight Agent** — حتمية الأول هي ما يجعل بوابة التحقق (Grounding) ممكنة أصلاً: الجرد المكتشف هو مرجع الحقيقة الذي تُفحص ضده كل حالة مولَّدة؛ والثاني يبني اقتراحات حالات الحواف من ذلك الجرد نفسه ببنّاءات حتمية دون اتصال خارجي، ويمرّ بالبوابة ذاتها قبل الحفظ. تعطُّل مزوّد النموذج يعطّل التوليد فقط؛ الاستيعاب والاكتشاف والرؤى والتنفيذ والتتبّع والتقارير تستمر (NFR-REL-03).
 
 ---
 

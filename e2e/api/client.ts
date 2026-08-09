@@ -15,6 +15,7 @@ import { GenerationRepository } from './generation.repository';
 import { TraceoHttp } from './http';
 import { IdentityRepository } from './identity.repository';
 import { IngestionRepository } from './ingestion.repository';
+import { InsightRepository } from './insight.repository';
 import { JobPoller } from './job-poller';
 import { ProjectsRepository } from './projects.repository';
 import { ReviewRepository } from './review.repository';
@@ -27,6 +28,8 @@ export class ApiClient {
   readonly ingestion: IngestionRepository;
   readonly discovery: DiscoveryRepository;
   readonly generation: GenerationRepository;
+  /** The sixth engine — deterministic, offline (insight.repository.ts). */
+  readonly insights: InsightRepository;
   readonly review: ReviewRepository;
   readonly runs: RunsRepository;
 
@@ -48,6 +51,7 @@ export class ApiClient {
     this.ingestion = new IngestionRepository(this.http, this.jobs);
     this.discovery = new DiscoveryRepository(this.http);
     this.generation = new GenerationRepository(this.http, this.jobs);
+    this.insights = new InsightRepository(this.http, this.jobs);
     this.review = new ReviewRepository(this.http);
     this.runs = new RunsRepository(this.http, this.jobs);
   }

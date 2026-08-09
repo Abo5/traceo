@@ -188,7 +188,7 @@ func runGeneration(job *jobs.Job, orgID, userID, projectID string,
 		}
 		payload := marshalNoEscape(map[string]any{"requirement": reqText, "candidates": candPayload})
 		result, err := provider.CompleteJSON("map_requirement",
-			mapInstructions+"PAYLOAD:\n"+payload, mapSchema)
+			mapInstructions+"PAYLOAD:\n"+payload+mapPromptSuffix, mapSchema)
 		if err != nil { // one bad mapping must not sink the job
 			unmappable = append(unmappable, map[string]any{
 				"requirement_id": req.ID, "reason": "mapping failed: " + err.Error()})

@@ -13,6 +13,7 @@ from .modules.projects import router as projects_router
 from .modules.ingestion import router as ingestion_router
 from .modules.discovery import router as discovery_router
 from .modules.generation import router as generation_router
+from .modules.insight import router as insight_router
 from .modules.review import router as review_router
 from .modules.execution import router as execution_router
 from .modules.traceability import router as traceability_router
@@ -35,8 +36,8 @@ P = settings.API_V1_PREFIX
 # public-API paths (gate/traceability/run read/run launch — v2 addendum).
 for r in (integrations_router, reference_router,
           identity_router, projects_router, ingestion_router, discovery_router,
-          generation_router, review_router, execution_router, traceability_router,
-          reporting_router):
+          generation_router, insight_router, review_router, execution_router,
+          traceability_router, reporting_router):
     app.include_router(r, prefix=P)
 
 

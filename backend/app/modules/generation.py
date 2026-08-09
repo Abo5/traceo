@@ -22,7 +22,7 @@ from .. import jobs as jobstore
 from ..config import settings
 from ..db import SessionLocal, get_db
 from ..deps import audit, get_project_scoped, require
-from ..llm import get_provider
+from ..llm import UNTRUSTED_NOTE, frame_untrusted, get_provider
 from ..models import Endpoint, Requirement, RequirementTestCase, TestCase, TestStep, User
 
 router = APIRouter()
@@ -38,11 +38,16 @@ ARABIC_SAMPLE = "محمد الشمري"
 ARABIC_SAMPLE_LONG = "منصة الطلبات — اختبار"
 INJECTION_PAYLOADS = ("' OR 1=1--", "<script>alert(1)</script>")
 
+# The requirement text originates from a user-uploaded document, so the PAYLOAD's
+# "requirement" value is framed by llm.frame_untrusted and announced by
+# UNTRUSTED_NOTE. The "PAYLOAD:\n" sentinel is unchanged — MockProvider splits on
+# it (app/llm/mock.py) and strips the frame before scoring.
 MAP_INSTRUCTIONS = (
     "You map ONE software requirement onto API endpoints. Pick ONLY from the closed "
     "candidate list below (TRD §4.3) — respond with the integer indices of the matching "
     "candidates plus your confidence between 0 and 1. Never invent endpoints; an empty "
     "selection is a valid answer.\n"
+    + UNTRUSTED_NOTE
 )
 MAP_SCHEMA = {
     "type": "object",
@@ -701,13 +706,18 @@ def _prefilter(req_text: str, endpoints: list[Endpoint]) -> list[Endpoint]:
 # ---------------------------------------------------------------------------
 
 def _persist_case(db: Session, org_id: str, project_id: str, req: Requirement,
-                  case: dict, model_name: str) -> None:
+                  case: dict, model_name: str, edge_category: str | None = None) -> None:
+    """Persist one GROUNDED case as a draft plus its requirement link.
+
+    `edge_category` is only ever passed by the Insight engine (the sixth engine);
+    it stays NULL for everything this generator produces."""
     tc = TestCase(
         organisation_id=org_id, project_id=project_id,
         title=case["title"][:500], description=case["description"],
         preconditions=case["preconditions"], type=case["type"], priority=case["priority"],
         state="draft", generated=True, model=model_name,
         prompt_version=settings.PROMPT_VERSION, technique=case["technique"],
+        edge_category=edge_category,
     )
     db.add(tc)
     db.flush()
@@ -775,7 +785,7 @@ def _run_generation(job, org_id: str, user_id: str, project_id: str,
                 unmappable.append({"requirement_id": req.id,
                                    "reason": "no candidate endpoints matched the requirement text"})
                 continue
-            payload = {"requirement": req_text,
+            payload = {"requirement": frame_untrusted(req_text),
                        "candidates": [{"method": e.method, "path": e.path, "summary": e.summary,
                                        "operation_id": e.operation_id, "tags": e.tags or []}
                                       for e in candidates]}

@@ -192,19 +192,23 @@ type Endpoint struct {
 
 type TestCase struct {
 	Base
-	OrganisationID  string     `gorm:"index" json:"organisation_id"`
-	ProjectID       string     `gorm:"index" json:"project_id"`
-	Title           string     `json:"title"`
-	Description     string     `json:"description"`
-	Preconditions   string     `json:"preconditions"`
-	Type            string     `gorm:"default:positive" json:"type"`
-	Priority        string     `gorm:"default:medium" json:"priority"`
-	State           string     `gorm:"default:draft" json:"state"` // draft|approved|rejected|stale|archived
-	Generated       bool       `gorm:"default:false" json:"generated"`
-	UserModified    bool       `gorm:"default:false" json:"user_modified"`
-	Model           string     `json:"model"`
-	PromptVersion   string     `json:"prompt_version"`
-	Technique       string     `json:"technique"`
+	OrganisationID string `gorm:"index" json:"organisation_id"`
+	ProjectID      string `gorm:"index" json:"project_id"`
+	Title          string `json:"title"`
+	Description    string `json:"description"`
+	Preconditions  string `json:"preconditions"`
+	Type           string `gorm:"default:positive" json:"type"`
+	Priority       string `gorm:"default:medium" json:"priority"`
+	State          string `gorm:"default:draft" json:"state"` // draft|approved|rejected|stale|archived
+	Generated      bool   `gorm:"default:false" json:"generated"`
+	UserModified   bool   `gorm:"default:false" json:"user_modified"`
+	Model          string `json:"model"`
+	PromptVersion  string `json:"prompt_version"`
+	Technique      string `json:"technique"` // ep|bva|decision_table|negative|manual|localisation|edge_case
+	// EdgeCategory is set ONLY by the insight engine (technique "edge_case") and
+	// carries one of insight's 9 canonical category ids. NULL for every other
+	// case — the column is nullable and needs no backfill (AutoMigrate adds it).
+	EdgeCategory    *string    `gorm:"size:32;index" json:"edge_category"`
 	ApprovedBy      *string    `json:"approved_by"`
 	ApprovedAt      *time.Time `json:"approved_at"`
 	RejectionReason string     `json:"rejection_reason,omitempty"`

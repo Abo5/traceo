@@ -8,6 +8,7 @@
 - `TestCase.state`: `draft | approved | rejected | stale | archived`
 - `Run.state`: `queued | running | completed | cancelled | aborted`
 - `Job.status`: `queued | running | completed | failed` — `SourceDocument.parse_status`: `pending | parsing | parsed | failed` — `TestResult.outcome`: `passed | failed | errored`
+- حالة فئة الرؤى في `GET /v1/projects/{id}/insights`: `covered | gap | n_a` — دالّة خالصة من العدّادين (`covered_count`/`suggestable_count`)، تُقرأ من `data-state` على `insights-category-status-badge`
 
 التأكيد على الحالة يكون عبر `data-state` حصراً، لا عبر النص المعروض (الواجهة ثنائية اللغة والنص يتبدّل وقت التشغيل). عند إضافة معرّف جديد يُحدَّث هذا الملف في نفس التغيير؛ وللتحقق: `grep -rn 'data-testid\|testId' frontend/app frontend/components`.
 
@@ -128,6 +129,7 @@
 | `nav-link-requirements` | Link | Sidebar → requirements |
 | `nav-link-endpoints` | Link | Sidebar → endpoints |
 | `nav-link-generate` | Link | Sidebar → generate |
+| `nav-link-insights` | Link | Sidebar → insights (وكيل الرؤى — المحرك السادس) |
 | `nav-link-review` | Link | Sidebar → review |
 | `nav-link-runs` | Link | Sidebar → runs |
 | `nav-link-matrix` | Link | Sidebar → traceability matrix |
@@ -268,6 +270,36 @@
 | `generate-generated-stat` | StatCard | Cases generated |
 | `generate-discarded-stat` | StatCard | Cases discarded (ungrounded) |
 | `generate-to-review-button` | Button | Go to the review page |
+
+## /projects/[id]/insights — `frontend/app/projects/[id]/insights/page.tsx`
+
+شاشة **وكيل الرؤى (QA Insight Agent)** — المحرك السادس: حتمي بالكامل، بلا نموذج لغوي وبلا اتصال خارجي. الصفحة تقرأ `GET /v1/projects/{id}/insights` وتُطلق `POST /v1/projects/{id}/insights/generate` (‏202 + `job_id` يُستطلع كأي job آخر).
+
+تُرسَم **9 صفوف تصنيف ثابتة دائماً** بالترتيب القانوني — `boundary_surprise | exotic_input | control_chars | idempotency | state_corruption | permission_edge | timing_dst | resource_exhaustion | downstream_failure` — ويحمل كل صف معرّفه القانوني نصّاً أحاديّ المسافة (mono)، فيُخاطَب الصف بمعرّفه (بيانات الكيان) لا بعنوانه ثنائي اللغة. شارة الحالة تحمل `data-state` بقيم الخادم الحرفية: `covered | gap | n_a`.
+
+| data-testid | Element | Purpose |
+|---|---|---|
+| `insights-page-root` | container | Insights page root |
+| `insights-page-header` | PageHeader | Page title + subtitle |
+| `insights-total-cases-stat` | StatCard | `total_cases` — cases counted across the taxonomy |
+| `insights-total-covered-stat` | StatCard | `total_covered` |
+| `insights-total-suggestable-stat` | StatCard | `total_suggestable` — what the builders could ground right now |
+| `insights-categories-card` | Card | The 9-row taxonomy |
+| `insights-select-all-button` | Button | Select/clear every selectable (non-`n_a`) category |
+| `insights-page-error-text` | text | Coverage-map load error |
+| `insights-retry-button` | Button | Reload after a load error |
+| `insights-empty-state` | Empty | Nothing to ground yet (no inventory/cases) |
+| `insights-category-row` | row (repeated) | One taxonomy row — identified by its canonical id |
+| `insights-category-checkbox` | checkbox (repeated) | Category selection (disabled when `suggestable_count == 0`) |
+| `insights-category-status-badge` | Badge | `data-state="covered\|gap\|n_a"` |
+| `insights-summary-card` | Card | Sticky selection summary + the grounding note |
+| `insights-job-progress` | Progress | Builder-job progress (202 → poll) |
+| `insights-generate-button` | Button | Run the builders (capability `generate`; disabled with no selection) |
+| `insights-generate-error-text` | text | Run refusal (e.g. 422 `invalid_category`) |
+| `insights-result-card` | Card | Run result panel (appears on completion) |
+| `insights-created-stat` | StatCard | Cases created (drafts, technique `edge_case`) |
+| `insights-discarded-stat` | StatCard | Cases discarded by the grounding gate (BO-07) |
+| `insights-to-review-button` | Button | Go to the review queue with the new drafts |
 
 ## /projects/[id]/review — `frontend/app/projects/[id]/review/page.tsx`
 

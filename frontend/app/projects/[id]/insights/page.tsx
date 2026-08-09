@@ -7,7 +7,7 @@ import { useParams } from "next/navigation";
 import { api, pollJob } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
 import { useCan } from "@/lib/permissions";
-import { Badge, Button, Card, Empty, PageHeader, Progress, StatCard } from "@/components/ui";
+import { Badge, Button, Card, PageHeader, Progress, StatCard } from "@/components/ui";
 import type { BadgeTone } from "@/components/ui";
 
 /**
@@ -360,10 +360,28 @@ export default function InsightsPage() {
                   {L.retry}
                 </Button>
               </div>
-            ) : !hasAnything ? (
-              <Empty title={L.empty} hint={L.emptyHint} testId="insights-empty-state" />
             ) : (
+              /* The taxonomy is fixed — the 9 rows always render once the fetch
+                 succeeds; the "nothing to ground on yet" guidance sits above them
+                 instead of replacing them. */
               <div style={{ display: "flex", flexDirection: "column" }}>
+                {!hasAnything && (
+                  <div
+                    data-testid="insights-empty-state"
+                    style={{
+                      border: "1px dashed var(--border-strong)",
+                      borderRadius: 12,
+                      padding: "12px 16px",
+                      marginBottom: 14,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 4,
+                    }}
+                  >
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{L.empty}</span>
+                    <span style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.7 }}>{L.emptyHint}</span>
+                  </div>
+                )}
                 {rows.map((r, i) => {
                   const meta = CATEGORY_LABELS[r.id];
                   const allowed = r.suggestable_count > 0;
@@ -371,6 +389,8 @@ export default function InsightsPage() {
                     <label
                       key={r.id}
                       data-testid="insights-category-row"
+                      data-state={r.status}
+                      data-category={r.id}
                       style={{
                         display: "flex",
                         gap: 12,

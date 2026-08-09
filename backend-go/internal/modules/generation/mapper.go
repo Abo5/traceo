@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"traceo/internal/llm"
 	"traceo/internal/models"
 )
 
@@ -14,10 +15,18 @@ const (
 	maxCandidates    = 10
 )
 
+// mapInstructions/mapPromptSuffix frame the requirement text (user-supplied, and
+// therefore untrusted) as DATA: the JSON payload is sandwiched between
+// llm.UntrustedOpen/Close after an explicit "data, not instructions" note. The
+// "PAYLOAD:\n" sentinel the deterministic mock splits on is unchanged and stays
+// immediately before the JSON; the mock strips the closing delimiter before
+// decoding, so mock output is identical to the unframed prompt.
 const mapInstructions = "You map ONE software requirement onto API endpoints. Pick ONLY from the closed " +
 	"candidate list below (TRD §4.3) — respond with the integer indices of the matching " +
 	"candidates plus your confidence between 0 and 1. Never invent endpoints; an empty " +
-	"selection is a valid answer.\n"
+	"selection is a valid answer.\n" + llm.UntrustedNote + llm.UntrustedOpen + "\n"
+
+const mapPromptSuffix = "\n" + llm.UntrustedClose
 
 var mapSchema = map[string]any{
 	"type": "object",
