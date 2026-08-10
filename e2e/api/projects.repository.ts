@@ -2,9 +2,9 @@
  * Projects repository — backend/app/modules/projects.py.
  *
  * Verified shapes:
- * - POST /projects {name, language?, automation?} -> 201 project payload
- *   (manage_projects: admin|qa_lead; language omitted/null => auto-detected later,
- *   automation defaults to "auto" — autopilot contract)
+ * - POST /projects {name, automation?} -> 201 project payload
+ *   (manage_projects: admin|qa_lead; automation defaults to "auto" — autopilot
+ *   contract. There is no project language: Traceo is English-only.)
  * - POST /projects/{id}/environments {name, base_url, auth_type?, auth_config?, variables?, tls_strict?}
  *   -> 201 env payload; auth_config is write-only, reads expose auth_config_masked.
  */
@@ -30,7 +30,6 @@ export class ProjectsRepository {
     projectId: string,
     body: Partial<{
       name: string;
-      language: 'en' | 'ar';
       automation: 'auto' | 'manual';
       status: 'active' | 'archived';
     }>,

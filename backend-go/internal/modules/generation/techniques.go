@@ -19,10 +19,12 @@ import (
 )
 
 const (
-	arabicSample     = "محمد الشمري"
-	arabicSampleLong = "منصة الطلبات — اختبار"
-	maxCombos        = 8 // decision-table cap
-	maxEnumSweep     = 8
+	// FR-034 localisation samples: non-ASCII text (accented Latin + CJK) whose
+	// round-trip through a free-text field must survive byte-for-byte.
+	unicodeSample     = "José Ávila 東京"
+	unicodeSampleLong = "Café Zürich — 東京プラットフォーム"
+	maxCombos         = 8 // decision-table cap
+	maxEnumSweep      = 8
 )
 
 var injectionPayloads = []string{"' OR 1=1--", "<script>alert(1)</script>"}
@@ -786,26 +788,26 @@ func generateCases(req *models.Requirement, ep *models.Endpoint, depth string) [
 	cases = append(cases, mk("Positive: valid request — "+suffix, "ep", "positive",
 		mkStep(ep, params, headers, body, positiveAssertions(ep), nil)))
 
-	// -- Localisation (FR-034, all depths): Arabic round-trip through a free-text field
+	// -- Localisation (FR-034, all depths): non-ASCII round-trip through a free-text field
 	freeText := freeTextBodyFields(ep)
 	if len(freeText) > 0 {
 		locInp := freeText[0]
 		sch := locInp.schema
-		arabic, haveArabic := arabicSample, true
-		if mn, ok := asIntVal(sch["minLength"]); ok && mn > utf8.RuneCountInString(arabic) {
-			if mn <= utf8.RuneCountInString(arabicSampleLong) {
-				arabic = arabicSampleLong
+		sample, haveSample := unicodeSample, true
+		if mn, ok := asIntVal(sch["minLength"]); ok && mn > utf8.RuneCountInString(sample) {
+			if mn <= utf8.RuneCountInString(unicodeSampleLong) {
+				sample = unicodeSampleLong
 			} else {
-				haveArabic = false
+				haveSample = false
 			}
 		}
-		if haveArabic {
-			if mx, ok := asIntVal(sch["maxLength"]); ok && mx < utf8.RuneCountInString(arabic) {
-				haveArabic = false
+		if haveSample {
+			if mx, ok := asIntVal(sch["maxLength"]); ok && mx < utf8.RuneCountInString(sample) {
+				haveSample = false
 			}
 		}
-		if haveArabic {
-			p2, b2 := applyInput(locInp, arabic, params, body)
+		if haveSample {
+			p2, b2 := applyInput(locInp, sample, params, body)
 			okCode, has := firstStatus(ep, 200, 299)
 			if !has {
 				okCode = 200
@@ -816,12 +818,12 @@ func generateCases(req *models.Requirement, ep *models.Endpoint, depth string) [
 			if props := asMap(respSch["properties"]); props != nil {
 				if _, in := props[locInp.name]; in {
 					assertions = append(assertions, map[string]any{"type": "json_field",
-						"path": locInp.name, "op": "eq", "expected": arabic})
+						"path": locInp.name, "op": "eq", "expected": sample})
 				}
 			}
 			assertions = append(assertions, map[string]any{"type": "header", "name": "Content-Type",
 				"op": "contains", "expected": "utf-8"})
-			cases = append(cases, mk("Localisation: Arabic round-trip in "+locInp.name+" — "+suffix,
+			cases = append(cases, mk("Localisation: Unicode round-trip in "+locInp.name+" — "+suffix,
 				"localisation", "positive", mkStep(ep, p2, headers, b2, assertions, nil)))
 		}
 	}

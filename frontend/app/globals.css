@@ -1,7 +1,7 @@
 /* ============================================================
    Traceo — global design tokens & base styles (dark, amber)
    1px borders + surface steps for depth. NO shadows.
-   RTL-safe: logical properties only (inline/block, start/end).
+   English-only, LTR.
    ============================================================ */
 
 :root {
@@ -69,8 +69,8 @@
   --t-slow: 320ms cubic-bezier(0.2, 0.6, 0.2, 1);
 
   /* fonts */
-  --font-ui: "IBM Plex Sans Arabic", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono", "IBM Plex Sans Arabic", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 /* ---------- base ---------- */
@@ -140,8 +140,6 @@ button {
 .code-block {
   font-family: var(--font-mono);
   font-size: 12px;
-  direction: ltr;
-  text-align: left;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
@@ -264,8 +262,6 @@ button {
 .demo-hint {
   font-family: var(--font-mono);
   font-size: 12px;
-  direction: ltr;
-  text-align: left;
   color: var(--text-secondary);
   background: var(--bg);
   border: 1px solid var(--border);
@@ -626,7 +622,7 @@ button {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-secondary);
-  text-align: start;
+  text-align: left;
   border-block-end: 1px solid var(--border);
   white-space: nowrap;
 }
@@ -693,6 +689,11 @@ button {
 .empty-hint {
   font-size: 12.5px;
   color: var(--text-secondary);
+  max-width: 46ch;
+}
+
+.empty-action {
+  margin-top: 14px;
 }
 
 /* ---------- modal ---------- */
@@ -809,16 +810,9 @@ button {
   appearance: none;
   background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23756F84' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: left 12px center;
-  padding-inline-end: 12px;
-  padding-inline-start: 28px;
-}
-
-:root [dir="ltr"] .select,
-[dir="ltr"] .select {
   background-position: right 12px center;
-  padding-inline-start: 12px;
-  padding-inline-end: 28px;
+  padding-left: 12px;
+  padding-right: 28px;
 }
 
 .textarea {

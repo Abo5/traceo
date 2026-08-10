@@ -2,20 +2,22 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
 import { Badge, Button, Card, Empty, Input, PageHeader, Pill, RefChip } from "@/components/ui";
 import type { BadgeTone } from "@/components/ui";
 
 type Feature = {
   id: string;
   group: string;
-  name_ar: string;
+  name?: string;
   name_en?: string;
   priority: "P0" | "P1" | "P2" | string;
   status: "built" | "planned" | string;
-  description_ar?: string;
+  description?: string;
   description_en?: string;
 };
+
+const featureName = (f: Feature): string => f.name_en || f.name || f.id;
+const featureDescription = (f: Feature): string => f.description_en || f.description || "";
 
 function asList(x: any): Feature[] {
   if (Array.isArray(x)) return x;
@@ -28,52 +30,35 @@ const PRIORITY_TONE: Record<string, BadgeTone> = {
   P2: "muted",
 };
 
-const GROUP_LABELS_AR: Record<string, string> = {
-  parser: "التحليل",
-  discovery: "الاكتشاف",
-  generator: "التوليد",
-  execution: "التنفيذ",
-  reporting: "التقارير",
-  automation: "الأتمتة",
-  integrations: "التكاملات",
-  platform: "المنصة",
+const GROUP_LABELS: Record<string, string> = {
+  parser: "Parser",
+  discovery: "Discovery",
+  generator: "Generator",
+  execution: "Execution",
+  reporting: "Reporting",
+  automation: "Automation",
+  integrations: "Integrations",
+  platform: "Platform",
 };
 
-export default function ReferencePage() {
-  const { lang } = useLang();
-  const ar = lang === "ar";
+const groupLabel = (g: string): string => GROUP_LABELS[g] ?? g;
 
-  const L = ar
-    ? {
-        title: "المرجع",
-        sub: "فهرس القدرات — كل قدرة تحمل معرّفًا ثابتًا يظهر في الواجهة والمواصفة",
-        loading: "جارٍ التحميل…",
-        retry: "إعادة المحاولة",
-        loadError: "تعذّر تحميل الفهرس",
-        search: "بحث في القدرات…",
-        all: "الكل",
-        built: "مبني",
-        planned: "مخطط",
-        features: "قدرة",
-        groups: "مجموعات",
-        empty: "لا نتائج",
-        emptyHint: "جرّب مصطلح بحث أو مرشحًا مختلفًا",
-      }
-    : {
-        title: "Reference",
-        sub: "Feature catalog — every capability carries a stable ID shown in the UI and the spec",
-        loading: "Loading…",
-        retry: "Retry",
-        loadError: "Failed to load the catalog",
-        search: "Search features…",
-        all: "All",
-        built: "Built",
-        planned: "Planned",
-        features: "features",
-        groups: "groups",
-        empty: "No results",
-        emptyHint: "Try a different search term or filter",
-      };
+export default function ReferencePage() {
+  const L = {
+    title: "Reference",
+    sub: "Feature catalog — every capability carries a stable ID shown in the UI and the spec",
+    loading: "Loading…",
+    retry: "Retry",
+    loadError: "Failed to load the catalog",
+    search: "Search features…",
+    all: "All",
+    built: "Built",
+    planned: "Planned",
+    features: "features",
+    groups: "groups",
+    empty: "No results",
+    emptyHint: "Try a different search term or filter",
+  };
 
   const [features, setFeatures] = useState<Feature[]>([]);
   const [loading, setLoading] = useState(true);
@@ -102,15 +87,13 @@ export default function ReferencePage() {
     return seen;
   }, [features]);
 
-  const groupLabel = (g: string) => (ar ? GROUP_LABELS_AR[g] ?? g : g);
-
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
     return features.filter((f) => {
       if (group && f.group !== group) return false;
       if (priority && f.priority !== priority) return false;
       if (term) {
-        const hay = `${f.id} ${f.name_ar} ${f.name_en ?? ""} ${f.description_ar ?? ""} ${f.group}`.toLowerCase();
+        const hay = `${f.id} ${featureName(f)} ${featureDescription(f)} ${f.group}`.toLowerCase();
         if (!hay.includes(term)) return false;
       }
       return true;
@@ -139,7 +122,7 @@ export default function ReferencePage() {
       ) : (
         <>
           {/* counts summary */}
-          <div className="mono" dir="ltr" style={{ fontSize: 12, color: "var(--text-secondary)", textAlign: ar ? "right" : "left" }}>
+          <div className="mono" style={{ fontSize: 12, color: "var(--text-secondary)", textAlign: "left" }}>
             <span style={{ color: "var(--text)" }}>{features.length}</span> {L.features} ·{" "}
             <span style={{ color: "var(--success)" }}>{builtCount}</span> {L.built} ·{" "}
             <span style={{ color: "var(--text-secondary)" }}>{plannedCount}</span> {L.planned} ·{" "}
@@ -165,7 +148,7 @@ export default function ReferencePage() {
             <div className="row" style={{ gap: 4 }}>
               {["P0", "P1", "P2"].map((p) => (
                 <Pill key={p} active={priority === p} onClick={() => setPriority(priority === p ? "" : p)} testId={`reference-priority-${p.toLowerCase()}-pill`}>
-                  <span className="mono" dir="ltr" style={{ fontSize: 11.5 }}>
+                  <span className="mono" style={{ fontSize: 11.5 }}>
                     {p}
                   </span>
                 </Pill>
@@ -197,11 +180,11 @@ export default function ReferencePage() {
                   <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
                     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                       <span style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text)" }}>
-                        {ar ? f.name_ar : f.name_en || f.name_ar}
+                        {featureName(f)}
                       </span>
                       <Badge tone="muted">{groupLabel(f.group)}</Badge>
                       <Badge tone={PRIORITY_TONE[f.priority] ?? "muted"}>
-                        <span className="mono" dir="ltr" style={{ fontSize: 10.5 }}>
+                        <span className="mono" style={{ fontSize: 10.5 }}>
                           {f.priority}
                         </span>
                       </Badge>
@@ -209,9 +192,9 @@ export default function ReferencePage() {
                         {f.status === "built" ? L.built : L.planned}
                       </Badge>
                     </div>
-                    {(ar ? f.description_ar : f.description_en || f.description_ar) && (
+                    {featureDescription(f) && (
                       <div style={{ fontSize: 12.5, lineHeight: 1.6, color: "var(--text-secondary)" }}>
-                        {ar ? f.description_ar : f.description_en || f.description_ar}
+                        {featureDescription(f)}
                       </div>
                     )}
                   </div>

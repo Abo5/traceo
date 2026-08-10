@@ -9,7 +9,7 @@
  *   watched on the history row badge → run report → traceability matrix (BO-07).
  *
  * It is the UI counterpart of backend/tests/test_flow.py. Every state is
- * asserted via data-state with literal model values, never bilingual text
+ * asserted via data-state with literal model values, never visible copy
  * (§5, §6). Async job waits are web-first assertions with per-kind budgets —
  * no waitForTimeout anywhere (§16). Sample data mirrors demo/: REQ-001 maps
  * deterministically to POST /auth/login under the mock LLM, so its coverage
@@ -34,7 +34,7 @@ const PARSE_UI_TIMEOUT_MS = 90_000;
 /** UI budget for the execute job against the demo SUT (:9000). */
 const RUN_UI_TIMEOUT_MS = 180_000;
 
-const REQUIREMENTS_DOC = 'sample_requirements_ar.md';
+const REQUIREMENTS_DOC = 'sample_requirements_en.md';
 const OPENAPI_SPEC = 'sample_openapi.yaml';
 /** Requirement whose text names POST /auth/login — deterministic mock mapping. */
 const TRACED_REQUIREMENT = 'REQ-001';

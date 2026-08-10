@@ -1,5 +1,5 @@
 /**
- * QA Insight Agent (وكيل الرؤى) — the sixth engine, end to end (@critical
+ * QA Insight Agent — the sixth engine, end to end (@critical
  * @regression).
  *
  * What makes this engine different from the LLM generator is exactly what this
@@ -20,7 +20,7 @@
  * pipeline fixtures use, so the inventory is real, not synthetic.
  *
  * State is asserted through data-state and the literal backend vocabularies
- * (constants/states.ts), never through the bilingual UI copy (§5, §6).
+ * (constants/states.ts), never through visible UI copy (§5, §6).
  */
 import type { ApiClient } from '../api/client';
 import { createdCount } from '../api/insight.repository';
@@ -50,7 +50,7 @@ const FIRST_VISIT_TIMEOUT_MS = 20_000;
  * the same arrangement the generation pipeline uses.
  */
 async function groundProject(api: ApiClient, projectId: string): Promise<void> {
-  await api.ingestion.uploadAndConfirm(projectId, sampleFile('sample_requirements_ar.md'));
+  await api.ingestion.uploadAndConfirm(projectId, sampleFile('sample_requirements_en.md'));
   const imported = await api.discovery.importSpec(projectId, sampleFile('sample_openapi.yaml'));
   expect(imported.endpoints_count, 'the OpenAPI sample produced no endpoints').toBeGreaterThan(0);
 }

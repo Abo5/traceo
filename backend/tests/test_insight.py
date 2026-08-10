@@ -1,4 +1,4 @@
-"""RELEASE GATE — the sixth engine: QA Insight Agent (وكيل الرؤى).
+"""RELEASE GATE — the sixth engine: QA Insight Agent.
 
 What these tests defend, in order of importance:
 
@@ -138,8 +138,8 @@ ORDERS_REQUIREMENT = (
 @pytest.fixture()
 def orders_project(client, register_org, create_project):
     """A project with the rich Orders inventory and one confirmed requirement."""
-    headers = register_org("شركة الرؤى")
-    pid = create_project(headers, name="منصة الطلبات", language="ar", automation="manual")
+    headers = register_org("Insight Works")
+    pid = create_project(headers, name="Orders Platform", automation="manual")
     import_spec(client, headers, pid, orders_spec())
     rid = add_requirement(client, headers, pid, "REQ-EDGE-1", ORDERS_REQUIREMENT,
                           criteria=["orders can be created and updated",
@@ -225,31 +225,43 @@ def test_classifier_does_not_credit_plain_bva_as_boundary_surprise():
     hide the gap on exactly the projects that have one."""
     for case in (_case(title="age at minimum boundary", technique="bva"),
                  _case(title="quantity at the maximum boundary", ctype="boundary"),
-                 _case(title="حد أدنى للعمر", technique="bva")):
+                 _case(title="lower bound for age", technique="bva")):
         assert classify_case(case) is None, case["title"]
     # the just-outside vocabulary still counts
     assert classify_case(_case(title="age one below the minimum — off-by-one",
                                technique="manual")) == BOUNDARY_SURPRISE
-    assert classify_case(_case(title="قيمة خارج الحد المسموح",
+    assert classify_case(_case(title="a value just outside the allowed range",
                                technique="manual")) == BOUNDARY_SURPRISE
 
 
 def test_classifier_control_chars_beats_exotic():
-    """A NUL inside an Arabic string is a control-char case, not a localisation one."""
-    case = _case(steps=[_step(request={"body": {"name": "سارة\x00"}})])
+    """A NUL inside a non-ASCII string is a control-char case, not a localisation one."""
+    case = _case(steps=[_step(request={"body": {"name": "\u6771\u4eac\x00"}})])
     assert classify_case(case) == CONTROL_CHARS
 
 
 def test_classifier_detects_exotic_input():
-    for payload in ("محمد الشمري", "order 🐫", "zero​width"):
+    """Non-ASCII of ANY kind is the evidence — emoji, CJK, accented Latin,
+    zero-width. No script is privileged and none is required."""
+    for payload in ("\u6771\u4eac\u30c6\u30b9\u30c8", "order \U0001f680",
+                    "Caf\u00e9 \u00c5ngstr\u00f6m", "zero\u200bwidth",
+                    "Cafe\u0301"):
         case = _case(steps=[_step(request={"body": {"name": payload}})])
         assert classify_case(case) == EXOTIC_INPUT, payload
 
 
+def test_classifier_ignores_plain_ascii_request_values():
+    for payload in ("example", "order-42", "a b c"):
+        case = _case(steps=[_step(request={"body": {"name": payload}},
+                                  assertions=[{"type": "status_code", "expected": 201}])])
+        assert classify_case(case) is None, payload
+
+
 def test_classifier_never_reads_the_title_for_unicode_signals():
-    """Arabic titles are the norm in this product — they must not make every case
-    an exotic_input case."""
-    case = _case(title="اختبار إنشاء عميل", technique="ep", ctype="positive",
+    """Titles carry typography (em dashes, symbols) that says nothing about what
+    the case sends — reading them would make every case an exotic_input case."""
+    case = _case(title="Create a customer \u2014 happy path \u2713", technique="ep",
+                 ctype="positive",
                  steps=[_step(request={"body": {"name": "example"}},
                               assertions=[{"type": "status_code", "expected": 201}])])
     assert classify_case(case) is None
@@ -361,7 +373,7 @@ def test_report_credits_legacy_generated_cases_via_the_classifier(
     poll_job(client, headers, job["job_id"])
 
     entries = by_id(insights(client, headers, pid))
-    # the standard generator emits Arabic round-trip + oversized-payload cases
+    # the standard generator emits Unicode round-trip + oversized-payload cases
     assert entries["exotic_input"]["covered_count"] > 0
     assert entries["exotic_input"]["status"] == "covered"
     assert entries["resource_exhaustion"]["covered_count"] > 0
@@ -406,6 +418,44 @@ def test_generate_creates_draft_edge_cases_linked_to_a_requirement(orders_projec
     assert detail["technique"] == "edge_case"
     assert detail["edge_category"] in EDGE_CATEGORY_SET
     assert detail["requirements"]
+
+
+def test_exotic_probe_set_is_the_documented_unicode_mix(orders_project, client):
+    """The exotic_input probe set is a cross-backend contract: four probes, in this
+    order, with these exact code points and this NFD/NFC pairing. Zero Arabic —
+    coverage comes from CJK, emoji, accented Latin and zero-width instead."""
+    from app.modules.insight import (CJK_PAYLOAD, EMOJI_PAYLOAD, ZERO_WIDTH_PAYLOAD,
+                                     _NFC_PAYLOAD, _NFD_PAYLOAD)
+
+    assert CJK_PAYLOAD == "qa \u6771\u4eac\u30c6\u30b9\u30c8 test"
+    assert EMOJI_PAYLOAD == "qa \U0001f680\U0001f1ef\U0001f1f5 test"
+    assert _NFC_PAYLOAD == "Caf\u00e9 \u00c5ngstr\u00f6m"
+    assert _NFD_PAYLOAD == "Cafe\u0301 A\u030angstro\u0308m"
+    assert _NFD_PAYLOAD != _NFC_PAYLOAD and len(_NFD_PAYLOAD) > len(_NFC_PAYLOAD)
+    assert ZERO_WIDTH_PAYLOAD == "qa\u200btest\u200d\ufeff"
+    for payload in (CJK_PAYLOAD, EMOJI_PAYLOAD, _NFC_PAYLOAD, _NFD_PAYLOAD,
+                    ZERO_WIDTH_PAYLOAD):
+        assert not any("\u0600" <= ch <= "\u06ff" for ch in payload), payload
+
+    headers, pid, _rid = orders_project
+    run_insight_generate(client, headers, pid, ["exotic_input"])
+    cases = items_of(client.get(f"/v1/projects/{pid}/test-cases",
+                                headers=headers).json())
+    # POST /orders probes its free-text body field: same four probes, same order
+    posted = [c for c in cases if c["title"].endswith("POST /orders")]
+    labels = [c["title"].split("carries ")[-1].split(" \u2014 ")[0] for c in posted]
+    assert labels == ["CJK characters", "emoji and flag sequences",
+                      "NFD-decomposed accented Latin", "zero-width characters"]
+    sent = []
+    for case in posted:
+        detail = client.get(f"/v1/test-cases/{case['id']}", headers=headers).json()
+        sent.append(detail["steps"][0]["request"]["body"]["customer_name"])
+    assert sent == [CJK_PAYLOAD, EMOJI_PAYLOAD, _NFD_PAYLOAD, ZERO_WIDTH_PAYLOAD]
+    # the NFD probe is the only one asserting a normalised echo back
+    nfd = client.get(f"/v1/test-cases/{posted[2]['id']}", headers=headers).json()
+    echo = [a for a in nfd["steps"][0]["assertions"] if a["type"] == "json_field"]
+    assert echo == [{"type": "json_field", "path": "customer_name", "op": "eq",
+                     "expected": _NFC_PAYLOAD}]
 
 
 def test_generate_is_deterministic_and_never_duplicates(orders_project, client):
@@ -696,9 +746,9 @@ def test_audit_entry_records_categories_and_counts(orders_project, client):
 # 9. Prompt hardening (E) — the deterministic mock still behaves identically
 # ---------------------------------------------------------------------------
 
-SEGMENT = ("REQ-77: يجب أن يقبل النظام رقم الجوال بصيغة 05XXXXXXXX.\n"
-           "- رفض أي رقم غير مطابق\n"
-           "- قبول 0512345678\n")
+SEGMENT = ("REQ-77: The system must accept a phone number in the format 05XXXXXXXX.\n"
+           "- reject any number that does not match\n"
+           "- accept 0512345678\n")
 
 
 def test_untrusted_framing_round_trips():
@@ -768,7 +818,7 @@ def test_document_pipeline_still_extracts_through_the_hardened_prompt(
     headers = register_org()
     pid = create_project(headers, automation="manual")
     doc = tmp_path / "reqs.md"
-    doc.write_text("# المتطلبات\n\n" + SEGMENT, encoding="utf-8")
+    doc.write_text("# Requirements\n\n" + SEGMENT, encoding="utf-8")
     with doc.open("rb") as fh:
         r = client.post(f"/v1/projects/{pid}/documents",
                         files={"file": (doc.name, fh, "text/markdown")}, headers=headers)

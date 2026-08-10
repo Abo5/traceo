@@ -52,6 +52,10 @@ from ..llm import get_provider               # get_provider().complete_json(prom
 
 ### modules/projects.py
 - CRUD /projects (create/rename/archive/delete = manage_projects; list/get = view)
+- Project payload: `{id, name, automation, status, created_at, updated_at}`. POST body `{name, automation?}`,
+  PATCH body `{name?, automation?, status?}`. `automation` is "auto"|"manual" (default "auto"; anything else
+  -> 422 `invalid_automation`). There is NO `language` field: Traceo is English-only, the column was dropped
+  (alembic a1b7c9d3e05f) and a `language` key in a request body is ignored rather than validated.
 - GET /projects/{id}/dashboard -> {requirement_count, confirmed_count, test_case_counts{draft,approved,rejected,stale,archived}, coverage_pct, latest_run{...}|null}  (FR-PRJ-07)
 - CRUD /projects/{id}/environments — secrets: accept `auth_config` dict on write, store via
   encrypt_secret, NEVER return values (return `auth_config_masked: true/false` + auth_type). FR-PRJ-04.
@@ -60,8 +64,8 @@ from ..llm import get_provider               # get_provider().complete_json(prom
 ### modules/ingestion.py  (Requirements Parser, TRD §4.1)
 - POST /projects/{id}/documents (multipart file: pdf/docx/md/txt, ≤50MB) -> 202 {job_id, document_id}
   Pipeline: extract text (pymupdf for pdf, python-docx for docx, plain read otherwise; guard imports),
-  deterministic segmentation (numbered clauses/headings/bullets — Arabic + English, Arabic-Indic digit
-  normalization ٠-٩ -> 0-9), then per-segment `extract_requirement` LLM call. Persist Requirements
+  deterministic segmentation (numbered clauses/headings/bullets), then per-segment
+  `extract_requirement` LLM call. Persist Requirements
   state='extracted' with source_text + confidence. Re-upload of same filename bumps document version and
   diffs by external_id/content_hash: new -> added, changed -> version+1 & state='changed' (mark linked
   approved cases stale via traceability helper), missing -> state='removed'. (FR-REQ-06, FR-TRC-04)
@@ -101,7 +105,7 @@ from ..llm import get_provider               # get_provider().complete_json(prom
   Job result: {generated, discarded, unmappable: [{requirement_id, reason}]}.
 - Expose `def grounding_validate(case_dict, endpoints_by_key) -> list[str]` (importable — reporting/tests use it).
 
-### modules/insight.py  (QA Insight Agent / وكيل الرؤى — the SIXTH engine)
+### modules/insight.py  (QA Insight Agent — the SIXTH engine)
 100% deterministic, ZERO LLM calls, fully offline (NFR-D1). Every produced case passes the
 existing `generation.grounding_validate` before persistence (imported, never re-implemented).
 - TAXONOMY — 9 canonical category ids, identical strings in every backend and in the UI:
@@ -161,9 +165,9 @@ existing `generation.grounding_validate` before persistence (imported, never re-
 - GET /requirements/{id}/history -> runs affecting its linked cases (FR-TRC-07)
 
 ### modules/reporting.py  (TRD §4.8)
-- GET /projects/{id}/exports/matrix.xlsx — openpyxl, sheets: Requirements / Test Cases / Matrix / Latest Results. RTL sheet (sheet_view.rightToLeft=True) when project.language=='ar' (FR-RPT-07).
+- GET /projects/{id}/exports/matrix.xlsx — openpyxl, sheets: Requirements / Test Cases / Matrix / Latest Results. Sheets are LTR; there is no per-project language and no RTL branch.
 - GET /runs/{id}/report -> JSON summary {run, counts, cases: [{test_case, outcome, duration_ms, failure_reason, requirements}]} (FR-RPT-01/02/03 defect view data)
-- GET /runs/{id}/report.html — self-contained printable HTML (dir=rtl when ar) — serves as the PDF deliverable via browser print (FR-RPT-05).
+- GET /runs/{id}/report.html — self-contained printable HTML (always `<html dir="ltr" lang="en">`, one English label table) — serves as the PDF deliverable via browser print (FR-RPT-05).
 - GET /runs/{id}/compare/{other_id} -> {newly_failing: [...], newly_passing: [...]} (FR-RPT-06)
 
 ## Quality gates (NFR-MNT-04)

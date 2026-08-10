@@ -414,11 +414,11 @@ def delete_webhook(webhook_id: str, user: User = Depends(require("manage_project
     return {"deleted": True}
 
 
-def _deliver(w: Webhook, event: str, payload: dict, summary_ar: str) -> int | None:
+def _deliver(w: Webhook, event: str, payload: dict, summary: str) -> int | None:
     """One delivery attempt, 5s timeout. Returns the HTTP status or None on
     transport failure. Slack incoming webhooks get a {"text": ...} payload."""
     if "hooks.slack.com" in w.url:
-        body = json.dumps({"text": summary_ar}, ensure_ascii=False, default=str).encode()
+        body = json.dumps({"text": summary}, ensure_ascii=False, default=str).encode()
     else:
         body = json.dumps(payload, ensure_ascii=False, default=str).encode()
     headers = {"Content-Type": "application/json", "X-Traceo-Event": event}
@@ -437,8 +437,8 @@ def _slack_summary(payload: dict) -> str:
     run = payload.get("run") or {}
     project = payload.get("project") or {}
     counts = run.get("counts") or {}
-    return ("اكتمل التشغيل #{did} في مشروع {name}: "
-            "{passed} ناجح، {failed} فاشل، {errored} خطأ من أصل {total}").format(
+    return ("Run #{did} completed in project {name}: "
+            "{passed} passed, {failed} failed, {errored} errored of {total}").format(
         did=run.get("display_id", "?"), name=project.get("name", "?"),
         passed=counts.get("passed", 0), failed=counts.get("failed", 0),
         errored=counts.get("errored", 0), total=counts.get("total", 0))
@@ -587,7 +587,7 @@ def export_defects_csv(run_id: str, user: User = Depends(require("export")),
             " ".join(info["external_ids"]),
         ])
 
-    # UTF-8 BOM so Excel opens Arabic content correctly
+    # UTF-8 BOM so Excel opens the file as UTF-8 rather than the local codepage
     body = ("\ufeff" + buf.getvalue()).encode("utf-8")  # BOM
     return StreamingResponse(
         BytesIO(body), media_type="text/csv; charset=utf-8",
@@ -822,7 +822,7 @@ def export_organisation(user: User = Depends(require("manage_members")),
         "exported_at": _iso(_utcnow()),
         "organisation": {"id": org.id, "name": org.name, "plan": org.plan,
                          "created_at": _iso(org.created_at)} if org else None,
-        "projects": [{"id": p.id, "name": p.name, "language": p.language,
+        "projects": [{"id": p.id, "name": p.name,
                       "status": p.status, "created_at": _iso(p.created_at)}
                      for p in projects],
         "requirements": [{"id": r.id, "project_id": r.project_id,

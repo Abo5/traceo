@@ -37,7 +37,7 @@ func makeAPIKey(t *testing.T, headers map[string]string, name string) M {
 
 func TestAPIKeyLifecycleAndGateAuth(t *testing.T) {
 	headers, orgID, _ := seedOrgUser(t, "Org Keys", "admin")
-	pid := seedProject(t, orgID, "مشروع اختبار", "ar")
+	pid := seedProject(t, orgID, "Test Project")
 
 	created := makeAPIKey(t, headers, "ci-key")
 	key, _ := created["key"].(string)
@@ -120,7 +120,7 @@ func TestAPIKeyLifecycleAndGateAuth(t *testing.T) {
 func TestAPIKeyIsOrgScoped(t *testing.T) {
 	headersA, _, _ := seedOrgUser(t, "Org A", "admin")
 	_, orgB, _ := seedOrgUser(t, "Org B", "admin")
-	pidB := seedProject(t, orgB, "مشروع المنظمة ب", "ar")
+	pidB := seedProject(t, orgB, "Org B Project")
 	keyA, _ := makeAPIKey(t, headersA, "ci-key")["key"].(string)
 
 	// org A's key cannot see org B's project
@@ -137,9 +137,9 @@ func TestAPIKeyIsOrgScoped(t *testing.T) {
 
 func TestGateThresholdsAndDefects(t *testing.T) {
 	headers, orgID, _ := seedOrgUser(t, "Org Gate", "admin")
-	pid := seedProject(t, orgID, "مشروع البوابة", "ar")
+	pid := seedProject(t, orgID, "Gate Project")
 	rid := seedRequirement(t, orgID, pid, "REQ-001", "confirmed", "high")
-	caseID := seedTestCase(t, orgID, pid, "حالة معتمدة", "approved", rid)
+	caseID := seedTestCase(t, orgID, pid, "Approved case", "approved", rid)
 
 	// fully covered, no runs -> gate passes
 	gate := jsonMap(t, do(t, "GET", "/v1/projects/"+pid+"/gate", nil, headers))
@@ -184,7 +184,7 @@ func TestGateThresholdsAndDefects(t *testing.T) {
 
 	// completed run with failures -> open defects, max_failed/max_critical breaches
 	envID := seedEnvironment(t, orgID, pid)
-	caseID2 := seedTestCase(t, orgID, pid, "حالة ثانية", "approved", rid)
+	caseID2 := seedTestCase(t, orgID, pid, "Second case", "approved", rid)
 	runID := seedRun(t, orgID, pid, envID, "completed",
 		models.JSONMap{"total": 2, "passed": 0, "failed": 1, "errored": 1})
 	// business-rule failure on a high-priority requirement -> critical
@@ -234,9 +234,9 @@ func TestGateThresholdsAndDefects(t *testing.T) {
 
 func TestPublicAPIKeySurface(t *testing.T) {
 	headers, orgID, _ := seedOrgUser(t, "Org Public", "admin")
-	pid := seedProject(t, orgID, "مشروع عام", "ar")
+	pid := seedProject(t, orgID, "Public Project")
 	rid := seedRequirement(t, orgID, pid, "REQ-001", "confirmed", "high")
-	seedTestCase(t, orgID, pid, "حالة معتمدة", "approved", rid)
+	seedTestCase(t, orgID, pid, "Approved case", "approved", rid)
 	envID := seedEnvironment(t, orgID, pid)
 	key, _ := makeAPIKey(t, headers, "public-key")["key"].(string)
 	keyHeaders := map[string]string{"X-API-Key": key}
@@ -288,7 +288,7 @@ func TestPublicAPIKeySurface(t *testing.T) {
 	}
 
 	// project with no approved cases -> 409
-	pid2 := seedProject(t, orgID, "بلا حالات", "ar")
+	pid2 := seedProject(t, orgID, "No Cases")
 	env2 := seedEnvironment(t, orgID, pid2)
 	if w = do(t, "POST", "/v1/public/projects/"+pid2+"/runs", M{"environment_id": env2}, keyHeaders); w.Code != 409 {
 		t.Fatalf("no approved cases must 409, got %d", w.Code)
@@ -339,7 +339,7 @@ func webhookNet(t *testing.T) *[]capturedCall {
 func TestWebhookCRUDTestAndFire(t *testing.T) {
 	calls := webhookNet(t)
 	headers, orgID, _ := seedOrgUser(t, "Org Hooks", "admin")
-	pid := seedProject(t, orgID, "مشروع الويبهوك", "ar")
+	pid := seedProject(t, orgID, "Webhook Project")
 
 	// invalid scheme rejected
 	w := do(t, "POST", "/v1/projects/"+pid+"/webhooks",
@@ -418,7 +418,7 @@ func TestWebhookCRUDTestAndFire(t *testing.T) {
 		t.Fatalf("delivery status not recorded: %v", first)
 	}
 
-	// Slack special case: {"text": <Arabic summary>} payload instead
+	// Slack special case: {"text": <summary>} payload instead
 	w = do(t, "POST", "/v1/projects/"+pid+"/webhooks",
 		M{"name": "slack", "url": "https://hooks.slack.com/services/T0/B0/XYZ"}, headers)
 	if w.Code != 201 {
@@ -433,8 +433,8 @@ func TestWebhookCRUDTestAndFire(t *testing.T) {
 	if len(slackBody) != 1 || slackBody["text"] == nil {
 		t.Fatalf("slack payload must be exactly {text}: %v", slackBody)
 	}
-	if !strings.Contains(slackBody["text"].(string), "اكتمل التشغيل") {
-		t.Fatalf("slack summary not Arabic: %v", slackBody["text"])
+	if !strings.Contains(slackBody["text"].(string), "Run #") {
+		t.Fatalf("slack summary is not the run summary: %v", slackBody["text"])
 	}
 
 	// FireWebhooks delivers to every enabled subscribed hook and never panics
@@ -466,9 +466,9 @@ func TestWebhookCRUDTestAndFire(t *testing.T) {
 
 func TestScheduleCRUDAndSchedulerTick(t *testing.T) {
 	headers, orgID, userID := seedOrgUser(t, "Org Sched", "admin")
-	pid := seedProject(t, orgID, "مشروع الجدولة", "ar")
+	pid := seedProject(t, orgID, "Schedule Project")
 	rid := seedRequirement(t, orgID, pid, "REQ-001", "confirmed", "high")
-	seedTestCase(t, orgID, pid, "حالة معتمدة", "approved", rid)
+	seedTestCase(t, orgID, pid, "Approved case", "approved", rid)
 	envID := seedEnvironment(t, orgID, pid)
 
 	// interval below 15 minutes rejected
@@ -547,10 +547,10 @@ func TestScheduleCRUDAndSchedulerTick(t *testing.T) {
 
 func TestXrayAndDefectsExports(t *testing.T) {
 	headers, orgID, _ := seedOrgUser(t, "Org Export", "admin")
-	pid := seedProject(t, orgID, "مشروع التصدير", "ar")
+	pid := seedProject(t, orgID, "Export Project")
 	rid := seedRequirement(t, orgID, pid, "REQ-001", "confirmed", "high")
-	passedCase := seedTestCase(t, orgID, pid, "حالة ناجحة", "approved", rid)
-	erroredCase := seedTestCase(t, orgID, pid, "حالة متعثرة", "approved", rid)
+	passedCase := seedTestCase(t, orgID, pid, "Passing case", "approved", rid)
+	erroredCase := seedTestCase(t, orgID, pid, "Errored case", "approved", rid)
 	envID := seedEnvironment(t, orgID, pid)
 	runID := seedRun(t, orgID, pid, envID, "completed",
 		models.JSONMap{"total": 2, "passed": 1, "failed": 0, "errored": 1})
@@ -591,7 +591,7 @@ func TestXrayAndDefectsExports(t *testing.T) {
 		t.Fatal("no test carries testKey REQ-001")
 	}
 
-	// Jira defects CSV: failures only, UTF-8 BOM for Excel-Arabic
+	// Jira defects CSV: failures only, UTF-8 BOM so Excel reads non-ASCII
 	w = do(t, "GET", "/v1/runs/"+runID+"/exports/defects.csv", nil, headers)
 	if w.Code != 200 {
 		t.Fatalf("defects export failed: %d", w.Code)
@@ -608,7 +608,7 @@ func TestXrayAndDefectsExports(t *testing.T) {
 	if !strings.Contains(text, "REQ-001") || !strings.Contains(text, "[ERRORED]") {
 		t.Fatalf("CSV missing failure row: %.300s", text)
 	}
-	if strings.Contains(text, "حالة ناجحة") {
+	if strings.Contains(text, "Passing case") {
 		t.Fatal("CSV must contain failures only")
 	}
 }
@@ -617,7 +617,7 @@ func TestXrayAndDefectsExports(t *testing.T) {
 
 func TestOrganisationExport(t *testing.T) {
 	headers, orgID, _ := seedOrgUser(t, "Org PDPL", "admin")
-	pid := seedProject(t, orgID, "مشروع التصدير الكامل", "ar")
+	pid := seedProject(t, orgID, "Full Export Project")
 	seedRequirement(t, orgID, pid, "REQ-001", "confirmed", "high")
 	makeAPIKey(t, headers, "audit-seed") // guarantees at least one audit entry
 

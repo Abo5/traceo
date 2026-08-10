@@ -131,7 +131,7 @@ export function StatCard({
 }) {
   return (
     <div className="stat-card" data-testid={testId}>
-      <div className="stat-value mono" dir="ltr" style={color ? { color } : undefined}>
+      <div className="stat-value mono" style={color ? { color } : undefined}>
         {value}
       </div>
       <div className="stat-label">{label}</div>
@@ -211,11 +211,14 @@ export function Empty({
   icon,
   title,
   hint,
+  action,
   testId,
 }: {
   icon?: React.ReactNode;
   title: React.ReactNode;
   hint?: React.ReactNode;
+  /** Optional call-to-action rendered under the hint (primary next step). */
+  action?: React.ReactNode;
   /** Rendered as data-testid on the root .empty div. */
   testId?: string;
 }) {
@@ -226,6 +229,7 @@ export function Empty({
       </div>
       <div className="empty-title">{title}</div>
       {hint && <div className="empty-hint">{hint}</div>}
+      {action && <div className="empty-action">{action}</div>}
     </div>
   );
 }
@@ -266,7 +270,7 @@ export function Modal({
       <div className="modal" role="dialog" aria-modal="true" data-testid={testId}>
         <div className="modal-head">
           <div className="modal-title">{title}</div>
-          <button type="button" className="modal-close" onClick={onClose} aria-label="close">
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </div>
@@ -345,7 +349,7 @@ export function Mono({
   testId?: string;
 }) {
   return (
-    <span className={`mono ${className ?? ""}`} dir="ltr" style={style} data-testid={testId}>
+    <span className={`mono ${className ?? ""}`} style={style} data-testid={testId}>
       {children}
     </span>
   );
@@ -409,7 +413,7 @@ export function StatusDot({
 
 // ---------- DateTimeText ----------
 
-/** Formats an ISO datetime as YYYY-MM-DD HH:mm (stable, bidi-safe). */
+/** Formats an ISO datetime as YYYY-MM-DD HH:mm (stable, locale-independent). */
 export function fmtDateTime(value?: string | null): string {
   if (!value) return "—";
   const d = new Date(value);
@@ -418,7 +422,7 @@ export function fmtDateTime(value?: string | null): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-/** LTR mono datetime — immune to RTL bidi scrambling. */
+/** Mono datetime — fixed width, never wraps. */
 export function DateTimeText({
   value,
   style,
@@ -432,8 +436,7 @@ export function DateTimeText({
   return (
     <span
       className="mono"
-      dir="ltr"
-      style={{ fontSize: 11, whiteSpace: "nowrap", unicodeBidi: "isolate", ...style }}
+      style={{ fontSize: 11, whiteSpace: "nowrap", ...style }}
       data-testid={testId}
     >
       {fmtDateTime(value)}
@@ -455,7 +458,6 @@ export function RefChip({
   return (
     <span
       className="mono"
-      dir="ltr"
       data-testid={testId}
       style={{
         display: "inline-block",
@@ -492,7 +494,6 @@ export function TrendBars({
 }) {
   return (
     <div
-      dir="ltr"
       data-testid={testId}
       style={{
         display: "flex",
@@ -596,7 +597,6 @@ export function Donut({
           fontSize: Math.round(size / 4.8),
           fontWeight: 700,
           fill: "var(--text)",
-          direction: "ltr",
         }}
       >
         {rate}%
@@ -607,13 +607,13 @@ export function Donut({
 
 // ---------- SeverityBadge ----------
 
-const SEVERITY_MAP: Record<string, { tone: BadgeTone; ar: string }> = {
-  critical: { tone: "error", ar: "حرج" },
-  major: { tone: "warning", ar: "كبير" },
-  minor: { tone: "muted", ar: "طفيف" },
+const SEVERITY_MAP: Record<string, { tone: BadgeTone; label: string }> = {
+  critical: { tone: "error", label: "Critical" },
+  major: { tone: "warning", label: "Major" },
+  minor: { tone: "muted", label: "Minor" },
 };
 
-/** Failure severity badge (v2 FR-052): critical/major/minor with Arabic labels. */
+/** Failure severity badge (v2 FR-052): critical / major / minor. */
 export function SeverityBadge({
   severity,
   testId,
@@ -623,10 +623,10 @@ export function SeverityBadge({
   testId?: string;
 }) {
   if (!severity) return null;
-  const s = SEVERITY_MAP[severity] ?? { tone: "muted" as BadgeTone, ar: severity };
+  const s = SEVERITY_MAP[severity] ?? { tone: "muted" as BadgeTone, label: severity };
   return (
     <span title={severity} data-testid={testId} data-state={severity}>
-      <Badge tone={s.tone}>{s.ar}</Badge>
+      <Badge tone={s.tone}>{s.label}</Badge>
     </span>
   );
 }

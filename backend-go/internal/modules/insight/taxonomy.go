@@ -1,4 +1,4 @@
-// Package insight — the sixth engine: QA Insight Agent (وكيل الرؤى).
+// Package insight — the sixth engine: QA Insight Agent.
 //
 // CONTRACT (non-negotiable, mirrored 1:1 by the Python backend):
 //   - 100% DETERMINISTIC. ZERO LLM calls anywhere in this package — it must run
@@ -19,8 +19,8 @@ package insight
 //	boundary_surprise   off-by-one / limit edges BEYOND plain BVA (min-1, max+1,
 //	                    maxLength+1 — the just-outside values the ISTQB BVA
 //	                    builder never emits)
-//	exotic_input        Arabic/RTL, emoji, NFC-vs-NFD normalisation, zero-width
-//	                    characters, very long strings
+//	exotic_input        non-ASCII payloads (CJK, accented Latin, emoji),
+//	                    NFC-vs-NFD normalisation, zero-width characters
 //	control_chars       null bytes and control characters in string fields
 //	idempotency         duplicate / replayed submit of the same mutating request
 //	state_corruption    out-of-order or illegal state transitions

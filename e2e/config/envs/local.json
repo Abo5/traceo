@@ -1,6 +1,5 @@
 {
   "baseUrl": "http://localhost:3000",
   "apiUrl": "http://localhost:8000/v1",
-  "sutUrl": "http://localhost:9000",
-  "lang": "ar"
+  "sutUrl": "http://localhost:9000"
 }

@@ -1,6 +1,6 @@
 // Package reporting — 1:1 port of backend/app/modules/reporting.py (TRD §4.8):
-// the exportable deliverables. Traceability matrix as a styled XLSX (FR-RPT-04,
-// RTL sheets for Arabic projects FR-RPT-07), run reports as JSON + a
+// the exportable deliverables. Traceability matrix as a styled XLSX (FR-RPT-04),
+// run reports as JSON + a
 // self-contained printable HTML page that doubles as the PDF deliverable via the
 // browser's print dialog (FR-RPT-01/02/03/05), and run-over-run regression
 // comparison (FR-RPT-06).
@@ -416,17 +416,15 @@ func countsOf(run *models.Run, entries []*reportEntry) models.JSONMap {
 }
 
 // ---------------------------------------------------------------------------
-// XLSX traceability matrix (FR-RPT-04, FR-RPT-07)
+// XLSX traceability matrix (FR-RPT-04)
 // ---------------------------------------------------------------------------
 
 func exportMatrix(c *gin.Context) {
 	u := httpx.User(c)
 	projectID := c.Param("project_id")
-	project, ok := httpx.ProjectScoped(c, projectID)
-	if !ok {
+	if _, ok := httpx.ProjectScoped(c, projectID); !ok {
 		return
 	}
-	rtl := project.Language != nil && *project.Language == "ar"
 
 	var reqs []models.Requirement
 	db.DB.Where("project_id = ? AND organisation_id = ? AND state != ?",
@@ -502,9 +500,9 @@ func exportMatrix(c *gin.Context) {
 			Selection: []excelize.Selection{
 				{SQRef: "A2", ActiveCell: "A2", Pane: "bottomLeft"}},
 		})
-		// FR-RPT-07: Arabic projects export RTL sheets.
-		r2l := rtl
-		_ = f.SetSheetView(title, -1, &excelize.ViewOptions{RightToLeft: &r2l})
+		// Sheets are always left-to-right — the product is English-only.
+		ltr := false
+		_ = f.SetSheetView(title, -1, &excelize.ViewOptions{RightToLeft: &ltr})
 		return true
 	}
 
@@ -602,7 +600,7 @@ func exportMatrix(c *gin.Context) {
 		httpx.Err(c, 500, "export_failed", "Could not serialise the workbook")
 		return
 	}
-	filename := "traceo-matrix-" + head8(project.ID) + ".xlsx"
+	filename := "traceo-matrix-" + head8(projectID) + ".xlsx"
 	c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
 	c.Data(200, xlsxMediaType, buf.Bytes())
 }

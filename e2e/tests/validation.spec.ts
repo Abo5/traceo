@@ -9,8 +9,9 @@
  * - identity.py register: invalid_email (regex, checked before anything else);
  *   password Field(min_length=8) is pydantic, so a short password arrives as a
  *   FastAPI list detail → TraceoHttp synthesizes code 'validation_error'.
- * - projects.py create_project: invalid_language; ProjectCreate's
- *   name Field(min_length=1) is pydantic → 'validation_error' as well.
+ * - projects.py create_project: ProjectCreate's name Field(min_length=1) is
+ *   pydantic → 'validation_error' as well. There is no language field to
+ *   validate any more (Traceo is English-only).
  */
 import { test } from '../fixtures';
 import type { BulkAction, NewProject, NewTestCase } from '../api/types';
@@ -111,22 +112,22 @@ test.describe('registration input contract @validation @regression', () => {
 });
 
 test.describe('project input contract @validation @regression', () => {
-  test('an unsupported language is refused with 422 invalid_language', async ({ api }) => {
-    await expectApiError(
-      api.as('qa_lead').projects.create({
-        name: `e2e-val-${uniqueSuffix()}`,
-        language: 'fr' as NewProject['language'],
-      }),
-      { status: 422, code: 'invalid_language' },
-    );
-  });
-
   test('an empty project name is refused at the pydantic layer (422)', async ({ api }) => {
     // ProjectCreate name min_length=1 — mirrors the UI-side prevention
     // (negative.spec.ts: the create modal keeps submit disabled).
-    await expectApiError(api.as('qa_lead').projects.create({ name: '', language: 'ar' }), {
+    await expectApiError(api.as('qa_lead').projects.create({ name: '' }), {
       status: 422,
       code: 'validation_error',
     });
+  });
+
+  test('an unknown automation mode is refused with 422 invalid_automation', async ({ api }) => {
+    await expectApiError(
+      api.as('qa_lead').projects.create({
+        name: `e2e-val-${uniqueSuffix()}`,
+        automation: 'semi' as NewProject['automation'],
+      }),
+      { status: 422, code: 'invalid_automation' },
+    );
   });
 });

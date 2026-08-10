@@ -1,4 +1,4 @@
-// RELEASE GATE — the sixth engine: QA Insight Agent (وكيل الرؤى).
+// RELEASE GATE — the sixth engine: QA Insight Agent.
 //
 // What must hold, in the same intent as the Python suite:
 //   - the 9 canonical category ids are exactly these strings, in this order;
@@ -14,6 +14,7 @@
 package tests_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"go/parser"
 	"go/token"
@@ -40,7 +41,7 @@ import (
 func insightProject(t *testing.T) (map[string]string, string) {
 	t.Helper()
 	headers := registerOrg(t, "Insight Org")
-	pid := createProject(t, headers, "مشروع الرؤى", "ar")
+	pid := createProject(t, headers, "Insight Project")
 	importSpec(t, headers, pid)
 	rid := addRequirement(t, headers, pid, "REQ-900",
 		"Create a customer via POST /customers and read the customer back",
@@ -57,7 +58,7 @@ func insightProject(t *testing.T) (map[string]string, string) {
 func insightRichProject(t *testing.T) (map[string]string, string) {
 	t.Helper()
 	headers := registerOrg(t, "Insight Rich Org")
-	pid := createProject(t, headers, "مشروع الطلبات", "ar")
+	pid := createProject(t, headers, "Orders Project")
 	var project models.Project
 	if err := db.DB.First(&project, "id = ?", pid).Error; err != nil {
 		t.Fatalf("load project: %v", err)
@@ -371,18 +372,20 @@ func TestInsightClassifierMatchesThePythonRuleTable(t *testing.T) {
 		steps []models.TestStep
 		want  string
 	}{
-		// Taxonomy A names "Arabic/RTL" as an exotic_input probe, and the builder's
-		// first probe is Arabic text — so a legacy case already sending Arabic
-		// through a field covers it.
-		{"plain Arabic request value", "إنشاء عميل",
-			[]models.TestStep{step("POST", "/c", body("محمد الشمري"), ok)}, "exotic_input"},
+		// Taxonomy A names non-ASCII payloads as an exotic_input probe, and the
+		// builder's first probe is mixed-script text — so a legacy case already
+		// sending non-ASCII text through a field covers it.
+		{"CJK request value", "create customer",
+			[]models.TestStep{step("POST", "/c", body("新規 注文"), ok)}, "exotic_input"},
+		{"accented Latin request value", "create customer",
+			[]models.TestStep{step("POST", "/c", body("José Ávila"), ok)}, "exotic_input"},
 		{"emoji request value", "create",
 			[]models.TestStep{step("POST", "/c", body("ok \U0001F600"), ok)}, "exotic_input"},
 		{"zero-width request value", "create",
 			[]models.TestStep{step("POST", "/c", body("ab\u200bc"), ok)}, "exotic_input"},
-		// A control character outranks the Arabic around it.
+		// A control character outranks the non-ASCII text around it.
 		{"control char beats exotic", "create",
-			[]models.TestStep{step("POST", "/c", body("سارة\u0000"), ok)}, "control_chars"},
+			[]models.TestStep{step("POST", "/c", body("東京\u0000"), ok)}, "control_chars"},
 		{"401/403 assertion", "create as another actor",
 			[]models.TestStep{step("POST", "/c", body("Ann"), status(403))}, "permission_edge"},
 		{"5xx tolerated", "create",
@@ -399,8 +402,8 @@ func TestInsightClassifierMatchesThePythonRuleTable(t *testing.T) {
 		{"date-time carrying a UTC offset", "schedule", []models.TestStep{
 			step("POST", "/c", models.JSONMap{"body": M{"at": "2026-03-29T02:30:00+02:00"}}, ok)},
 			"timing_dst"},
-		// Arabic in the TITLE is not a signal — every title is Arabic in this product.
-		{"Arabic title, plain body", "اختبار إنشاء عميل",
+		// A title alone is not a signal — only request values are inspected.
+		{"unremarkable title, plain body", "customer creation test",
 			[]models.TestStep{step("POST", "/c", body("example"), ok)}, ""},
 	} {
 		tc := &models.TestCase{Title: tt.title, Technique: "manual", Type: "positive"}
@@ -489,6 +492,65 @@ func TestInsightGenerateFollowsTheJobPattern(t *testing.T) {
 			t.Fatalf("category %q was not requested but was generated", id)
 		}
 	}
+}
+
+// TestInsightExoticProbesAreNonASCIIAndArabicFree pins contract item 4 of the
+// English-only pivot: the exotic_input builder still exercises Unicode (emoji,
+// CJK, accented Latin, zero-width, NFD) but emits ZERO Arabic — in the case
+// text and in every request value it sends.
+func TestInsightExoticProbesAreNonASCIIAndArabicFree(t *testing.T) {
+	headers, pid := insightProject(t)
+	w := do(t, "POST", "/v1/projects/"+pid+"/insights/generate",
+		M{"categories": []string{"exotic_input"}}, headers)
+	if w.Code != 202 {
+		t.Fatalf("expected 202, got %d %.300s", w.Code, w.Body.String())
+	}
+	result := pollJob(t, headers, jsonMap(t, w)["job_id"].(string))["result"].(map[string]any)
+	if intOf(result["generated"]) == 0 {
+		t.Fatalf("exotic_input produced no cases: %v", result)
+	}
+
+	var cases []models.TestCase
+	db.DB.Where("project_id = ? AND technique = ?", pid, "edge_case").Find(&cases)
+	if len(cases) == 0 {
+		t.Fatal("no persisted edge_case cases to inspect")
+	}
+	nonASCII := false
+	for _, tc := range cases {
+		blobs := []string{tc.Title, tc.Description, tc.Preconditions}
+		var steps []models.TestStep
+		db.DB.Where("test_case_id = ?", tc.ID).Find(&steps)
+		for _, s := range steps {
+			raw, err := json.Marshal(s.Request)
+			if err != nil {
+				t.Fatalf("marshal step request: %v", err)
+			}
+			blobs = append(blobs, string(raw))
+		}
+		for _, blob := range blobs {
+			for _, r := range blob {
+				if isArabicRune(r) {
+					t.Fatalf("Arabic character %U in case %q: %.200s", r, tc.Title, blob)
+				}
+				if r > 0x7f {
+					nonASCII = true
+				}
+			}
+		}
+	}
+	if !nonASCII {
+		t.Fatal("exotic_input must still probe non-ASCII input (emoji, CJK, accented Latin, zero-width)")
+	}
+}
+
+// isArabicRune covers every Arabic block: Arabic, Arabic Supplement/Extended-A,
+// and the Presentation Forms A/B ranges. U+FEFF (ZERO WIDTH NO-BREAK SPACE) sits
+// at the end of Presentation Forms-B but is a BOM, not an Arabic letter — it is
+// a legitimate zero-width probe, so the range stops at U+FEFC.
+func isArabicRune(r rune) bool {
+	return (r >= 0x0600 && r <= 0x06ff) || (r >= 0x0750 && r <= 0x077f) ||
+		(r >= 0x08a0 && r <= 0x08ff) || (r >= 0xfb50 && r <= 0xfdff) ||
+		(r >= 0xfe70 && r <= 0xfefc)
 }
 
 func TestInsightGenerateClosesTheGapAndDoesNotDuplicate(t *testing.T) {
@@ -789,7 +851,7 @@ func seedUserInOrg(t *testing.T, orgID, role string) map[string]string {
 
 func TestUntrustedFramingKeepsMockDeterministic(t *testing.T) {
 	provider := llm.Get()
-	segment := "REQ-500 يجب أن يقوم النظام بإنشاء عميل\n- رقم الجوال يطابق 05XXXXXXXX"
+	segment := "REQ-500 The system must create a customer\n- The phone number matches 05XXXXXXXX"
 	framed, err := provider.CompleteJSON("extract_requirement",
 		"Extract the software requirement from this segment.\n"+llm.UntrustedNote+
 			llm.UntrustedOpen+"\nSEGMENT:\n"+segment+"\n"+llm.UntrustedClose, nil)

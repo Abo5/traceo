@@ -44,7 +44,7 @@ func SeedDemo() {
 	org := models.Organisation{Name: "Traceo Demo Org", Plan: "team", Settings: models.JSONMap{}}
 	DB.Create(&org)
 	h1, _ := security.HashPassword("Demo1234!")
-	DB.Create(&models.User{OrganisationID: org.ID, Email: "demo@traceo.sa", Name: "Nawaf Al-Qahtani", PasswordHash: h1, Role: "qa_lead", Locale: "ar"})
+	DB.Create(&models.User{OrganisationID: org.ID, Email: "demo@traceo.sa", Name: "Nawaf Al-Qahtani", PasswordHash: h1, Role: "qa_lead", Locale: "en"})
 	h2, _ := security.HashPassword("Demo1234!")
-	DB.Create(&models.User{OrganisationID: org.ID, Email: "admin@traceo.sa", Name: "Reem Al-Otaibi", PasswordHash: h2, Role: "admin", Locale: "ar"})
+	DB.Create(&models.User{OrganisationID: org.ID, Email: "admin@traceo.sa", Name: "Reem Al-Otaibi", PasswordHash: h2, Role: "admin", Locale: "en"})
 }

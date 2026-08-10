@@ -586,9 +586,9 @@ func ciGate(c *gin.Context) {
 // ---------------------------------------------------------------------------
 
 var gapNextActions = map[string]string{
-	"no_reachable_endpoint": "استورد مواصفة تغطي هذا المتطلب أو اربطه يدوياً",
-	"all_cases_disabled":    "اعتمد إحدى الحالات المرتبطة في المراجعة",
-	"no_approved_cases":     "ولّد حالات لهذا المتطلب",
+	"no_reachable_endpoint": "Import a specification that covers this requirement, or link it manually",
+	"all_cases_disabled":    "Approve one of the linked test cases in review",
+	"no_approved_cases":     "Generate test cases for this requirement",
 }
 
 func gapReason(caseStates []string) string {
@@ -1122,7 +1122,7 @@ func slackSummary(payload map[string]any) string {
 		}
 		return d
 	}
-	return fmt.Sprintf("اكتمل التشغيل #%v في مشروع %v: %v ناجح، %v فاشل، %v خطأ من أصل %v",
+	return fmt.Sprintf("Run #%v finished in project %v: %v passed, %v failed, %v errored out of %v",
 		get(run, "display_id", "?"), get(project, "name", "?"),
 		get(counts, "passed", 0), get(counts, "failed", 0),
 		get(counts, "errored", 0), get(counts, "total", 0))
@@ -1347,7 +1347,7 @@ func exportDefectsCSV(c *gin.Context) {
 		})
 	}
 	writer.Flush()
-	// UTF-8 BOM so Excel opens Arabic content correctly
+	// UTF-8 BOM so Excel opens non-ASCII content correctly
 	body := append([]byte("\ufeff"), []byte(buf.String())...)
 	c.Header("Content-Disposition",
 		fmt.Sprintf(`attachment; filename="traceo-run-%d-defects.csv"`, displayID))
@@ -1652,7 +1652,7 @@ func exportOrganisation(c *gin.Context) {
 	projDocs := []map[string]any{}
 	for _, p := range projects {
 		projDocs = append(projDocs, map[string]any{"id": p.ID, "name": p.Name,
-			"language": p.Language, "status": p.Status, "created_at": isoV(p.CreatedAt)})
+			"status": p.Status, "created_at": isoV(p.CreatedAt)})
 	}
 	reqDocs := []map[string]any{}
 	for _, r := range reqs {

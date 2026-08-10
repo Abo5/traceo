@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
 import { useCan } from "@/lib/permissions";
 import { Badge, Button, Card, Empty, Input, PageHeader, Pill, Progress, RefChip, StatusDot, Table } from "@/components/ui";
 
@@ -15,7 +14,7 @@ function asList(x: any): any[] {
 
 function M({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
-    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12, ...style }}>
+    <span style={{ fontFamily: "'JetBrains Mono',ui-monospace,monospace", fontSize: 12, ...style }}>
       {children}
     </span>
   );
@@ -34,9 +33,8 @@ function MethodBadge({ method }: { method: string }) {
   const color = METHOD_COLORS[m] ?? "var(--text-secondary)";
   return (
     <span
-      dir="ltr"
       style={{
-        fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace",
+        fontFamily: "'JetBrains Mono',ui-monospace,monospace",
         fontSize: 11,
         fontWeight: 700,
         letterSpacing: "0.04em",
@@ -82,12 +80,12 @@ function Toggle({ on, onChange, disabled, testId }: { on: boolean; onChange: () 
         style={{
           position: "absolute",
           top: 2,
-          insetInlineStart: on ? 18 : 2,
+          left: on ? 18 : 2,
           width: 16,
           height: 16,
           borderRadius: 999,
           background: on ? "var(--accent-fg)" : "var(--text-muted)",
-          transition: "inset-inline-start 120ms",
+          transition: "left 120ms",
         }}
       />
     </button>
@@ -96,77 +94,41 @@ function Toggle({ on, onChange, disabled, testId }: { on: boolean; onChange: () 
 
 export default function EndpointsPage() {
   const { id } = useParams<{ id: string }>();
-  const { lang } = useLang();
   const canDo = useCan();
 
-  const L =
-    lang === "ar"
-      ? {
-          title: "الواجهات",
-          sub: "استورد مواصفة OpenAPI / Swagger لاكتشاف الواجهات القابلة للاختبار",
-          importCard: "استيراد المواصفة",
-          tabUrl: "جلب من رابط",
-          tabFile: "رفع ملف",
-          urlPh: "https://example.com/openapi.json",
-          fetchBtn: "استيراد",
-          filePick: "اختر ملف JSON / YAML",
-          importing: "جارٍ الاستيراد…",
-          warnings: "تحذيرات",
-          importResult: "نتيجة الاستيراد",
-          inventory: "مخزون الواجهات",
-          method: "الطريقة",
-          path: "المسار",
-          summary: "الملخّص",
-          params: "المعاملات",
-          tests: "الاختبارات",
-          coverage: "التغطية",
-          lastOutcome: "آخر نتيجة",
-          security: "الأمان",
-          secured: "مؤمَّن",
-          open: "مفتوح",
-          included: "مضمّن",
-          empty: "لا توجد واجهات بعد",
-          emptyHint: "استورد مواصفة OpenAPI لاكتشاف الواجهات",
-          loadError: "تعذّر تحميل البيانات",
-          retry: "إعادة المحاولة",
-          added: "مضافة",
-          updated: "محدَّثة",
-          removed: "محذوفة",
-          total: "الإجمالي",
-        }
-      : {
-          title: "Endpoints",
-          sub: "Import an OpenAPI / Swagger spec to discover testable endpoints",
-          importCard: "Import spec",
-          tabUrl: "Fetch from URL",
-          tabFile: "Upload file",
-          urlPh: "https://example.com/openapi.json",
-          fetchBtn: "Import",
-          filePick: "Pick a JSON / YAML file",
-          importing: "Importing…",
-          warnings: "Warnings",
-          importResult: "Import result",
-          inventory: "Endpoint inventory",
-          method: "Method",
-          path: "Path",
-          summary: "Summary",
-          params: "Params",
-          tests: "Tests",
-          coverage: "Coverage",
-          lastOutcome: "Last outcome",
-          security: "Security",
-          secured: "Secured",
-          open: "Open",
-          included: "Included",
-          empty: "No endpoints yet",
-          emptyHint: "Import an OpenAPI spec to discover endpoints",
-          loadError: "Failed to load data",
-          retry: "Retry",
-          added: "Added",
-          updated: "Updated",
-          removed: "Removed",
-          total: "Total",
-        };
+  const L = {
+    title: "Endpoints",
+    sub: "Import an OpenAPI / Swagger spec to discover testable endpoints",
+    importCard: "Import spec",
+    tabUrl: "Fetch from URL",
+    tabFile: "Upload file",
+    urlPh: "https://example.com/openapi.json",
+    fetchBtn: "Import",
+    filePick: "Pick a JSON / YAML file",
+    importing: "Importing…",
+    warnings: "Warnings",
+    importResult: "Import result",
+    inventory: "Endpoint inventory",
+    method: "Method",
+    path: "Path",
+    summary: "Summary",
+    params: "Params",
+    tests: "Tests",
+    coverage: "Coverage",
+    lastOutcome: "Last outcome",
+    security: "Security",
+    secured: "Secured",
+    open: "Open",
+    included: "Included",
+    empty: "No endpoints yet",
+    emptyHint: "Import an OpenAPI spec to discover endpoints",
+    loadError: "Failed to load data",
+    retry: "Retry",
+    added: "Added",
+    updated: "Updated",
+    removed: "Removed",
+    total: "Total",
+  };
 
   const [tab, setTab] = useState<"url" | "file">("url");
   const [url, setUrl] = useState("");
@@ -262,12 +224,11 @@ export default function EndpointsPage() {
         {tab === "url" ? (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Input
-              dir="ltr"
               placeholder={L.urlPh}
               value={url}
               onChange={(e: any) => setUrl(e.target.value)}
               testId="endpoints-import-url-input"
-              style={{ flex: 1, minWidth: 260, fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12 }}
+              style={{ flex: 1, minWidth: 260, fontFamily: "'JetBrains Mono',ui-monospace,monospace", fontSize: 12 }}
             />
             <Button disabled={importing || !url.trim()} onClick={() => doImport({ url: url.trim() })} testId="endpoints-import-submit-button">
               {importing ? L.importing : L.fetchBtn}
@@ -321,7 +282,7 @@ export default function EndpointsPage() {
                 <div style={{ fontSize: 12, fontWeight: 600, color: "var(--warning)", marginBottom: 6 }}>
                   {L.warnings} ({warnings.length})
                 </div>
-                <ul style={{ margin: 0, paddingInlineStart: 18, display: "flex", flexDirection: "column", gap: 4 }}>
+                <ul style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 4 }}>
                   {warnings.map((w, i) => (
                     <li key={i} style={{ fontSize: 12, color: "var(--text-secondary)" }}>
                       <M style={{ fontSize: 11 }}>{typeof w === "string" ? w : w?.message ?? JSON.stringify(w)}</M>

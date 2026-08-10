@@ -84,7 +84,7 @@ func makeGroundedCase() map[string]any {
 				"headers": map[string]any{"Content-Type": "application/json",
 					"Authorization": "Bearer {{token}}"},
 				"params": map[string]any{},
-				"body": map[string]any{"name": "سارة القحطاني", "phone": "0512345678",
+				"body": map[string]any{"name": "Sarah Nolan", "phone": "0512345678",
 					"email": "sara@example.sa", "age": 30},
 			},
 			"assertions":  []any{map[string]any{"type": "status_code", "expected": 201}},
@@ -162,7 +162,7 @@ func TestFabricatedQueryParamYieldsViolation(t *testing.T) {
 func TestFabricatedBodyFieldYieldsViolation(t *testing.T) {
 	c := makeGroundedCase()
 	body := firstStep(c)["request"].(map[string]any)["body"].(map[string]any)
-	body["nickname"] = "أبو فهد" // not in schema
+	body["nickname"] = "Nickname" // not in schema
 	v := generation.GroundingValidate(c, makeGroundingInventory())
 	if len(v) == 0 || !anyViolationContains(v, "'nickname'", "does not exist") {
 		t.Fatalf("fabricated body field must be rejected: %v", v)
@@ -267,7 +267,7 @@ func assertBodyGrounded(t *testing.T, body, schema map[string]any, ctx string) {
 
 func TestGeneratedCasesAreGroundedInImportedInventory(t *testing.T) {
 	headers := registerOrg(t, "Test Org")
-	pid := createProject(t, headers, "مشروع اختبار", "ar")
+	pid := createProject(t, headers, "Test Project")
 
 	importSpec(t, headers, pid) // POST /customers + GET /customers/{id}
 	rid := addRequirement(t, headers, pid, "REQ-100",

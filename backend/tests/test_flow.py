@@ -1,33 +1,31 @@
 """End-to-end in-process flow (NFR-MNT-04, API_CONTRACT quality gates).
 
-register -> Arabic project -> upload .md requirements doc -> parse job ->
+register -> project -> upload .md requirements doc -> parse job ->
 requirements extracted -> confirm_all -> import OpenAPI spec -> generate
 (standard) -> approve all drafts -> traceability shows coverage -> xlsx export.
 """
 from conftest import import_spec, items_of, poll_job
 
-REQUIREMENTS_MD = """# المتطلبات
+REQUIREMENTS_MD = """# Requirements
 
-REQ-001: يجب أن يبدأ رقم الجوال بـ 05 وأن يتكوّن من 10 أرقام فقط عند إنشاء العميل عبر POST /customers.
-- رفض أي رقم لا يطابق الصيغة 05XXXXXXXX بالرمز 422 (invalid phone rejected)
-- قبول رقم صحيح مثل 0512345678 (valid phone accepted for customers)
+REQ-001: The customer phone number must start with 05 and be exactly 10 digits when creating a customer through POST /customers.
+- reject any phone that does not match 05XXXXXXXX with a 422 (invalid phone rejected)
+- accept a valid phone such as 0512345678 (valid phone accepted for customers)
 
-REQ-002: يجب أن يكون عمر العميل بين 18 و120 عاماً عند إنشاء customer جديد.
-- رفض age أقل من 18 بالرمز 422 (customers age minimum)
-- رفض age أكبر من 120 بالرمز 422 (age maximum accepted boundary)
+REQ-002: The customer age must be between 18 and 120 when creating a new customer.
+- reject an age below 18 with a 422 (customers age minimum)
+- reject an age above 120 with a 422 (age maximum accepted boundary)
 """
-
 
 def test_full_flow_from_document_to_export(client, register_org, create_project,
                                            tmp_path):
-    headers = register_org("شركة الجودة")
+    headers = register_org("Quality Works")
     # automation=manual: this test walks the MANUAL path end to end — the
     # autopilot default would auto-confirm/auto-generate ahead of the steps below
-    pid = create_project(headers, name="منصة الطلبات", language="ar",
-                         automation="manual")
+    pid = create_project(headers, name="Orders Platform", automation="manual")
 
     # -- 1. upload the requirements document (multipart .md) and wait for the parse job
-    doc_path = tmp_path / "requirements_ar.md"
+    doc_path = tmp_path / "requirements.md"
     doc_path.write_text(REQUIREMENTS_MD, encoding="utf-8")
     with doc_path.open("rb") as fh:
         r = client.post(f"/v1/projects/{pid}/documents",

@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api, getUser } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
 import { useCan } from "@/lib/permissions";
 import {
   Badge,
@@ -35,66 +34,15 @@ const ROLE_TONES: Record<string, "accent" | "info" | "success" | "muted"> = {
   viewer: "muted",
 };
 
-export default function MembersPage() {
-  const { lang } = useLang();
-  const ar = lang === "ar";
-  const canDo = useCan();
+const ROLE_LABELS: Record<string, string> = {
+  admin: "Admin",
+  qa_lead: "QA Lead",
+  qa_engineer: "QA Engineer",
+  viewer: "Viewer",
+};
 
-  const L = ar
-    ? {
-        title: "الأعضاء",
-        sub: "إدارة أعضاء المنشأة وأدوارهم",
-        audit: "سجل التدقيق",
-        invite: "دعوة عضو",
-        name: "الاسم",
-        email: "البريد الإلكتروني",
-        role: "الدور",
-        joined: "تاريخ الانضمام",
-        actions: "إجراءات",
-        remove: "إزالة",
-        tempPassword: "كلمة مرور مؤقتة",
-        tempHint: "8 أحرف على الأقل — شاركها مع العضو ليغيّرها لاحقًا",
-        roles: {
-          admin: "مدير",
-          qa_lead: "قائد جودة",
-          qa_engineer: "مهندس جودة",
-          viewer: "مشاهد",
-        } as Record<string, string>,
-        cancel: "إلغاء",
-        confirm: "تأكيد",
-        confirmRemoveTitle: "إزالة عضو",
-        confirmRemove: "سيفقد هذا العضو الوصول إلى المنشأة. متابعة؟",
-        empty: "لا يوجد أعضاء",
-        you: "أنت",
-        loading: "جارٍ التحميل…",
-      }
-    : {
-        title: "Members",
-        sub: "Manage your organisation's members and roles",
-        audit: "Audit log",
-        invite: "Invite member",
-        name: "Name",
-        email: "Email",
-        role: "Role",
-        joined: "Joined",
-        actions: "Actions",
-        remove: "Remove",
-        tempPassword: "Temporary password",
-        tempHint: "At least 8 characters — share it with the member to change later",
-        roles: {
-          admin: "Admin",
-          qa_lead: "QA Lead",
-          qa_engineer: "QA Engineer",
-          viewer: "Viewer",
-        } as Record<string, string>,
-        cancel: "Cancel",
-        confirm: "Confirm",
-        confirmRemoveTitle: "Remove member",
-        confirmRemove: "This member will lose access to the organisation. Continue?",
-        empty: "No members",
-        you: "You",
-        loading: "Loading…",
-      };
+export default function MembersPage() {
+  const canDo = useCan();
 
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
@@ -183,21 +131,21 @@ export default function MembersPage() {
   return (
     <div className="stack" data-testid="members-page-root">
       <PageHeader
-        title={L.title}
-        sub={L.sub}
+        title="Members"
+        sub="Manage your organisation's members and roles"
         testId="members-page-header"
         actions={
           <>
             {canDo("view_audit_log") && (
               <Link href="/settings/audit">
                 <Button variant="ghost" size="sm" testId="members-audit-link-button">
-                  {L.audit}
+                  Audit log
                 </Button>
               </Link>
             )}
             {canDo("manage_members") && (
               <Button variant="primary" testId="members-invite-button" onClick={() => setInviteOpen(true)}>
-                + {L.invite}
+                + Invite member
               </Button>
             )}
           </>
@@ -207,19 +155,19 @@ export default function MembersPage() {
       {error && <div className="error-text" data-testid="members-error-text">{error}</div>}
 
       {loading ? (
-        <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>{L.loading}</div>
+        <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>Loading…</div>
       ) : members.length === 0 ? (
-        <Empty title={L.empty} testId="members-empty-state" />
+        <Empty title="No members" testId="members-empty-state" />
       ) : (
         <div className="card" style={{ padding: "6px 18px 12px" }}>
-          <Table head={[L.name, L.email, L.role, L.joined, L.actions]} testId="members-table-root">
+          <Table head={["Name", "Email", "Role", "Joined", "Actions"]} testId="members-table-root">
             {members.map((m) => (
               <tr key={m.id} data-testid="members-row">
                 <td style={{ fontWeight: 600 }}>
                   {m.name}
                   {me?.id === m.id && (
-                    <span style={{ marginInlineStart: 8 }}>
-                      <Badge tone="accent">{L.you}</Badge>
+                    <span style={{ marginLeft: 8 }}>
+                      <Badge tone="accent">You</Badge>
                     </span>
                   )}
                 </td>
@@ -228,7 +176,7 @@ export default function MembersPage() {
                 </td>
                 <td>
                   <div className="row" style={{ gap: 8, flexWrap: "nowrap" }}>
-                    <Badge tone={ROLE_TONES[m.role] ?? "muted"} testId="members-row-role-badge">{L.roles[m.role] ?? m.role}</Badge>
+                    <Badge tone={ROLE_TONES[m.role] ?? "muted"} testId="members-row-role-badge">{ROLE_LABELS[m.role] ?? m.role}</Badge>
                     {canDo("manage_members") && (
                       <Select
                         value={m.role}
@@ -239,7 +187,7 @@ export default function MembersPage() {
                       >
                         {ROLES.map((r) => (
                           <option key={r} value={r}>
-                            {L.roles[r]}
+                            {ROLE_LABELS[r]}
                           </option>
                         ))}
                       </Select>
@@ -254,7 +202,7 @@ export default function MembersPage() {
                 <td>
                   {canDo("manage_members") && me?.id !== m.id && (
                     <Button variant="danger" size="sm" testId="members-row-remove-button" onClick={() => setRemoving(m)}>
-                      {L.remove}
+                      Remove
                     </Button>
                   )}
                 </td>
@@ -265,9 +213,9 @@ export default function MembersPage() {
       )}
 
       {/* invite modal */}
-      <Modal open={inviteOpen} onClose={() => setInviteOpen(false)} title={L.invite} testId="members-invite-modal">
+      <Modal open={inviteOpen} onClose={() => setInviteOpen(false)} title="Invite member" testId="members-invite-modal">
         <form onSubmit={invite} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <Field label={L.name} testId="members-invite-name-input">
+          <Field label="Name" testId="members-invite-name-input">
             <Input
               required
               maxLength={200}
@@ -275,31 +223,29 @@ export default function MembersPage() {
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
             />
           </Field>
-          <Field label={L.email} testId="members-invite-email-input">
+          <Field label="Email" testId="members-invite-email-input">
             <Input
               type="email"
-              dir="ltr"
               required
               value={form.email}
               onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
             />
           </Field>
-          <Field label={L.role} testId="members-invite-role-select">
+          <Field label="Role" testId="members-invite-role-select">
             <Select
               value={form.role}
               onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}
             >
               {ROLES.map((r) => (
                 <option key={r} value={r}>
-                  {L.roles[r]}
+                  {ROLE_LABELS[r]}
                 </option>
               ))}
             </Select>
           </Field>
-          <Field label={L.tempPassword} hint={L.tempHint} testId="members-invite-password-input">
+          <Field label="Temporary password" hint="At least 8 characters — share it with the member; they can change it later" testId="members-invite-password-input">
             <Input
               type="password"
-              dir="ltr"
               required
               minLength={8}
               autoComplete="new-password"
@@ -310,30 +256,30 @@ export default function MembersPage() {
           {inviteError && <div className="error-text" data-testid="members-invite-error-text">{inviteError}</div>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <Button variant="ghost" testId="members-invite-cancel-button" onClick={() => setInviteOpen(false)}>
-              {L.cancel}
+              Cancel
             </Button>
             <Button type="submit" variant="primary" disabled={inviting} testId="members-invite-submit-button">
-              {L.invite}
+              Invite member
             </Button>
           </div>
         </form>
       </Modal>
 
       {/* remove confirm */}
-      <Modal open={!!removing} onClose={() => setRemoving(null)} title={L.confirmRemoveTitle} testId="members-remove-modal">
+      <Modal open={!!removing} onClose={() => setRemoving(null)} title="Remove member" testId="members-remove-modal">
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ fontSize: 13.5, color: "var(--text-secondary)" }}>
             <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>
               {removing?.name} — <Mono style={{ fontSize: 12 }}>{removing?.email}</Mono>
             </div>
-            {L.confirmRemove}
+            This member will lose access to the organisation. Continue?
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <Button variant="ghost" testId="members-remove-cancel-button" onClick={() => setRemoving(null)}>
-              {L.cancel}
+              Cancel
             </Button>
             <Button variant="danger" disabled={removeBusy} testId="members-remove-confirm-button" onClick={runRemove}>
-              {L.confirm}
+              Confirm
             </Button>
           </div>
         </div>

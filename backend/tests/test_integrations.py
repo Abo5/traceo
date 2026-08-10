@@ -20,9 +20,10 @@ def seed_approved_cases(client, headers, pid):
     """Manual requirement -> confirm -> spec import -> generate -> approve all."""
     rid = add_requirement(
         client, headers, pid, "REQ-001",
-        "يجب أن يبدأ رقم الجوال بـ 05 وأن يتكوّن من 10 أرقام فقط عند إنشاء العميل عبر POST /customers.",
-        criteria=["رفض أي رقم لا يطابق الصيغة 05XXXXXXXX بالرمز 422 (invalid phone rejected)",
-                  "قبول رقم صحيح مثل 0512345678 (valid phone accepted for customers)"])
+        "The customer phone number must start with 05 and be exactly 10 digits "
+        "when creating a customer through POST /customers.",
+        criteria=["reject any phone that does not match 05XXXXXXXX with a 422 (invalid phone rejected)",
+                  "accept a valid phone such as 0512345678 (valid phone accepted for customers)"])
     confirm_requirement(client, headers, rid)
     import_spec(client, headers, pid)
     r = client.post(f"/v1/projects/{pid}/generate", json={"depth": "smoke"},
@@ -145,7 +146,7 @@ def test_gate_thresholds_with_seeded_flow(client, register_org, create_project):
 
     # add an uncovered confirmed requirement -> coverage 50% -> min_coverage breach
     rid2 = add_requirement(client, headers, pid, "REQ-XXX",
-                           "متطلب بلا حالات اختبار بعد")
+                           "A requirement with no test cases yet")
     confirm_requirement(client, headers, rid2)
     gate = client.get(f"/v1/projects/{pid}/gate", headers=headers).json()
     assert gate["pass"] is False and gate["coverage_pct"] == 50.0
@@ -236,7 +237,7 @@ def test_xray_and_defects_exports(client, register_org, create_project):
         assert t["testInfo"]["type"] == "Generic" and t["testInfo"]["summary"]
     assert any(t.get("testKey") == "REQ-001" for t in doc["tests"])
 
-    # Jira defects CSV: failures only, UTF-8 BOM for Excel-Arabic
+    # Jira defects CSV: failures only, UTF-8 BOM so Excel reads it as UTF-8
     r = client.get(f"/v1/runs/{run_id}/exports/defects.csv", headers=headers)
     assert r.status_code == 200
     assert r.content.startswith(b"\xef\xbb\xbf"), "missing UTF-8 BOM"
@@ -290,7 +291,7 @@ def test_webhook_crud_test_and_fire(client, register_org, create_project, webhoo
     hooks = client.get(f"/v1/projects/{pid}/webhooks", headers=headers).json()
     assert hooks[0]["last_status"] == 200 and hooks[0]["last_fired_at"]
 
-    # Slack special case: {"text": <Arabic summary>} payload instead
+    # Slack special case: {"text": <summary line>} payload instead
     r = client.post(f"/v1/projects/{pid}/webhooks",
                     json={"name": "slack",
                           "url": "https://hooks.slack.com/services/T0/B0/XYZ"},
@@ -299,7 +300,8 @@ def test_webhook_crud_test_and_fire(client, register_org, create_project, webhoo
     client.post(f"/v1/webhooks/{r.json()['id']}/test", headers=headers)
     slack_body = json.loads(webhook_net[-1]["content"])
     assert set(slack_body) == {"text"}
-    assert "اكتمل التشغيل" in slack_body["text"]
+    assert slack_body["text"].startswith("Run #")
+    assert "completed in project" in slack_body["text"]
 
     # fire_webhooks() delivers to every enabled subscribed hook and never raises
     from app.db import SessionLocal
@@ -411,12 +413,58 @@ def test_schedule_crud_and_scheduler_tick(client, register_org, create_project):
     assert client.get(f"/v1/projects/{pid}/schedules", headers=headers).json() == []
 
 
+# ------------------------------------------------------------------ report deliverables
+
+def test_run_report_html_is_english_and_ltr(client, register_org, create_project):
+    """The printable run report used to switch between an Arabic and an English
+    label table and flip the document direction. There is one table now, and the
+    document is always LTR English — no project field can change that."""
+    headers = register_org()
+    pid = create_project(headers, automation="manual")
+    seed_approved_cases(client, headers, pid)
+    eid = make_env(client, headers, pid)
+    r = client.post(f"/v1/projects/{pid}/runs", json={"environment_id": eid},
+                    headers=headers)
+    assert r.status_code == 202, r.text
+    run_id = r.json()["run_id"]
+    wait_run_terminal(client, headers, run_id)
+
+    r = client.get(f"/v1/runs/{run_id}/report.html", headers=headers)
+    assert r.status_code == 200, r.text
+    page = r.text
+    assert '<html dir="ltr" lang="en">' in page
+    assert 'dir="rtl"' not in page and 'lang="ar"' not in page
+    assert "Run Report" in page and "Defect reports" in page and "All results" in page
+    # no Arabic anywhere in the deliverable
+    assert not any("\u0600" <= ch <= "\u06ff" for ch in page)
+    # RTL-only CSS hacks are gone with the branch that needed them
+    assert "border-inline-start" not in page and "text-align: start" not in page
+
+
+def test_matrix_xlsx_sheets_are_ltr(client, register_org, create_project):
+    """FR-RPT-07's RTL sheet flag was driven by project.language; with the column
+    gone every sheet must come out left-to-right."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    headers = register_org()
+    pid = create_project(headers, automation="manual")
+    seed_approved_cases(client, headers, pid)
+    r = client.get(f"/v1/projects/{pid}/exports/matrix.xlsx", headers=headers)
+    assert r.status_code == 200, r.text
+    wb = load_workbook(BytesIO(r.content))
+    assert wb.sheetnames == ["Requirements", "Test Cases", "Matrix", "Latest Results"]
+    for ws in wb.worksheets:
+        assert not ws.sheet_view.rightToLeft, ws.title
+
+
 # ------------------------------------------------------------------ org export + reference
 
 def test_organisation_export(client, register_org, create_project):
     headers = register_org()
     pid = create_project(headers)
-    rid = add_requirement(client, headers, pid, "REQ-001", "متطلب للتصدير")
+    rid = add_requirement(client, headers, pid, "REQ-001", "A requirement to export")
     confirm_requirement(client, headers, rid)
 
     r = client.get("/v1/export/organisation", headers=headers)
@@ -443,7 +491,9 @@ def test_reference_catalog(client, register_org):
         assert f["id"].startswith("FR-") and f["group"] in groups
         assert f["priority"] in ("P0", "P1", "P2")
         assert f["status"] in ("built", "planned")
-        assert f["name_ar"] and f["name_en"] and f["description_ar"]
+        assert f["name_en"] and f["description_en"]
+        # English-only catalog: the Arabic twin fields are gone for good
+        assert "name_ar" not in f and "description_ar" not in f
     by_id = {f["id"]: f for f in features}
     # addendum features are built; capabilities absent from this codebase are honest
     assert by_id["FR-061"]["status"] == "built"

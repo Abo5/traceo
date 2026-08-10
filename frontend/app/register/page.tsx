@@ -4,13 +4,10 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, setToken, setUser } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
 import { Button, Field, Input } from "@/components/ui";
 
 export default function RegisterPage() {
   const router = useRouter();
-  const { lang } = useLang();
-  const ar = lang === "ar";
 
   const [orgName, setOrgName] = useState("");
   const [name, setName] = useState("");
@@ -30,7 +27,6 @@ export default function RegisterPage() {
           name: name.trim(),
           email: email.trim(),
           password,
-          locale: lang,
         },
       });
       setToken(res.token);
@@ -45,11 +41,9 @@ export default function RegisterPage() {
   return (
     <div className="auth-wrap" data-testid="register-page-root">
       <div className="auth-card">
-        <h1 className="auth-title">{ar ? "إنشاء حساب" : "Create account"}</h1>
+        <h1 className="auth-title">Create account</h1>
         <p className="auth-sub">
-          {ar
-            ? "أنشئ منشأتك وابدأ بتحويل المتطلبات إلى اختبارات منفّذة"
-            : "Create your organisation and turn requirements into executed tests"}
+          Create your organisation and turn requirements into executed tests
         </p>
 
         <form
@@ -57,7 +51,7 @@ export default function RegisterPage() {
           data-testid="register-form-root"
           style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 24 }}
         >
-          <Field label={ar ? "اسم المنشأة" : "Organisation name"} testId="register-form-org-name-input">
+          <Field label="Organisation name" testId="register-form-org-name-input">
             <Input
               required
               maxLength={200}
@@ -65,7 +59,7 @@ export default function RegisterPage() {
               onChange={(e) => setOrgName(e.target.value)}
             />
           </Field>
-          <Field label={ar ? "الاسم" : "Name"} testId="register-form-name-input">
+          <Field label="Name" testId="register-form-name-input">
             <Input
               required
               maxLength={200}
@@ -74,10 +68,9 @@ export default function RegisterPage() {
               onChange={(e) => setName(e.target.value)}
             />
           </Field>
-          <Field label={ar ? "البريد الإلكتروني" : "Email"} testId="register-form-email-input">
+          <Field label="Email" testId="register-form-email-input">
             <Input
               type="email"
-              dir="ltr"
               autoComplete="email"
               required
               value={email}
@@ -85,13 +78,12 @@ export default function RegisterPage() {
             />
           </Field>
           <Field
-            label={ar ? "كلمة المرور" : "Password"}
-            hint={ar ? "8 أحرف على الأقل" : "At least 8 characters"}
+            label="Password"
+            hint="At least 8 characters"
             testId="register-form-password-input"
           >
             <Input
               type="password"
-              dir="ltr"
               autoComplete="new-password"
               required
               minLength={8}
@@ -103,13 +95,7 @@ export default function RegisterPage() {
           {error && <div className="error-text" data-testid="register-form-error-text">{error}</div>}
 
           <Button type="submit" variant="primary" disabled={busy} testId="register-form-submit-button">
-            {busy
-              ? ar
-                ? "جارٍ الإنشاء…"
-                : "Creating…"
-              : ar
-                ? "إنشاء حساب"
-                : "Create account"}
+            {busy ? "Creating…" : "Create account"}
           </Button>
         </form>
 
@@ -122,13 +108,13 @@ export default function RegisterPage() {
             gap: 6,
           }}
         >
-          <span>{ar ? "لديك حساب بالفعل؟" : "Already have an account?"}</span>
+          <span>Already have an account?</span>
           <Link
             href="/login"
             data-testid="register-login-link"
             style={{ color: "var(--accent)", fontWeight: 600 }}
           >
-            {ar ? "تسجيل الدخول" : "Log in"}
+            Log in
           </Link>
         </div>
       </div>

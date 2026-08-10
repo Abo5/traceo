@@ -1,5 +1,5 @@
 /**
- * Insight repository — the sixth engine (QA Insight Agent / وكيل الرؤى).
+ * Insight repository — the sixth engine (QA Insight Agent).
  * Python: backend/app/modules/insight.py; Go: the parity route of the same
  * name (backend-go/GO_CONTRACT.md). The engine is 100% deterministic and
  * offline — no LLM call — so nothing here needs a mock-provider seam.

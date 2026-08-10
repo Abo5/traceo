@@ -5,7 +5,6 @@ import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { api, pollJob } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
 import { useCan } from "@/lib/permissions";
 import { Badge, Button, Card, Empty, PageHeader, Pill, Progress, StatCard } from "@/components/ui";
 
@@ -22,86 +21,57 @@ function jobPct(j: any): number {
 
 function M({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
-    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12, ...style }}>
+    <span style={{ fontFamily: "'JetBrains Mono',ui-monospace,monospace", fontSize: 12, ...style }}>
       {children}
     </span>
   );
 }
 
+const REASON_LABELS: Record<string, string> = {
+  no_reachable_endpoint: "No matching endpoint",
+  all_cases_disabled: "No approved cases (links exist)",
+  no_approved_cases: "No approved cases",
+  unmappable: "Could not map to an endpoint",
+};
+
 function GenerateInner() {
   const { id } = useParams<{ id: string }>();
   const search = useSearchParams();
-  const { lang } = useLang();
   const canDo = useCan();
 
-  const L =
-    lang === "ar"
-      ? {
-          title: "التوليد",
-          sub: "ولّد حالات اختبار مقيّدة بالواجهات من المتطلبات المؤكّدة",
-          reqs: "المتطلبات المؤكّدة",
-          selectAll: "تحديد الكل",
-          clearAll: "إلغاء التحديد",
-          all: "الكل",
-          high: "عالية",
-          medium: "متوسطة",
-          low: "منخفضة",
-          depth: "عمق التوليد",
-          smoke: "دخان",
-          smokeHint: "الحالات الإيجابية الأساسية فقط — الأسرع",
-          standard: "قياسي",
-          standardHint: "إيجابية + فئات التكافؤ + قيم الحدود",
-          exhaustive: "شامل",
-          exhaustiveHint: "مسح القوائم وجداول القرار للمدخلات المتقاطعة",
-          summary: "الملخّص",
-          selected: "متطلب محدد",
-          endpoints: "واجهة مكتشفة",
-          info: "التوليد مقيّد بالواجهات المكتشفة فقط — أي حالة تشير إلى واجهة غير موجودة تُستبعد قبل الحفظ",
-          generate: "توليد حالات الاختبار",
-          generating: "جارٍ التوليد…",
-          result: "نتيجة التوليد",
-          generated: "توليد",
-          discarded: "استبعاد",
-          unmappable: "متطلبات تعذّر ربطها",
-          toReview: "الانتقال إلى المراجعة",
-          empty: "لا توجد متطلبات مؤكّدة",
-          emptyHint: "أكّد المتطلبات من صفحة المتطلبات أولاً",
-          loadError: "تعذّر تحميل البيانات",
-          retry: "إعادة المحاولة",
-        }
-      : {
-          title: "Generate",
-          sub: "Generate endpoint-grounded test cases from confirmed requirements",
-          reqs: "Confirmed requirements",
-          selectAll: "Select all",
-          clearAll: "Clear selection",
-          all: "All",
-          high: "High",
-          medium: "Medium",
-          low: "Low",
-          depth: "Generation depth",
-          smoke: "Smoke",
-          smokeHint: "Core positive cases only — fastest",
-          standard: "Standard",
-          standardHint: "Positive + equivalence classes + boundary values",
-          exhaustive: "Exhaustive",
-          exhaustiveHint: "Enum sweeps and decision tables for interacting inputs",
-          summary: "Summary",
-          selected: "requirements selected",
-          endpoints: "endpoints discovered",
-          info: "Generation is grounded in discovered endpoints only — any case referencing a non-existent endpoint is discarded before saving",
-          generate: "Generate test cases",
-          generating: "Generating…",
-          result: "Generation result",
-          generated: "Generated",
-          discarded: "Discarded",
-          unmappable: "Unmappable requirements",
-          toReview: "Go to review",
-          empty: "No confirmed requirements",
-          emptyHint: "Confirm requirements on the Requirements page first",
-          loadError: "Failed to load data",
-          retry: "Retry",
-        };
+  const L = {
+    title: "Generate",
+    sub: "Generate endpoint-grounded test cases from confirmed requirements",
+    reqs: "Confirmed requirements",
+    selectAll: "Select all",
+    clearAll: "Clear selection",
+    all: "All",
+    high: "High",
+    medium: "Medium",
+    low: "Low",
+    depth: "Generation depth",
+    smoke: "Smoke",
+    smokeHint: "Core positive cases only — fastest",
+    standard: "Standard",
+    standardHint: "Positive + equivalence classes + boundary values",
+    exhaustive: "Exhaustive",
+    exhaustiveHint: "Enum sweeps and decision tables for interacting inputs",
+    summary: "Summary",
+    selected: "requirements selected",
+    endpoints: "endpoints discovered",
+    info: "Generation is grounded in discovered endpoints only — any case referencing a non-existent endpoint is discarded before saving",
+    generate: "Generate test cases",
+    generating: "Generating…",
+    result: "Generation result",
+    generated: "Generated",
+    discarded: "Discarded",
+    unmappable: "Unmappable requirements",
+    toReview: "Go to review",
+    empty: "No confirmed requirements",
+    emptyHint: "Confirm requirements on the Requirements page first",
+    loadError: "Failed to load data",
+    retry: "Retry",
+  };
 
   const DEPTHS: { v: string; label: string; hint: string }[] = [
     { v: "smoke", label: L.smoke, hint: L.smokeHint },
@@ -267,7 +237,7 @@ function GenerateInner() {
                       {r.external_id ?? "—"}
                     </M>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div dir="auto" style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.6 }}>{r.description}</div>
+                      <div style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.6 }}>{r.description}</div>
                       <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
                         {r.type && <Badge tone="info">{r.type}</Badge>}
                         {r.priority && (
@@ -295,7 +265,7 @@ function GenerateInner() {
                     display: "flex",
                     alignItems: "center",
                     gap: 12,
-                    textAlign: "start",
+                    textAlign: "left",
                     padding: "12px 14px",
                     borderRadius: 12,
                     cursor: "pointer",
@@ -399,25 +369,17 @@ function GenerateInner() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   {unmappable.map((u, i) => {
                     const req = reqById[u.requirement_id];
-                    const reasonLabel =
-                      lang === "ar"
-                        ? ({
-                            no_reachable_endpoint: "لا توجد واجهة مطابقة",
-                            all_cases_disabled: "لا حالات معتمدة (روابط موجودة)",
-                            no_approved_cases: "لا حالات معتمدة",
-                            unmappable: "تعذّر الربط بواجهة",
-                          } as Record<string, string>)[u.reason]
-                        : undefined;
+                    const reasonLabel = REASON_LABELS[u.reason];
                     return (
                       <div key={i} style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
                         <M style={{ color: "var(--warning)", whiteSpace: "nowrap" }}>
                           {req?.external_id ?? u.requirement_id}
                         </M>
-                        <span dir="auto" style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                          {reasonLabel ?? <bdi style={{ whiteSpace: "nowrap" }}>{u.reason}</bdi>}
+                        <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                          {reasonLabel ?? <span style={{ whiteSpace: "nowrap" }}>{u.reason}</span>}
                         </span>
                         {u.next_action && (
-                          <span dir="auto" style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+                          <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
                             {u.next_action}
                           </span>
                         )}
@@ -430,7 +392,7 @@ function GenerateInner() {
 
             <div>
               <Link href={`/projects/${id}/review`}>
-                <Button variant="secondary" testId="generate-to-review-button">{L.toReview} ←</Button>
+                <Button variant="secondary" testId="generate-to-review-button">{L.toReview} →</Button>
               </Link>
             </div>
           </div>

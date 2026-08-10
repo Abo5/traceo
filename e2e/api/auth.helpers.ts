@@ -2,7 +2,7 @@
  * Org provisioning over the API — no browser involved (§9).
  *
  * Flow verified against backend/app/modules/identity.py:
- * 1. POST /auth/register {org_name, name, email, password, locale} — creates the
+ * 1. POST /auth/register {org_name, name, email, password} — creates the
  *    org + its admin and returns {token, user} immediately.
  * 2. POST /members/invite {email, name, role, password} (as admin) — the invite
  *    SETS the member's password directly (InviteIn.password, min 8 chars);
@@ -44,7 +44,6 @@ export async function registerWorkerOrg(http: TraceoHttp): Promise<WorkerOrg> {
     name: 'E2E Admin',
     email: adminEmail,
     password,
-    locale: config.lang,
   });
 
   const asAdmin = new IdentityRepository(http.withAuth({ kind: 'bearer', token: admin.token }));
@@ -65,8 +64,8 @@ export async function registerWorkerOrg(http: TraceoHttp): Promise<WorkerOrg> {
 
 /**
  * Playwright storageState for a role — token lives in localStorage, not cookies.
- * Key names verified against frontend/lib/api.ts (traceo_token, traceo_user)
- * and frontend/lib/i18n.ts (traceo_lang).
+ * Key names verified against frontend/lib/api.ts (traceo_token, traceo_user).
+ * There is no language key: the product is English-only, so nothing pins one.
  */
 export function storageStateFor(actor: OrgActor): {
   cookies: never[];
@@ -80,7 +79,6 @@ export function storageStateFor(actor: OrgActor): {
         localStorage: [
           { name: 'traceo_token', value: actor.token },
           { name: 'traceo_user', value: JSON.stringify(actor.user) },
-          { name: 'traceo_lang', value: config.lang }, // pin the language — never rely on the default
         ],
       },
     ],

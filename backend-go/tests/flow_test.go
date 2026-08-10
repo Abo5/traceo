@@ -1,6 +1,6 @@
 // RELEASE GATE — end-to-end in-process flow (port of backend/tests/test_flow.py).
 //
-// register -> Arabic project -> upload .md requirements doc -> parse job ->
+// register -> project -> upload .md requirements doc -> parse job ->
 // requirements extracted -> confirm_all -> import OpenAPI spec -> generate
 // (standard) -> approve all drafts -> traceability shows coverage -> xlsx export.
 package tests_test
@@ -10,23 +10,23 @@ import (
 	"testing"
 )
 
-const requirementsMD = `# المتطلبات
+const requirementsMD = `# Requirements
 
-REQ-001: يجب أن يبدأ رقم الجوال بـ 05 وأن يتكوّن من 10 أرقام فقط عند إنشاء العميل عبر POST /customers.
-- رفض أي رقم لا يطابق الصيغة 05XXXXXXXX بالرمز 422 (invalid phone rejected)
-- قبول رقم صحيح مثل 0512345678 (valid phone accepted for customers)
+REQ-001: The customer phone number must start with 05 and must be exactly 10 digits when a customer is created through POST /customers.
+- Reject any number that does not match the 05XXXXXXXX format with 422 (invalid phone rejected)
+- Accept a valid number such as 0512345678 (valid phone accepted for customers)
 
-REQ-002: يجب أن يكون عمر العميل بين 18 و120 عاماً عند إنشاء customer جديد.
-- رفض age أقل من 18 بالرمز 422 (customers age minimum)
-- رفض age أكبر من 120 بالرمز 422 (age maximum accepted boundary)
+REQ-002: The customer age must be between 18 and 120 when a new customer is created.
+- Reject an age below 18 with 422 (customers age minimum)
+- Reject an age above 120 with 422 (age maximum accepted boundary)
 `
 
 func TestFullFlowFromDocumentToExport(t *testing.T) {
-	headers := registerOrg(t, "شركة الجودة")
-	pid := createProject(t, headers, "منصة الطلبات", "ar")
+	headers := registerOrg(t, "Quality Works")
+	pid := createProject(t, headers, "Orders Platform")
 
 	// -- 1. upload the requirements document (multipart .md) and wait for the parse job
-	w := uploadFile(t, "/v1/projects/"+pid+"/documents", "requirements_ar.md",
+	w := uploadFile(t, "/v1/projects/"+pid+"/documents", "requirements_en.md",
 		[]byte(requirementsMD), "text/markdown", headers)
 	if w.Code != 200 && w.Code != 201 && w.Code != 202 {
 		t.Fatalf("upload failed: %d %.300s", w.Code, w.Body.String())

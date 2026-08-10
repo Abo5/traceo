@@ -1,6 +1,7 @@
 /**
  * Entity state vocabularies — copied LITERALLY from backend/app/models.py (§5:
- * "قيم الحالة في data-state تُنسخ حرفياً من backend/app/models.py — لا مفردات موازية").
+ * state values carried in data-state are copied verbatim from
+ * backend/app/models.py — no parallel vocabulary).
  */
 
 /** Requirement.state */
@@ -64,7 +65,7 @@ export type EdgeCategory = (typeof EDGE_CATEGORIES)[number];
  * Per-category status of GET /projects/{id}/insights — a pure function of the
  * two counters: covered (covered_count>0) | gap (0 covered, >0 suggestable) |
  * n_a (nothing in the inventory to ground the category in). Carried on the
- * category badge as data-state, never asserted through bilingual text.
+ * category badge as data-state, never asserted through visible copy.
  */
 export const INSIGHT_STATUSES = ['covered', 'gap', 'n_a'] as const;
 export type InsightStatus = (typeof INSIGHT_STATUSES)[number];

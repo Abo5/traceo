@@ -190,13 +190,14 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: PR fast lane
         # Fast subset per docs §12: smoke + critical path + light permission
-        # checks + bilingual/a11y smokes. --grep-invert "@regression" keeps the
-        # heavy specs out of the PR lane even when they share a fast tag
-        # (e.g. the permission matrix is "@permission @regression" and the
-        # full UI pipeline is "@e2e @regression").
+        # checks + the a11y smoke. There is no @i18n lane any more — Traceo is
+        # English-only, so there is no second language to run the smokes in.
+        # --grep-invert "@regression" keeps the heavy specs out of the PR lane
+        # even when they share a fast tag (e.g. the permission matrix is
+        # "@permission @regression" and the full UI pipeline is "@e2e @regression").
         if: github.event_name == 'pull_request'
         working-directory: e2e
-        run: npx playwright test --grep "@smoke|@critical|@permission|@i18n|@a11y" --grep-invert "@regression"
+        run: npx playwright test --grep "@smoke|@critical|@permission|@a11y" --grep-invert "@regression"
         env:
           # Address the BACKEND's run executor uses to reach the demo SUT over
           # the compose network (e2e/config/resolve.ts; the browser never calls
@@ -205,8 +206,8 @@ jobs:
       - name: Full run (main + nightly schedule)
         # No grep — everything runs, which is a strict superset of @regression:
         # covers @e2e @regression (full UI pipeline), @permission @regression
-        # (role matrix), @negative @validation @regression, plus @i18n and
-        # @a11y alongside the fast-lane tags.
+        # (role matrix), @negative @validation @regression, plus @a11y
+        # alongside the fast-lane tags.
         if: github.ref == 'refs/heads/main' || github.event_name == 'schedule'
         working-directory: e2e
         run: npx playwright test

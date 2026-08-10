@@ -1,18 +1,18 @@
-# سجل معرّفات الاختبار — TESTID Registry
+# TESTID Registry
 
-> السجل المرجعي لكل `data-testid` في واجهة Traceo (تدقيق). مصدره الفعلي هو كود الواجهة في `frontend/app` و`frontend/components/ui.tsx`، وهو الأساس الذي تُبنى عليه محدّدات طبقة `e2e/` (راجع `docs/TEST_AUTOMATION_ARCHITECTURE.md` §5).
+> The reference index of every `data-testid` in the Traceo UI. Its source of truth is the frontend code itself (`frontend/app` and `frontend/components/ui.tsx`); it is the basis for the selectors of the `e2e/` layer (see `docs/TEST_AUTOMATION_ARCHITECTURE.md` §5).
 
-**الاصطلاح:** `domain-component-element-state` بصيغة kebab-case — مثل `review-case-approve-button`. الصفوف والشارات المتكررة تحمل معرّفاً واحداً يتكرر (مثل `review-case-row`) ويُميَّز الصف بمحتواه (بيانات الكيان لا نص الواجهة). شارات الحالة تحمل إضافةً `data-state` بقيم **منسوخة حرفياً** من `backend/app/models.py`:
+**Convention:** `domain-component-element-state` in kebab-case — e.g. `review-case-approve-button`. Repeated rows and badges carry one id that repeats (e.g. `review-case-row`); the individual row is identified by its content (entity data, never UI copy). State badges additionally carry `data-state` with values copied **verbatim** from `backend/app/models.py`:
 
 - `Requirement.state`: `extracted | confirmed | changed | removed`
 - `TestCase.state`: `draft | approved | rejected | stale | archived`
 - `Run.state`: `queued | running | completed | cancelled | aborted`
 - `Job.status`: `queued | running | completed | failed` — `SourceDocument.parse_status`: `pending | parsing | parsed | failed` — `TestResult.outcome`: `passed | failed | errored`
-- حالة فئة الرؤى في `GET /v1/projects/{id}/insights`: `covered | gap | n_a` — دالّة خالصة من العدّادين (`covered_count`/`suggestable_count`)، تُقرأ من `data-state` على `insights-category-status-badge`
+- Insight category status from `GET /v1/projects/{id}/insights`: `covered | gap | n_a` — a pure function of the two counters (`covered_count`/`suggestable_count`), read from `data-state` on `insights-category-status-badge`
 
-التأكيد على الحالة يكون عبر `data-state` حصراً، لا عبر النص المعروض (الواجهة ثنائية اللغة والنص يتبدّل وقت التشغيل). عند إضافة معرّف جديد يُحدَّث هذا الملف في نفس التغيير؛ وللتحقق: `grep -rn 'data-testid\|testId' frontend/app frontend/components`.
+State is asserted through `data-state` exclusively, never through the rendered text: copy is product wording and changes freely, state does not. The UI ships in one language (English, LTR) — there is no language switcher, no `traceo_lang` key and no language-related testid. When a new id is added, this file is updated in the same change; to verify: `grep -rn 'data-testid\|testId' frontend/app frontend/components`.
 
-ملاحظة: مكوّنات `frontend/components/ui.tsx` تمرّر خاصية `testId` إلى العنصر الفعلي (الزر، حقل الإدخال، الشارة…) — فمعرّف `Field` يقع على `input/select/textarea` نفسه.
+Note: the components in `frontend/components/ui.tsx` forward a `testId` prop to the real element (button, input, badge…), so a `Field`'s id lands on the `input/select/textarea` itself.
 
 ---
 
@@ -48,19 +48,19 @@
 |---|---|---|
 | `projects-page-root` | container | Project list page root |
 | `projects-page-header` | PageHeader | Page title + actions |
-| `projects-list-create-button` | Button | Open the create-project modal |
+| `projects-list-create-button` | Button | Primary header action — opens the create-project modal |
 | `projects-page-error-text` | text | List load error |
-| `projects-empty-state` | Empty | No projects yet |
+| `projects-empty-state` | Empty | No projects yet — carries the create call to action |
+| `projects-empty-create-button` | Button | Empty-state call to action — opens the SAME create-project modal as the header button |
 | `projects-list-grid` | grid | Cards container |
 | `projects-list-card` | card (repeated) | One project card — identified by project name |
 | `projects-card-open-link` | Link | Project name link to the overview |
-| `projects-card-language-badge` | Badge | Project language (ar/en) — `Project.language` is nullable now; rendered only once detected/set |
 | `projects-card-status-badge` | Badge | `data-state="active\|archived"` — shown when archived |
 | `projects-card-open-button` | Button | Open the project |
 | `projects-card-unarchive-button` | Button | Restore an archived project |
 | `projects-card-archive-button` | Button | Archive (opens confirm modal) |
 | `projects-card-delete-button` | Button | Delete (opens confirm modal) |
-| `projects-create-modal` | Modal | Create-project dialog — no language select any more (language is auto-detected from the first parsed document) |
+| `projects-create-modal` | Modal | Create-project dialog — name only (automation defaults to `auto` server-side) |
 | `projects-create-name-input` | Input | New project name |
 | `projects-create-error-text` | text | Creation failure message |
 | `projects-create-cancel-button` | Button | Close the dialog |
@@ -129,7 +129,7 @@
 | `nav-link-requirements` | Link | Sidebar → requirements |
 | `nav-link-endpoints` | Link | Sidebar → endpoints |
 | `nav-link-generate` | Link | Sidebar → generate |
-| `nav-link-insights` | Link | Sidebar → insights (وكيل الرؤى — المحرك السادس) |
+| `nav-link-insights` | Link | Sidebar → insights (QA Insight Agent — the sixth engine) |
 | `nav-link-review` | Link | Sidebar → review |
 | `nav-link-runs` | Link | Sidebar → runs |
 | `nav-link-matrix` | Link | Sidebar → traceability matrix |
@@ -273,9 +273,9 @@
 
 ## /projects/[id]/insights — `frontend/app/projects/[id]/insights/page.tsx`
 
-شاشة **وكيل الرؤى (QA Insight Agent)** — المحرك السادس: حتمي بالكامل، بلا نموذج لغوي وبلا اتصال خارجي. الصفحة تقرأ `GET /v1/projects/{id}/insights` وتُطلق `POST /v1/projects/{id}/insights/generate` (‏202 + `job_id` يُستطلع كأي job آخر).
+The **QA Insight Agent** screen — the sixth engine: fully deterministic, no language model and no outbound call. The page reads `GET /v1/projects/{id}/insights` and fires `POST /v1/projects/{id}/insights/generate` (202 + `job_id`, polled like any other job).
 
-تُرسَم **9 صفوف تصنيف ثابتة دائماً** بالترتيب القانوني — `boundary_surprise | exotic_input | control_chars | idempotency | state_corruption | permission_edge | timing_dst | resource_exhaustion | downstream_failure` — ويحمل كل صف معرّفه القانوني نصّاً أحاديّ المسافة (mono)، فيُخاطَب الصف بمعرّفه (بيانات الكيان) لا بعنوانه ثنائي اللغة. شارة الحالة تحمل `data-state` بقيم الخادم الحرفية: `covered | gap | n_a`.
+**All 9 taxonomy rows are always rendered** in the canonical order — `boundary_surprise | exotic_input | control_chars | idempotency | state_corruption | permission_edge | timing_dst | resource_exhaustion | downstream_failure`. Each row prints its canonical id in a monospace cell, so a row is addressed by its id (entity data) rather than by its display title. The status badge carries `data-state` with the literal server values: `covered | gap | n_a`.
 
 | data-testid | Element | Purpose |
 |---|---|---|
@@ -485,8 +485,7 @@
 |---|---|---|
 | `settings-page-root` | container | Project settings page root |
 | `settings-page-header` | PageHeader | Page title + actions |
-| `settings-tab-general-pill` | Pill | Tab: general (language + automation overrides) |
-| `settings-language-select` | Select | Project language override (`ar`/`en`; unset while still null/undetected) |
+| `settings-tab-general-pill` | Pill | Tab: general (automation override) |
 | `settings-automation-select` | Select | Automation mode (`auto`/`manual`) — autopilot on/off |
 | `settings-general-save-button` | Button | Save the general settings (PATCH /projects/{id}) |
 | `settings-general-error-text` | text | General-settings save failure message |

@@ -5,13 +5,12 @@ import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { api, pollJob } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
 import { useCan } from "@/lib/permissions";
 import { Badge, Button, Card, PageHeader, Progress, StatCard } from "@/components/ui";
 import type { BadgeTone } from "@/components/ui";
 
 /**
- * QA Insight Agent (وكيل الرؤى) — the sixth engine.
+ * QA Insight Agent — the sixth engine.
  * 100% deterministic backend: no LLM, no fabricated identifiers. This screen only
  * reads GET /projects/{id}/insights and starts the deterministic builder job via
  * POST /projects/{id}/insights/generate (202 + job_id, polled like every other job).
@@ -59,9 +58,49 @@ function jobPct(j: any): number {
   return Math.min(100, Math.round(p <= 1 ? p * 100 : p));
 }
 
+/** Taxonomy labels + one-line explanations, in QA terminology. */
+const CATEGORY_LABELS: Record<CategoryId, { label: string; hint: string }> = {
+  boundary_surprise: {
+    label: "Boundary surprises",
+    hint: "Off-by-one and limit edges beyond plain boundary-value analysis",
+  },
+  exotic_input: {
+    label: "Exotic input",
+    hint: "Emoji, CJK, accented Latin, NFC-vs-NFD normalization, zero-width characters, very long strings",
+  },
+  control_chars: {
+    label: "Control characters",
+    hint: "Null bytes and control characters inside string fields",
+  },
+  idempotency: {
+    label: "Idempotency",
+    hint: "Duplicate or replayed submit of the same mutating request, with no doubled side effect",
+  },
+  state_corruption: {
+    label: "State corruption",
+    hint: "Out-of-order or illegal state transitions",
+  },
+  permission_edge: {
+    label: "Permission edges",
+    hint: "The same request issued by a lower-privileged actor",
+  },
+  timing_dst: {
+    label: "Timing & DST",
+    hint: "Timezone, DST and date-rollover values on date-time fields",
+  },
+  resource_exhaustion: {
+    label: "Resource exhaustion",
+    hint: "Oversized payloads or extreme pagination values",
+  },
+  downstream_failure: {
+    label: "Downstream failures",
+    hint: "Dependency error propagation and failure response shapes",
+  },
+};
+
 function M({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
-    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12, ...style }}>
+    <span style={{ fontFamily: "'JetBrains Mono',ui-monospace,monospace", fontSize: 12, ...style }}>
       {children}
     </span>
   );
@@ -69,150 +108,38 @@ function M({ children, style }: { children: ReactNode; style?: CSSProperties }) 
 
 export default function InsightsPage() {
   const { id } = useParams<{ id: string }>();
-  const { lang } = useLang();
   const canDo = useCan();
-  const ar = lang === "ar";
 
-  const L = ar
-    ? {
-        title: "الرؤى",
-        sub: "وكيل رؤى حتمي — يقترح حالات الحواف المقيّدة بجرد الواجهات، بلا نموذج لغوي وبلا اتصال خارجي",
-        categories: "فئات الحواف",
-        selectAll: "تحديد كل الفجوات",
-        clearAll: "إلغاء التحديد",
-        covered: "مغطّاة",
-        suggestable: "قابلة للاقتراح",
-        totalCases: "حالة في الفئات",
-        totalCovered: "فئة مغطّاة",
-        totalSuggestable: "اقتراح متاح",
-        summary: "الملخّص",
-        selected: "فئة محددة",
-        info: "كل حالة يولّدها الوكيل تُشتق من جرد الواجهات المكتشفة وتمرّ ببوابة التحقق قبل الحفظ — لا معرّفات مُختلقة",
-        generate: "توليد حالات الحواف",
-        generating: "جارٍ التوليد…",
-        result: "نتيجة التوليد",
-        created: "أُنشئت",
-        discarded: "استُبعدت",
-        toReview: "الانتقال إلى المراجعة",
-        empty: "لا توجد رؤى بعد",
-        emptyHint: "استورد مواصفة الواجهات وأكّد المتطلبات ليتمكّن الوكيل من التأسيس عليها",
-        loadError: "تعذّر تحميل الرؤى",
-        retry: "إعادة المحاولة",
-        invalidCategory: "فئة غير مشروعة — أعد التحديد",
-        statusCovered: "مغطّاة",
-        statusGap: "فجوة",
-        statusNa: "غير منطبقة",
-        naHint: "لا يوجد ما تتأسس عليه هذه الفئة في جرد الواجهات الحالي",
-      }
-    : {
-        title: "Insights",
-        sub: "Deterministic insight agent — grounds edge-case suggestions in the endpoint inventory, no LLM, fully offline",
-        categories: "Edge categories",
-        selectAll: "Select all gaps",
-        clearAll: "Clear selection",
-        covered: "Covered",
-        suggestable: "Suggestable",
-        totalCases: "cases in categories",
-        totalCovered: "categories covered",
-        totalSuggestable: "suggestions available",
-        summary: "Summary",
-        selected: "categories selected",
-        info: "Every case the agent emits is derived from the discovered endpoint inventory and passes the grounding gate before saving — zero fabricated identifiers",
-        generate: "Generate edge cases",
-        generating: "Generating…",
-        result: "Generation result",
-        created: "Created",
-        discarded: "Discarded",
-        toReview: "Go to review",
-        empty: "No insights yet",
-        emptyHint: "Import an API spec and confirm requirements so the agent has something to ground itself in",
-        loadError: "Failed to load insights",
-        retry: "Retry",
-        invalidCategory: "Illegal category — adjust the selection",
-        statusCovered: "Covered",
-        statusGap: "Gap",
-        statusNa: "N/A",
-        naHint: "Nothing in the current endpoint inventory for this category to ground itself in",
-      };
-
-  /** Bilingual taxonomy labels + one-line explanations (Arabic first, QA terminology). */
-  const CATEGORY_LABELS: Record<CategoryId, { label: string; hint: string }> = ar
-    ? {
-        boundary_surprise: {
-          label: "حدود مفاجئة",
-          hint: "أخطاء الانزياح بواحد وحواف الحدود القصوى بما يتجاوز تحليل قيم الحدود التقليدي",
-        },
-        exotic_input: {
-          label: "مدخلات استثنائية",
-          hint: "عربية واتجاه RTL، رموز تعبيرية، تطبيع NFC مقابل NFD، محارف صفرية العرض، سلاسل طويلة جداً",
-        },
-        control_chars: {
-          label: "محارف تحكّم",
-          hint: "بايت صفري ومحارف تحكّم داخل الحقول النصية",
-        },
-        idempotency: {
-          label: "تكرار العملية",
-          hint: "إرسال مكرّر أو مُعاد لنفس الطلب المُعدِّل دون أثر جانبي مضاعف",
-        },
-        state_corruption: {
-          label: "إفساد الحالة",
-          hint: "انتقالات حالة خارج الترتيب أو غير مسموح بها",
-        },
-        permission_edge: {
-          label: "حواف الصلاحيات",
-          hint: "نفس الطلب بمنفّذ أدنى صلاحية",
-        },
-        timing_dst: {
-          label: "التوقيت والتوقيت الصيفي",
-          hint: "المناطق الزمنية والتوقيت الصيفي وتدحرج التاريخ على حقول التاريخ/الوقت",
-        },
-        resource_exhaustion: {
-          label: "استنزاف الموارد",
-          hint: "حمولة ضخمة أو قيم ترقيم صفحات متطرفة",
-        },
-        downstream_failure: {
-          label: "أعطال التبعيات",
-          hint: "انتشار أخطاء الخدمات التابعة وأشكال استجابات الفشل",
-        },
-      }
-    : {
-        boundary_surprise: {
-          label: "Boundary surprises",
-          hint: "Off-by-one and limit edges beyond plain boundary-value analysis",
-        },
-        exotic_input: {
-          label: "Exotic input",
-          hint: "Arabic/RTL, emoji, NFC-vs-NFD normalization, zero-width characters, very long strings",
-        },
-        control_chars: {
-          label: "Control characters",
-          hint: "Null bytes and control characters inside string fields",
-        },
-        idempotency: {
-          label: "Idempotency",
-          hint: "Duplicate or replayed submit of the same mutating request, with no doubled side effect",
-        },
-        state_corruption: {
-          label: "State corruption",
-          hint: "Out-of-order or illegal state transitions",
-        },
-        permission_edge: {
-          label: "Permission edges",
-          hint: "The same request issued by a lower-privileged actor",
-        },
-        timing_dst: {
-          label: "Timing & DST",
-          hint: "Timezone, DST and date-rollover values on date-time fields",
-        },
-        resource_exhaustion: {
-          label: "Resource exhaustion",
-          hint: "Oversized payloads or extreme pagination values",
-        },
-        downstream_failure: {
-          label: "Downstream failures",
-          hint: "Dependency error propagation and failure response shapes",
-        },
-      };
+  const L = {
+    title: "Insights",
+    sub: "Deterministic insight agent — grounds edge-case suggestions in the endpoint inventory, no LLM, fully offline",
+    categories: "Edge categories",
+    selectAll: "Select all gaps",
+    clearAll: "Clear selection",
+    covered: "Covered",
+    suggestable: "Suggestable",
+    totalCases: "cases in categories",
+    totalCovered: "categories covered",
+    totalSuggestable: "suggestions available",
+    summary: "Summary",
+    selected: "categories selected",
+    info: "Every case the agent emits is derived from the discovered endpoint inventory and passes the grounding gate before saving — zero fabricated identifiers",
+    generate: "Generate edge cases",
+    generating: "Generating…",
+    result: "Generation result",
+    created: "Created",
+    discarded: "Discarded",
+    toReview: "Go to review",
+    empty: "No insights yet",
+    emptyHint: "Import an API spec and confirm requirements so the agent has something to ground itself in",
+    loadError: "Failed to load insights",
+    retry: "Retry",
+    invalidCategory: "Illegal category — adjust the selection",
+    statusCovered: "Covered",
+    statusGap: "Gap",
+    statusNa: "N/A",
+    naHint: "Nothing in the current endpoint inventory for this category to ground itself in",
+  };
 
   const STATUS_LABEL: Record<InsightStatus, string> = {
     covered: L.statusCovered,
@@ -412,13 +339,13 @@ export default function InsightsPage() {
 
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
-                          <span dir="auto" style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
+                          <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
                             {meta.label}
                           </span>
                           {/* text-secondary, not text-muted: 11px muted fails WCAG AA contrast */}
                           <M style={{ color: "var(--text-secondary)", fontSize: 11 }}>{r.id}</M>
                         </div>
-                        <div dir="auto" style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.7, marginTop: 3 }}>
+                        <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.7, marginTop: 3 }}>
                           {r.status === "n_a" ? L.naHint : meta.hint}
                         </div>
                       </div>
@@ -513,7 +440,7 @@ export default function InsightsPage() {
             <div>
               <Link href={`/projects/${id}/review`}>
                 <Button variant="secondary" testId="insights-to-review-button">
-                  {L.toReview} ←
+                  {L.toReview} →
                 </Button>
               </Link>
             </div>

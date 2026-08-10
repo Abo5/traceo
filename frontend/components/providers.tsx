@@ -3,24 +3,15 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { applyDocumentLang, useLang, useT } from "@/lib/i18n";
 import { getToken, getUser, setToken, setUser } from "@/lib/api";
-import { Pill } from "@/components/ui";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
-  const { lang, setLang } = useLang();
-  const t = useT();
   const router = useRouter();
 
   const [auth, setAuth] = useState<{ token: string | null; user: any | null }>({
     token: null,
     user: null,
   });
-
-  // keep <html lang/dir> in sync with the language store
-  useEffect(() => {
-    applyDocumentLang(lang);
-  }, [lang]);
 
   // auth state (token + cached user from localStorage 'traceo_user')
   useEffect(() => {
@@ -48,20 +39,10 @@ export default function Providers({ children }: { children: React.ReactNode }) {
             T
           </span>
           <span className="wordmark">Traceo</span>
-          <span className="brand-tagline" dir="ltr">
-            requirement → test → result
-          </span>
+          <span className="brand-tagline">requirement → test → result</span>
         </Link>
         <div className="header-spacer" />
         <div className="header-right">
-          <div className="row" style={{ gap: 4 }}>
-            <Pill active={lang === "ar"} onClick={() => setLang("ar")}>
-              AR
-            </Pill>
-            <Pill active={lang === "en"} onClick={() => setLang("en")}>
-              EN
-            </Pill>
-          </div>
           {auth.token && (
             <>
               {auth.user?.name && (
@@ -70,7 +51,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
                 </span>
               )}
               <button type="button" className="btn btn-ghost btn-sm" onClick={logout}>
-                {t("logout")}
+                Log out
               </button>
             </>
           )}

@@ -21,17 +21,16 @@ import (
 // Deterministic payloads. Fixed constants, never randomised — two runs over the
 // same inventory must produce byte-identical cases.
 const (
-	// Arabic text carrying an explicit RTL mark (U+200F) and an LTR mark (U+200E).
-	arabicRTLPayload = "\u200f\u0637\u0644\u0628 \u062c\u062f\u064a\u062f \u200e2026\u200f"
+	// Mixed-script text: CJK ideographs next to accented Latin \u2014 "\u65b0\u898f order caf\u00e9".
+	mixedScriptPayload = "\u65b0\u898f order caf\u00e9 2026"
 	// Emoji outside the BMP plus a regional-indicator flag pair.
-	emojiPayload = "\u0637\u0644\u0628 \U0001F680 \u0639\u0627\u062c\u0644 \U0001F1F8\U0001F1E6"
+	emojiPayload = "order \U0001F680 urgent \U0001F1EF\U0001F1F5"
 	// The same text in NFC (composed U+00E9) and in NFD (e + combining U+0301): a
 	// server that does not normalise round-trips different bytes than it received.
-	nfcPayload = "caf\u00e9 \u0645\u0642\u0647\u0649"
-	nfdPayload = "cafe\u0301 \u0645\u0642\u0647\u0649"
+	nfcPayload = "caf\u00e9 \u5317\u4eac"
+	nfdPayload = "cafe\u0301 \u5317\u4eac"
 	// Zero-width space, zero-width joiner and a BOM inside the value.
 	zeroWidthPayload = "ab\u200bc\u200dd\ufeff"
-	longTextPayload  = "\u0627\u0644" // repeated to build the "very long text" probe
 	// NUL byte, C0 control characters and DEL inside a string field.
 	nullBytePayload   = "ab\u0000cd"
 	controlCharsInput = "ab\u0001\u0002\u001fcd\u007f"
@@ -256,7 +255,7 @@ func numLike(t string, v float64) any {
 }
 
 // ---------------------------------------------------------------------------
-// 2. exotic_input — Arabic/RTL, emoji, NFC-vs-NFD, zero-width, very long text,
+// 2. exotic_input — mixed-script text, emoji, NFC-vs-NFD, zero-width characters,
 // all written into an EXISTING free-text string field.
 // ---------------------------------------------------------------------------
 
@@ -276,7 +275,7 @@ func buildExoticInput(b caseBuilder, params, headers map[string]any, body any) [
 	// probe to resource_exhaustion, and emitting it twice would double-count the
 	// same weakness under two categories.
 	probes := []probe{
-		{"Arabic text with RTL marks", arabicRTLPayload},
+		{"mixed-script text (CJK and accented Latin)", mixedScriptPayload},
 		{"emoji (astral plane)", emojiPayload},
 		{"NFD-decomposed text", nfdPayload},
 		{"zero-width characters", zeroWidthPayload},

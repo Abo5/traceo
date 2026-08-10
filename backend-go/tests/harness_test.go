@@ -259,10 +259,10 @@ func seedOrgUser(t *testing.T, orgName, role string) (map[string]string, string,
 
 // createProject makes a MANUAL-automation project — the flow/isolation/grounding
 // gates exercise the hand-driven endpoints; autopilot has its own gates.
-func createProject(t *testing.T, headers map[string]string, name, language string) string {
+func createProject(t *testing.T, headers map[string]string, name string) string {
 	t.Helper()
 	w := do(t, "POST", "/v1/projects",
-		M{"name": name, "language": language, "automation": "manual"}, headers)
+		M{"name": name, "automation": "manual"}, headers)
 	if w.Code == 200 || w.Code == 201 {
 		data := jsonMap(t, w)
 		if id, _ := data["id"].(string); id != "" {
@@ -280,13 +280,9 @@ func createProject(t *testing.T, headers map[string]string, name, language strin
 
 // createProjectSeeded — direct-seed variant for module-scoped gates while the
 // projects module is a stub.
-func seedProject(t *testing.T, orgID, name, language string) string {
+func seedProject(t *testing.T, orgID, name string) string {
 	t.Helper()
-	var lang *string
-	if language != "" {
-		lang = &language
-	}
-	p := models.Project{OrganisationID: orgID, Name: name, Language: lang,
+	p := models.Project{OrganisationID: orgID, Name: name,
 		Status: "active", Automation: "manual"}
 	if err := db.DB.Create(&p).Error; err != nil {
 		t.Fatalf("seed project: %v", err)
@@ -308,7 +304,7 @@ func seedEnvironment(t *testing.T, orgID, projectID string) string {
 func seedRequirement(t *testing.T, orgID, projectID, externalID, state, priority string) string {
 	t.Helper()
 	r := models.Requirement{OrganisationID: orgID, ProjectID: projectID,
-		ExternalID: externalID, Description: "متطلب اختباري " + externalID,
+		ExternalID: externalID, Description: "Test requirement " + externalID,
 		AcceptanceCriteria: models.JSONList{}, Type: "functional",
 		Priority: priority, State: state, Version: 1,
 		SourceLocation: models.JSONMap{}, Confidence: 1}
@@ -328,7 +324,7 @@ func seedTestCase(t *testing.T, orgID, projectID, title, state string, reqIDs ..
 	}
 	step := models.TestStep{TestCaseID: tc.ID, Order: 0, Method: "POST", Path: "/customers",
 		Request: models.JSONMap{"headers": M{"Content-Type": "application/json"},
-			"params": M{}, "body": M{"name": "سارة", "phone": "0512345678", "age": 30}},
+			"params": M{}, "body": M{"name": "Sarah", "phone": "0512345678", "age": 30}},
 		Assertions:  models.JSONList{M{"type": "status_code", "expected": 201}},
 		Extractions: models.JSONList{}}
 	if err := db.DB.Create(&step).Error; err != nil {

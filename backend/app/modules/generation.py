@@ -33,9 +33,11 @@ MAX_CANDIDATES = 10
 MAX_COMBOS = 8          # decision-table cap
 MAX_ENUM_SWEEP = 8
 
-# FR-034 localisation probes (Arabic round-trip) + FR-033 injection-shaped strings
-ARABIC_SAMPLE = "محمد الشمري"
-ARABIC_SAMPLE_LONG = "منصة الطلبات — اختبار"
+# FR-034 localisation probes (Unicode round-trip) + FR-033 injection-shaped strings.
+# The samples are deliberately non-ASCII and deliberately NOT Arabic: accented
+# Latin plus CJK, which is what an English-only product still has to survive.
+UNICODE_SAMPLE = "José Ångström"                       # 13 chars, accented Latin
+UNICODE_SAMPLE_LONG = "José Ångström — 東京 round-trip"  # 29 chars, adds CJK
 INJECTION_PAYLOADS = ("' OR 1=1--", "<script>alert(1)</script>")
 
 # The requirement text originates from a user-uploaded document, so the PAYLOAD's
@@ -58,7 +60,7 @@ MAP_SCHEMA = {
     "required": ["selected", "confidence"],
 }
 
-_WORD_RE = re.compile(r"[a-zء-ي]{3,}")
+_WORD_RE = re.compile(r"[a-z]{3,}")
 _SAFE_HEADERS = {"authorization", "content-type", "accept"}
 _CONSTRAINT_KEYS = ("pattern", "enum", "minimum", "maximum", "minLength", "maxLength", "format")
 
@@ -523,19 +525,19 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str) -> list[dict]:
     cases.append(mk(f"Positive: valid request — {suffix}", "ep", "positive",
                     _step(ep, params, headers, body, _positive_assertions(ep))))
 
-    # -- Localisation (FR-034, all depths): Arabic round-trip through a free-text field
+    # -- Localisation (FR-034, all depths): Unicode round-trip through a free-text field
     free_text = _free_text_body_fields(ep)
     if free_text:
         loc_inp = free_text[0]
         sch = loc_inp["schema"]
-        arabic = ARABIC_SAMPLE
+        sample = UNICODE_SAMPLE
         mn, mx = sch.get("minLength"), sch.get("maxLength")
-        if isinstance(mn, int) and mn > len(arabic):
-            arabic = ARABIC_SAMPLE_LONG if mn <= len(ARABIC_SAMPLE_LONG) else None
-        if arabic is not None and isinstance(mx, int) and mx < len(arabic):
-            arabic = None
-        if arabic is not None:
-            p2, b2 = _apply_input(loc_inp, arabic, params, body)
+        if isinstance(mn, int) and mn > len(sample):
+            sample = UNICODE_SAMPLE_LONG if mn <= len(UNICODE_SAMPLE_LONG) else None
+        if sample is not None and isinstance(mx, int) and mx < len(sample):
+            sample = None
+        if sample is not None:
+            p2, b2 = _apply_input(loc_inp, sample, params, body)
             ok_code = _first_status(ep, 200, 299) or 200
             assertions: list[dict] = [{"type": "status_code", "expected": ok_code}]
             rss = _epget(ep, "response_schemas") or {}
@@ -543,10 +545,10 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str) -> list[dict]:
             if (isinstance(resp_sch, dict) and isinstance(resp_sch.get("properties"), dict)
                     and loc_inp["name"] in resp_sch["properties"]):
                 assertions.append({"type": "json_field", "path": loc_inp["name"],
-                                   "op": "eq", "expected": arabic})
+                                   "op": "eq", "expected": sample})
             assertions.append({"type": "header", "name": "Content-Type",
                                "op": "contains", "expected": "utf-8"})
-            cases.append(mk(f"Localisation: Arabic round-trip in {loc_inp['name']} — {suffix}",
+            cases.append(mk(f"Localisation: Unicode round-trip in {loc_inp['name']} — {suffix}",
                             "localisation", "positive",
                             _step(ep, p2, headers, b2, assertions)))
 

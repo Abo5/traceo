@@ -1,4 +1,4 @@
-# Demo System Under Test (منصة الطلبات) — e2e/CI only, never shipped.
+# Demo System Under Test (Orders Platform) — e2e/CI only, never shipped.
 #
 # The e2e suite creates a Traceo "environment" pointing at this app and the
 # BACKEND (run executor) calls it over the compose network as http://sut:9000.

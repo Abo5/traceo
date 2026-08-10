@@ -1,5 +1,5 @@
 """Deterministic offline provider — exercises the full pipeline without model cost (TRD §10.1).
-Arabic + English heuristics for requirement structuring and endpoint mapping."""
+English heuristics for requirement structuring and endpoint mapping."""
 import json
 import re
 
@@ -7,11 +7,10 @@ import jsonschema
 
 from .base import LLMResult, strip_untrusted_frame
 
-AR_MUST = ("يجب", "ينبغي", "لا بد", "إلزامي")
 EN_MUST = ("shall", "must", "required to", "has to")
 
-ID_RE = re.compile(r"\b((?:REQ|FR|BR|NFR|UC|م)[-_ ]?\d+(?:[-.]\d+)?)\b", re.IGNORECASE)
-BULLET_RE = re.compile(r"^\s*(?:[-*•▪]|\d+[.)]|[a-hأ-ي][.)])\s+(.*)$")
+ID_RE = re.compile(r"\b((?:REQ|FR|BR|NFR|UC)[-_ ]?\d+(?:[-.]\d+)?)\b", re.IGNORECASE)
+BULLET_RE = re.compile(r"^\s*(?:[-*•▪]|\d+[.)]|[a-h][.)])\s+(.*)$")
 
 
 class MockProvider:
@@ -50,16 +49,16 @@ class MockProvider:
             description = re.sub(r"^\W*" + re.escape(m.group(1)) + r"\W*", "", description).strip() or description
 
         lowered = text.lower()
-        if any(w in text for w in AR_MUST) or any(w in lowered for w in EN_MUST):
+        if any(w in lowered for w in EN_MUST):
             rtype = "functional"
-        elif re.search(r"(أداء|performance|second|ثاني|latency|زمن)", lowered):
+        elif re.search(r"(performance|second|latency|throughput)", lowered):
             rtype = "non_functional"
-        elif re.search(r"(بيانات|data|حقل|field|سجل)", lowered):
+        elif re.search(r"(data|field|record)", lowered):
             rtype = "data"
         else:
             rtype = "functional"
 
-        priority = "high" if re.search(r"(critical|أساسي|عالي|must|يجب)", lowered) else "medium"
+        priority = "high" if re.search(r"(critical|must)", lowered) else "medium"
         confidence = 0.92 if external_id else (0.75 if criteria else 0.6)
         return {
             "external_id": external_id,
@@ -78,11 +77,11 @@ class MockProvider:
             return {"selected": [], "confidence": 0.0}
         # the requirement text arrives framed as untrusted data — unwrap before scoring
         req_text = strip_untrusted_frame(payload.get("requirement") or "").lower()
-        tokens = set(re.findall(r"[a-zء-ي]{3,}", req_text))
+        tokens = set(re.findall(r"[a-z]{3,}", req_text))
         scored = []
         for i, cand in enumerate(payload.get("candidates", [])):
             cand_text = " ".join(str(cand.get(k, "")) for k in ("method", "path", "summary", "operation_id", "tags")).lower()
-            cand_tokens = set(re.findall(r"[a-zء-ي]{3,}", cand_text))
+            cand_tokens = set(re.findall(r"[a-z]{3,}", cand_text))
             # path segments count double — they carry the resource name
             path_tokens = set(re.findall(r"[a-z]{3,}", str(cand.get("path", "")).lower()))
             score = len(tokens & cand_tokens) + len(tokens & path_tokens)

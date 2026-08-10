@@ -27,11 +27,11 @@ import (
 // RunDisplayBase — the first run of a project renders as #1001.
 const RunDisplayBase = 1000
 
-// GapNextActions — v2 gap vocabulary (FR-051): reason -> Arabic next action.
+// GapNextActions — v2 gap vocabulary (FR-051): reason -> suggested next action.
 var GapNextActions = map[string]string{
-	"no_reachable_endpoint": "استورد مواصفة تغطي هذا المتطلب أو اربطه يدوياً",
-	"all_cases_disabled":    "اعتمد إحدى الحالات المرتبطة في المراجعة",
-	"no_approved_cases":     "ولّد حالات لهذا المتطلب",
+	"no_reachable_endpoint": "Import a specification that covers this requirement, or link it manually",
+	"all_cases_disabled":    "Approve one of the linked test cases in review",
+	"no_approved_cases":     "Generate test cases for this requirement",
 }
 
 // ---------------------------------------------------------------------------

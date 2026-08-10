@@ -14,19 +14,20 @@ Dark only. `globals.css` defines on `:root`:
 - Semantic: --success:#3FD179; --warning:#FFC53D; --error:#FF5C72; --info:#4D9DFF (+ .16 subtle rgba variants)
 - Gradients: --grad-hero:linear-gradient(135deg,#FF8A22 0%,#F85EC2 52%,#9B6BFF 100%); --grad-warm:linear-gradient(135deg,#FF8A22,#FF5C72)
 - Radius: 6/8/12/16/22px + pill 999px. Motion: 120ms/200ms/320ms cubic-bezier(.2,.6,.2,1); press scale .97.
-- Fonts (Google): 'IBM Plex Sans Arabic' 300–700 for UI; 'JetBrains Mono' 400/500/700 for ALL ids, metrics, code, evidence.
+- Fonts (Google): 'IBM Plex Sans' 300–700 for UI; 'JetBrains Mono' 400/500/700 for ALL ids, metrics, code, evidence.
 Aesthetic rules: 1px borders + surface steps for depth (NO shadows), cards radius 12–16px on --surface,
 nested content on --surface-2, code blocks recessed on --bg, pill segmented controls, 11px uppercase
 letterspaced eyebrows, mono chips tinted with spectrum colors, big bold headings with -0.02em tracking.
 
 ## App shell
 - Sticky 64px header: 30px logo tile (grad-hero, dark "T", radius 9px) + wordmark "Traceo" + mono tagline
-  "requirement → test → result"; right side: language switch (AR/EN) + user menu (name, logout).
-- Project pages use a left sidebar nav (RTL: right side): نظرة عامة Dashboard / المتطلبات Requirements /
-  الواجهات Endpoints / التوليد Generate / المراجعة Review / التشغيلات Runs / مصفوفة التتبّع Matrix /
-  البيئات Environments. Active item: accent-subtle bg + accent text.
-- i18n: `lib/i18n.ts` exports `useLang()` + `t(key)` with an `ar`/`en` dictionary; `<html dir>` flips to rtl
-  when ar. Default ar. Language persisted in localStorage. ALL screens must render correctly in RTL.
+  "requirement → test → result"; right side: user menu (name, logout).
+- Project pages use a left sidebar nav: Dashboard / Requirements / Endpoints / Generate / Review /
+  Runs / Matrix / Environments. Active item: accent-subtle bg + accent text.
+- Language: the product ships in **English only, LTR**. `app/layout.tsx` renders `<html lang="en" dir="ltr">`.
+  There is no language switcher, no dictionary module and no persisted language preference — the former
+  `lib/i18n.ts` mechanism (`useLang`/`useT`/`traceo_lang`) was deleted, not disabled. Do not reintroduce
+  bilingual expressions; write user-visible copy as plain English string literals.
 
 ## Shared files — owned by the SHELL agent; SCREENS agent imports them exactly as specified
 ### `lib/api.ts`
@@ -37,11 +38,6 @@ export function setToken(t: string | null): void;
 export async function api<T = any>(path: string, opts?: { method?: string; body?: any; form?: FormData }): Promise<T>;
 // api(): JSON fetch with Authorization Bearer, throws ApiError{code,message,status}; form uploads when opts.form
 export async function pollJob(jobId: string, onProgress?: (j: any) => void): Promise<any>; // polls /jobs/{id} every 1s until completed/failed; throws on failed
-```
-### `lib/i18n.ts`
-```ts
-export function useLang(): { lang: "ar" | "en"; setLang(l: "ar" | "en"): void; dir: "rtl" | "ltr" };
-export function useT(): (key: string) => string;   // returns key itself if missing — screens may pass literal Arabic strings too
 ```
 ### `components/ui.tsx`
 ```tsx
@@ -74,13 +70,14 @@ SCREENS agent (create ONLY these files; import shared per contract above):
 - app/projects/[id]/requirements/page.tsx — upload zone (dashed 1.5px border, accent hover; posts multipart
   to /projects/{id}/documents then pollJob), documents list w/ version + parse_status badge, requirements
   table: mono external_id (accent), description, editable inline or via Modal (PATCH /requirements/{rid}),
-  confidence bar, type/priority/state badges, confirm button per row + "اعتماد الكل" confirm_all, filters.
+  confidence bar, type/priority/state badges, confirm button per row + "Confirm all" confirm_all, filters.
 - app/projects/[id]/endpoints/page.tsx — import card (URL input or file upload to /projects/{id}/api-specs),
   warnings display, inventory table: mono METHOD badge (spectrum color per verb), path, summary, params
   count, include/exclude toggle (PATCH /endpoints/{eid}).
 - app/projects/[id]/generate/page.tsx — requirement multi-select (confirmed only), depth pill selector
   (smoke/standard/exhaustive with hint lines), summary sidebar (selected count, endpoints discovered,
-  amber info panel: "التوليد مقيّد بالواجهات المكتشفة فقط — كل حالة تمر عبر بوابة التحقق قبل الحفظ"),
+  amber info panel: "Generation is restricted to discovered endpoints only — every case passes the
+  grounding gate before it is saved"),
   Generate button -> 202 -> pollJob w/ progress; result panel: generated / discarded (mono, error tint) /
   unmappable list with reasons.
 - app/projects/[id]/review/page.tsx — THE FLAGSHIP. Left: filterable queue list (state pills, search).
@@ -93,15 +90,16 @@ SCREENS agent (create ONLY these files; import shared per contract above):
   -> POST /projects/{id}/runs -> pollJob showing live partial counts (poll GET /runs/{id} every 1.5s too);
   history table of runs (state badge, counts, duration, initiator).
 - app/projects/[id]/runs/[runId]/page.tsx — report: 5 StatCards (total/passed/failed/errored/duration),
-  tabs (الإخفاقات Failures / الكل All / مقارنة Compare), failure accordion cards: BUG-style mono id, title,
+  tabs (Failures / All / Compare), failure accordion cards: BUG-style mono id, title,
   linked req chip, expanded = steps-to-reproduce + request/response evidence blocks (mono, recessed) +
   failure_reason expected vs actual, defect-report style. Compare tab: select another run -> newly
   failing/passing lists. Export buttons: report.html (open in new tab), matrix.xlsx (download).
 - app/projects/[id]/matrix/page.tsx — traceability matrix: coverage % StatCard + gaps count, filter pills
   (status/priority/type), grid rows: mono req id (accent), description, linked case chips w/ state dots,
   status pill (not_covered=warning, passing=success, failing=error, errored=warning, covered_not_run=info),
-  per-row Progress (passed/total gradient), gaps section listing uncovered reqs w/ reason + "توليد مستهدف"
+  per-row Progress (passed/total gradient), gaps section listing uncovered reqs w/ reason + "Targeted generation"
   button linking to generate page preselected (?req=). Excel export button.
 
-All user-visible strings bilingual via t() or inline `lang === "ar" ? "..." : "..."`. Arabic-first.
-Numbers/ids/code always LTR inside RTL layouts (use dir="ltr" on mono spans).
+All user-visible strings are plain English literals — no translation helper, no bilingual ternaries.
+The document is LTR end to end, so no `dir` overrides or logical-property mirroring are needed on
+mono spans, ids or code blocks.

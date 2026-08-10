@@ -64,8 +64,8 @@ def register_org(client):
 @pytest.fixture()
 def create_project(client):
     """Returns a callable: create a project for the given auth headers -> project id."""
-    def _create(headers, name="مشروع اختبار", language="ar", automation=None):
-        body = {"name": name, "language": language}
+    def _create(headers, name="Test Project", automation=None):
+        body = {"name": name}
         if automation is not None:
             body["automation"] = automation
         r = client.post("/v1/projects", json=body, headers=headers)

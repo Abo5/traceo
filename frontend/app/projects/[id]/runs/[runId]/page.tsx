@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { useParams } from "next/navigation";
 import { API, api, getToken } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
 import { Badge, Button, Card, DateTimeText, Empty, PageHeader, Pill, RefChip, Select, SeverityBadge, StatCard, StatusDot, Table, fmtDateTime, stateTone } from "@/components/ui";
 
 type Tone = "success" | "warning" | "error" | "info" | "muted" | "accent";
@@ -16,7 +15,7 @@ function asList(x: any): any[] {
 
 function M({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
-    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12, ...style }}>
+    <span style={{ fontFamily: "'JetBrains Mono',ui-monospace,monospace", fontSize: 12, ...style }}>
       {children}
     </span>
   );
@@ -25,14 +24,13 @@ function M({ children, style }: { children: ReactNode; style?: CSSProperties }) 
 function JsonBlock({ value }: { value: any }) {
   return (
     <pre
-      dir="ltr"
       style={{
         background: "var(--bg)",
         border: "1px solid var(--border)",
         borderRadius: 10,
         padding: "10px 12px",
         margin: 0,
-        fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace",
+        fontFamily: "'JetBrains Mono',ui-monospace,monospace",
         fontSize: 11.5,
         lineHeight: 1.6,
         color: "var(--text-secondary)",
@@ -70,113 +68,56 @@ const OUTCOME_TONE: Record<string, Tone> = {
 
 export default function RunReportPage() {
   const { id, runId } = useParams<{ id: string; runId: string }>();
-  const { lang } = useLang();
 
-  const L =
-    lang === "ar"
-      ? {
-          title: "تقرير التشغيل",
-          env: "البيئة",
-          started: "البداية",
-          finished: "النهاية",
-          initiator: "المشغّل",
-          exportHtml: "تصدير HTML",
-          exportHint: "يُفتح التقرير في تبويب جديد (يتطلب جلسة موثّقة)",
-          total: "الكل",
-          passed: "ناجح",
-          failed: "فاشل",
-          errored: "خطأ",
-          duration: "المدة",
-          tabFailures: "الإخفاقات",
-          tabAll: "جميع النتائج",
-          tabCompare: "مقارنة",
-          noFailures: "لا توجد إخفاقات",
-          noFailuresHint: "جميع الحالات نجحت في هذا التشغيل",
-          stepsRepro: "خطوات إعادة الإنتاج",
-          request: "الطلب",
-          response: "الاستجابة",
-          expected: "المتوقع",
-          actual: "الفعلي",
-          evidence: "أدلة التحقّقات",
-          reqs: "المتطلبات",
-          caseCol: "الحالة",
-          outcome: "النتيجة",
-          durationCol: "المدة",
-          empty: "لا توجد نتائج",
-          emptyHint: "لم تكتمل أي حالة في هذا التشغيل بعد",
-          compareWith: "قارن مع تشغيل آخر",
-          pickRun: "اختر تشغيلًا…",
-          newlyFailing: "أخفق حديثًا",
-          newlyPassing: "نجح حديثًا",
-          noDiff: "لا فروقات",
-          loadError: "تعذّر تحميل التقرير",
-          retry: "إعادة المحاولة",
-          failReason: "سبب الإخفاق",
-          sevAll: "الكل",
-          sevCritical: "حرج",
-          sevMajor: "كبير",
-          sevMinor: "طفيف",
-          perf: "الأداء",
-          perfEndpoint: "الواجهة",
-          perfCalls: "النداءات",
-          coverageDelta: "فرق التغطية",
-          unchanged: "دون تغيير",
-          pts: "نقطة",
-        }
-      : {
-          title: "Run report",
-          env: "Environment",
-          started: "Started",
-          finished: "Finished",
-          initiator: "Initiator",
-          exportHtml: "Export HTML",
-          exportHint: "Opens the report in a new tab (requires an authenticated session)",
-          total: "Total",
-          passed: "Passed",
-          failed: "Failed",
-          errored: "Errored",
-          duration: "Duration",
-          tabFailures: "Failures",
-          tabAll: "All results",
-          tabCompare: "Compare",
-          noFailures: "No failures",
-          noFailuresHint: "Every case passed in this run",
-          stepsRepro: "Steps to reproduce",
-          request: "Request",
-          response: "Response",
-          expected: "Expected",
-          actual: "Actual",
-          evidence: "Assertion evidence",
-          reqs: "Requirements",
-          caseCol: "Case",
-          outcome: "Outcome",
-          durationCol: "Duration",
-          empty: "No results",
-          emptyHint: "No case has finished in this run yet",
-          compareWith: "Compare with another run",
-          pickRun: "Pick a run…",
-          newlyFailing: "Newly failing",
-          newlyPassing: "Newly passing",
-          noDiff: "No differences",
-          loadError: "Failed to load report",
-          retry: "Retry",
-          failReason: "Failure reason",
-          sevAll: "All",
-          sevCritical: "Critical",
-          sevMajor: "Major",
-          sevMinor: "Minor",
-          perf: "Performance",
-          perfEndpoint: "Endpoint",
-          perfCalls: "Calls",
-          coverageDelta: "Coverage delta",
-          unchanged: "Unchanged",
-          pts: "pts",
-        };
-
-  const outcomeLabel = (o: string) =>
-    lang === "ar"
-      ? ({ passed: "ناجح", failed: "فاشل", errored: "خطأ", skipped: "متجاوز" } as Record<string, string>)[o] ?? o
-      : o;
+  const L = {
+    title: "Run report",
+    env: "Environment",
+    started: "Started",
+    finished: "Finished",
+    initiator: "Initiator",
+    exportHtml: "Export HTML",
+    exportHint: "Opens the report in a new tab (requires an authenticated session)",
+    total: "Total",
+    passed: "Passed",
+    failed: "Failed",
+    errored: "Errored",
+    duration: "Duration",
+    tabFailures: "Failures",
+    tabAll: "All results",
+    tabCompare: "Compare",
+    noFailures: "No failures",
+    noFailuresHint: "Every case passed in this run",
+    stepsRepro: "Steps to reproduce",
+    request: "Request",
+    response: "Response",
+    expected: "Expected",
+    actual: "Actual",
+    evidence: "Assertion evidence",
+    reqs: "Requirements",
+    caseCol: "Case",
+    outcome: "Outcome",
+    durationCol: "Duration",
+    empty: "No results",
+    emptyHint: "No case has finished in this run yet",
+    compareWith: "Compare with another run",
+    pickRun: "Pick a run…",
+    newlyFailing: "Newly failing",
+    newlyPassing: "Newly passing",
+    noDiff: "No differences",
+    loadError: "Failed to load report",
+    retry: "Retry",
+    failReason: "Failure reason",
+    sevAll: "All",
+    sevCritical: "Critical",
+    sevMajor: "Major",
+    sevMinor: "Minor",
+    perf: "Performance",
+    perfEndpoint: "Endpoint",
+    perfCalls: "Calls",
+    coverageDelta: "Coverage delta",
+    unchanged: "Unchanged",
+    pts: "pts",
+  };
 
   const [report, setReport] = useState<any | null>(null);
   const [results, setResults] = useState<any[]>([]);
@@ -415,7 +356,7 @@ export default function RunReportPage() {
                 <Pill key={v} active={sevF === v} testId={`runs-report-severity-${v}-pill`} onClick={() => setSevF(v)}>
                   {label}
                   {v !== "all" && (
-                    <M style={{ fontSize: 10, marginInlineStart: 4 }}>
+                    <M style={{ fontSize: 10, marginLeft: 4 }}>
                       {failures.filter((c) => c.severity === v).length}
                     </M>
                   )}
@@ -462,7 +403,7 @@ export default function RunReportPage() {
                       background: "transparent",
                       border: "none",
                       cursor: "pointer",
-                      textAlign: "start",
+                      textAlign: "left",
                     }}
                   >
                     <M style={{ color: toneColor, fontWeight: 700 }}>{shortId(cid)}</M>
@@ -473,7 +414,7 @@ export default function RunReportPage() {
                       </M>
                     ))}
                     <SeverityBadge severity={c.severity ?? c.test_case?.severity} testId="runs-report-failure-severity-badge" />
-                    <Badge tone={tone} testId="runs-report-failure-outcome-badge" state={c.outcome}>{outcomeLabel(c.outcome)}</Badge>
+                    <Badge tone={tone} testId="runs-report-failure-outcome-badge" state={c.outcome}>{c.outcome}</Badge>
                     <span style={{ color: "var(--text-secondary)", fontSize: 12 }}>{isOpen ? "▴" : "▾"}</span>
                   </button>
 
@@ -502,7 +443,7 @@ export default function RunReportPage() {
                           <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-secondary)", marginBottom: 6 }}>
                             {L.stepsRepro}
                           </div>
-                          <ol style={{ margin: 0, paddingInlineStart: 20, display: "flex", flexDirection: "column", gap: 4 }}>
+                          <ol style={{ margin: 0, paddingLeft: 20, display: "flex", flexDirection: "column", gap: 4 }}>
                             {reproSteps.map((s: any, j: number) => (
                               <li key={j} style={{ fontSize: 12, color: "var(--text-secondary)" }}>
                                 <M style={{ fontSize: 11, color: "var(--text)", whiteSpace: "nowrap" }}>
@@ -597,7 +538,7 @@ export default function RunReportPage() {
                   <td>
                     <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
                       <StatusDot state={c.outcome} testId="runs-report-result-status-dot" />
-                      <Badge tone={OUTCOME_TONE[c.outcome] ?? "muted"} testId="runs-report-result-outcome-badge" state={c.outcome}>{outcomeLabel(c.outcome)}</Badge>
+                      <Badge tone={OUTCOME_TONE[c.outcome] ?? "muted"} testId="runs-report-result-outcome-badge" state={c.outcome}>{c.outcome}</Badge>
                     </span>
                   </td>
                   <td>

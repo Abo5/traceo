@@ -1,10 +1,14 @@
 """Autopilot contract tests.
 
-Covers: nullable project.language + automation defaults, deterministic offline
-language detection (Arabic-block ratio >= 0.25), the auto chain
-(parse -> auto.language.detect -> auto.requirements.confirm_all -> auto.generate)
-from both directions (doc-then-spec and spec-then-doc), the manual-mode gate,
-the double-trigger guard, and the auto.* audit trail attribution.
+Covers: the automation default, the auto chain
+(parse -> auto.requirements.confirm_all -> auto.generate) from both directions
+(doc-then-spec and spec-then-doc), the manual-mode gate, the double-trigger
+guard, and the auto.* audit trail attribution.
+
+Traceo is English-only: `project.language` and the `auto.language.detect` step it
+drove are gone, so the tests that used to defend the detector now defend their
+ABSENCE — no language field on any project payload, no detect audit entry ever,
+and the rest of the chain unchanged.
 """
 import threading
 import time
@@ -15,18 +19,6 @@ from app import jobs as jobstore
 from app.db import SessionLocal
 from app.models import AuditEntry, Project, User
 from app.modules.generation import try_autopilot_generation
-from app.modules.ingestion import detect_language
-
-ARABIC_MD = """# المتطلبات
-
-REQ-001: يجب أن يبدأ رقم الجوال بـ 05 وأن يتكوّن من 10 أرقام فقط عند إنشاء العميل عبر POST /customers.
-- رفض أي رقم لا يطابق الصيغة 05XXXXXXXX بالرمز 422 (invalid phone rejected)
-- قبول رقم صحيح مثل 0512345678 (valid phone accepted for customers)
-
-REQ-002: يجب أن يكون عمر العميل بين 18 و120 عاماً عند إنشاء customer جديد.
-- رفض age أقل من 18 بالرمز 422 (customers age minimum)
-- رفض age أكبر من 120 بالرمز 422 (age maximum accepted boundary)
-"""
 
 ENGLISH_MD = """# Requirements
 
@@ -93,79 +85,79 @@ def _audit_rows(project_id, action=None):
         db.close()
 
 
-# ------------------------------------------------------------------ unit: detection
+# ------------------------------------------------------ the language concept is gone
 
-def test_detect_language_arabic():
-    assert detect_language("يجب أن يعرض النظام قائمة الطلبات للمستخدم") == "ar"
+def test_ingestion_exposes_no_language_detector():
+    """The detector is deleted, not merely unused — nothing may import it back."""
+    import app.modules.ingestion as ingestion
 
-
-def test_detect_language_english():
-    assert detect_language("The system shall display the list of orders.") == "en"
-
-
-def test_detect_language_mixed_threshold():
-    # 3 Arabic letters out of 12 alphabetic = exactly 0.25 -> "ar" (>= threshold)
-    assert detect_language("abcdefghi يجب") == "ar"
-    # 3 Arabic letters out of 13 alphabetic < 0.25 -> "en"
-    assert detect_language("abcdefghij يجب") == "en"
-
-
-def test_detect_language_no_alphabetic_defaults_to_en():
-    assert detect_language("") == "en"
-    assert detect_language("1234 5678 --- !!") == "en"
+    assert not hasattr(ingestion, "detect_language")
+    assert not hasattr(ingestion, "normalize_digits")
+    source = open(ingestion.__file__, encoding="utf-8").read()
+    assert "project.language" not in source
 
 
 # ------------------------------------------------------------------ project schema
 
-def test_create_project_without_language_defaults(client, register_org):
+PROJECT_FIELDS = {"id", "name", "automation", "status", "created_at", "updated_at"}
+
+
+def test_create_project_defaults_to_auto_and_carries_no_language(client, register_org):
     headers = register_org()
-    r = client.post("/v1/projects", json={"name": "بدون لغة"}, headers=headers)
+    r = client.post("/v1/projects", json={"name": "No language here"}, headers=headers)
     assert r.status_code == 201, r.text
     data = r.json()
-    assert data["language"] is None
+    assert set(data) == PROJECT_FIELDS
     assert data["automation"] == "auto"
 
 
-def test_create_project_explicit_language_and_manual(client, register_org):
+def test_create_project_explicit_manual(client, register_org):
     headers = register_org()
-    r = client.post("/v1/projects",
-                    json={"name": "P", "language": "en", "automation": "manual"},
+    r = client.post("/v1/projects", json={"name": "P", "automation": "manual"},
                     headers=headers)
     assert r.status_code == 201, r.text
-    data = r.json()
-    assert data["language"] == "en"
-    assert data["automation"] == "manual"
+    assert r.json()["automation"] == "manual"
 
 
-def test_create_project_rejects_bad_values(client, register_org):
+def test_create_project_rejects_bad_automation(client, register_org):
     headers = register_org()
-    r = client.post("/v1/projects", json={"name": "P", "language": "fr"}, headers=headers)
-    assert r.status_code == 422
     r = client.post("/v1/projects", json={"name": "P", "automation": "sometimes"},
                     headers=headers)
     assert r.status_code == 422
 
 
-def test_update_project_automation_and_language(client, register_org):
+def test_a_language_in_the_payload_is_ignored_not_stored(client, register_org):
+    """Old clients may still send `language`; the field no longer exists, so it is
+    silently dropped and never comes back out — on create or on update."""
     headers = register_org()
-    r = client.post("/v1/projects", json={"name": "P"}, headers=headers)
+    r = client.post("/v1/projects", json={"name": "P", "language": "ar"}, headers=headers)
+    assert r.status_code == 201, r.text
     pid = r.json()["id"]
+    assert set(r.json()) == PROJECT_FIELDS
+
     r = client.patch(f"/v1/projects/{pid}",
                      json={"automation": "manual", "language": "ar"}, headers=headers)
     assert r.status_code == 200, r.text
     assert r.json()["automation"] == "manual"
-    assert r.json()["language"] == "ar"
+    assert set(r.json()) == PROJECT_FIELDS
+    assert set(_project(client, headers, pid)) == PROJECT_FIELDS
+
+
+def test_update_project_automation(client, register_org):
+    headers = register_org()
+    pid = client.post("/v1/projects", json={"name": "P"}, headers=headers).json()["id"]
+    r = client.patch(f"/v1/projects/{pid}", json={"automation": "manual"}, headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["automation"] == "manual"
     r = client.patch(f"/v1/projects/{pid}", json={"automation": "bogus"}, headers=headers)
     assert r.status_code == 422
 
 
-def test_legacy_create_with_language_still_works(client, register_org, create_project):
-    # the conftest fixture sends {"name", "language": "ar"} exactly like old clients
+def test_project_list_payload_has_no_language(client, register_org, create_project):
     headers = register_org()
-    pid = create_project(headers)
-    p = _project(client, headers, pid)
-    assert p["language"] == "ar"
-    assert p["automation"] == "auto"
+    create_project(headers)
+    rows = client.get("/v1/projects", headers=headers).json()
+    assert rows and all(set(p) == PROJECT_FIELDS for p in rows)
 
 
 # ------------------------------------------------------------------ autopilot flow
@@ -174,18 +166,15 @@ def test_autopilot_spec_then_doc_full_chain(client, register_org, tmp_path):
     """Spec imported first; the doc parse job then runs the whole 4a chain and
     its 4b trigger produces draft cases — with NO manual confirm_all/generate."""
     headers = register_org()
-    pid = client.post("/v1/projects", json={"name": "منصة الطلبات"},
+    pid = client.post("/v1/projects", json={"name": "Orders Platform"},
                       headers=headers).json()["id"]
     import_spec(client, headers, pid)  # no confirmed requirements yet => no trigger
     assert _draft_cases(client, headers, pid) == []
 
-    upload = _upload_md(client, headers, pid, tmp_path, ARABIC_MD)
+    upload = _upload_md(client, headers, pid, tmp_path, ENGLISH_MD)
     job = poll_job(client, headers, upload["job_id"])
     result = job.get("result") or {}
-
-    # language detected and persisted on the project
-    assert result.get("language_detected") == "ar"
-    assert _project(client, headers, pid)["language"] == "ar"
+    assert "language_detected" not in result
 
     # all extracted requirements auto-confirmed
     assert result.get("auto_confirmed", 0) >= 2
@@ -207,11 +196,11 @@ def test_autopilot_spec_then_doc_full_chain(client, register_org, tmp_path):
     # audit trail: every auto step present, attributed to the uploading user
     actions = _audit_rows(pid)
     by_action = {a: (actor, detail) for a, actor, detail in actions}
-    for expected in ("auto.language.detect", "auto.requirements.confirm_all",
-                     "auto.generate"):
+    for expected in ("auto.requirements.confirm_all", "auto.generate"):
         assert expected in by_action, f"missing audit '{expected}': {sorted(by_action)}"
         assert by_action[expected][0], f"audit '{expected}' has no actor"
-    assert by_action["auto.language.detect"][1].get("language") == "ar"
+    # the detection step was removed from the chain, audit action included
+    assert "auto.language.detect" not in by_action
     assert by_action["auto.generate"][1].get("depth") == "standard"
 
 
@@ -224,7 +213,6 @@ def test_autopilot_doc_then_spec_triggers_on_import(client, register_org, tmp_pa
     upload = _upload_md(client, headers, pid, tmp_path, ENGLISH_MD)
     job = poll_job(client, headers, upload["job_id"])
     result = job.get("result") or {}
-    assert result.get("language_detected") == "en"
     assert result.get("auto_confirmed", 0) >= 2
     assert "generation_job_id" not in result  # endpoint inventory still empty
     assert _draft_cases(client, headers, pid) == []
@@ -240,7 +228,7 @@ def test_manual_mode_nothing_auto_happens(client, register_org, tmp_path):
     pid = client.post("/v1/projects", json={"name": "P", "automation": "manual"},
                       headers=headers).json()["id"]
     import_spec(client, headers, pid)
-    upload = _upload_md(client, headers, pid, tmp_path, ARABIC_MD)
+    upload = _upload_md(client, headers, pid, tmp_path, ENGLISH_MD)
     poll_job(client, headers, upload["job_id"])
 
     # requirements extracted but NOT confirmed; no generation; no cases
@@ -250,18 +238,15 @@ def test_manual_mode_nothing_auto_happens(client, register_org, tmp_path):
     assert _draft_cases(client, headers, pid) == []
     assert _audit_rows(pid, "auto.requirements.confirm_all") == []
     assert _audit_rows(pid, "auto.generate") == []
-    # language detection (contract item 3) is not gated by automation:
-    # it fills the still-null language even in manual mode
-    assert _project(client, headers, pid)["language"] == "ar"
 
 
-def test_explicit_language_never_overwritten(client, register_org, tmp_path):
+def test_no_parse_ever_audits_a_language_detection(client, register_org, tmp_path):
+    """The chain is parse -> confirm_all -> generate. Nothing in between."""
     headers = register_org()
-    pid = client.post("/v1/projects", json={"name": "P", "language": "en"},
-                      headers=headers).json()["id"]
-    upload = _upload_md(client, headers, pid, tmp_path, ARABIC_MD)
-    poll_job(client, headers, upload["job_id"])
-    assert _project(client, headers, pid)["language"] == "en"
+    pid = client.post("/v1/projects", json={"name": "P"}, headers=headers).json()["id"]
+    upload = _upload_md(client, headers, pid, tmp_path, ENGLISH_MD)
+    result = poll_job(client, headers, upload["job_id"]).get("result") or {}
+    assert "language_detected" not in result
     assert _audit_rows(pid, "auto.language.detect") == []
 
 

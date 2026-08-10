@@ -1,4 +1,4 @@
-"""Insight module — the SIXTH engine: QA Insight Agent (وكيل الرؤى).
+"""Insight module — the SIXTH engine: QA Insight Agent.
 
 Techniques adapted from an external QA-tool audit and re-implemented in Traceo's
 style. Three properties are non-negotiable and are what the tests defend:
@@ -57,7 +57,7 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 BOUNDARY_SURPRISE = "boundary_surprise"      # off-by-one/limit edges beyond plain BVA
-EXOTIC_INPUT = "exotic_input"                # Arabic/RTL, emoji, NFC-vs-NFD, zero-width
+EXOTIC_INPUT = "exotic_input"                # emoji, CJK, accented Latin, NFC-vs-NFD, zero-width
 CONTROL_CHARS = "control_chars"              # null bytes + control characters in strings
 IDEMPOTENCY = "idempotency"                  # duplicate/replayed mutating request
 STATE_CORRUPTION = "state_corruption"        # out-of-order / illegal state transitions
@@ -85,12 +85,22 @@ PAGINATION_PARAM_NAMES = frozenset({
     "size", "count", "top", "skip", "take", "max_results", "maxresults", "rows",
 })
 
-# --- exotic payloads (all derived from Unicode, never from an endpoint) ------
-ARABIC_RTL_PAYLOAD = "اختبار‏ الحدود"          # Arabic + RIGHT-TO-LEFT MARK
-EMOJI_PAYLOAD = "qa 🐫🇸🇦 test"
-_NFC_PAYLOAD = unicodedata.normalize("NFC", "أحمد")   # composed hamza-on-alef
-_NFD_PAYLOAD = unicodedata.normalize("NFD", "أحمد")   # decomposed — must normalise back
-ZERO_WIDTH_PAYLOAD = "qa​test‍﻿"       # ZWSP + ZWJ + BOM
+# --- exotic payloads --------------------------------------------------------
+# All four are pure Unicode literals, derived from the standard and never from an
+# endpoint. They are the PROBE SET: their order, their exact code points and the
+# NFD/NFC pairing are part of the cross-backend contract (Python and Go must emit
+# byte-identical cases), so treat this block as data, not as prose.
+#   1. CJK_PAYLOAD        — CJK ideographs + kana outside the BMP-ASCII range
+#   2. EMOJI_PAYLOAD      — an emoji plus a regional-indicator flag sequence
+#   3. _NFD_PAYLOAD       — accented Latin in DECOMPOSED form; the API must
+#                           normalise it back to _NFC_PAYLOAD
+#   4. ZERO_WIDTH_PAYLOAD — ZWSP + ZWJ + BOM, invisible but length-bearing
+CJK_PAYLOAD = "qa \u6771\u4eac\u30c6\u30b9\u30c8 test"          # "qa 東京テスト test"
+EMOJI_PAYLOAD = "qa \U0001f680\U0001f1ef\U0001f1f5 test"         # "qa 🚀🇯🇵 test"
+_ACCENTED_BASE = "Caf\u00e9 \u00c5ngstr\u00f6m"                   # "Café Ångström"
+_NFC_PAYLOAD = unicodedata.normalize("NFC", _ACCENTED_BASE)         # composed
+_NFD_PAYLOAD = unicodedata.normalize("NFD", _ACCENTED_BASE)         # decomposed
+ZERO_WIDTH_PAYLOAD = "qa\u200btest\u200d\ufeff"                    # ZWSP + ZWJ + BOM
 NULL_BYTE_PAYLOAD = "qa\x00test"
 CONTROL_CHAR_PAYLOAD = "qa\x07\x1b[31mtest"
 
@@ -115,15 +125,16 @@ DATE_PROBES = (
 # done instead of reporting a false gap.
 #
 # RULES, in strict priority order (first match wins — the order matters because
-# a single case can carry several signals, e.g. a null byte inside an Arabic
+# a single case can carry several signals, e.g. a null byte inside a CJK
 # string):
 #   0. an explicit, legal `edge_category` always wins.
 #   1. REQUEST-VALUE signals (strongest: they describe what the case actually
 #      sends, not what someone called it):
 #      1a. a C0/C1 control character or NUL in any string value -> control_chars
-#      1b. Arabic/RTL marks, emoji, zero-width or combining marks     -> exotic_input
-#          NOTE: only *request values* are inspected, never the title — in an
-#          Arabic project every title is Arabic and would false-positive.
+#      1b. ANY non-ASCII character in a request value (emoji, CJK, accented
+#          Latin, zero-width/bidi controls, combining marks)         -> exotic_input
+#          NOTE: only *request values* are inspected, never the title — a title
+#          may legitimately carry an em dash or a symbol and would false-positive.
 #      1c. two or more steps repeating the SAME mutating (method, path)
 #                                                                     -> idempotency
 #      1d. a string value >= 1000 chars, or a pagination-named parameter with an
@@ -133,8 +144,8 @@ DATE_PROBES = (
 #      1g. a date/date-time-shaped value carrying a timezone offset,
 #          a leap day or a 12-31/01-01 rollover                        -> timing_dst
 #      1h. >= 2 steps whose mutating (method, path) pairs differ  -> state_corruption
-#   2. TITLE keywords (English + Arabic), for hand-written cases that describe
-#      the intent without a machine-readable signal.
+#   2. TITLE keywords, for hand-written cases that describe the intent without a
+#      machine-readable signal.
 #   3. otherwise None — the case belongs to no edge family.
 #
 # DELIBERATELY NOT A RULE: technique "bva" / type "boundary" do NOT imply
@@ -148,46 +159,41 @@ DATE_PROBES = (
 # ---------------------------------------------------------------------------
 
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
-_ZERO_WIDTH_CHARS = "​‌‍‎‏‪‫‬‮﻿"
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _TZ_OFFSET_RE = re.compile(r"\d{2}:\d{2}(?:Z|[+-]\d{2}:?\d{2})")
 _MUTATING = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 _TITLE_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    (CONTROL_CHARS, ("null byte", "nul byte", "control char", "محارف تحكم", "بايت صفري")),
-    (IDEMPOTENCY, ("idempot", "duplicate submit", "double submit", "replay", "تكرار الإرسال", "التكرار")),
+    (CONTROL_CHARS, ("null byte", "nul byte", "control char")),
+    (IDEMPOTENCY, ("idempot", "duplicate submit", "double submit", "replay")),
     (PERMISSION_EDGE, ("unauthenticated", "unauthorised", "unauthorized", "forbidden",
-                       "permission", "privilege", "lower-privileged", "صلاحية", "بدون مصادقة")),
+                       "permission", "privilege", "lower-privileged")),
     (RESOURCE_EXHAUSTION, ("oversized", "too large", "payload limit", "pagination",
-                           "exhaustion", "حمولة كبيرة", "استنزاف")),
-    (TIMING_DST, ("timezone", "time zone", "dst", "daylight", "rollover", "leap day",
-                  "التوقيت", "المنطقة الزمنية")),
+                           "exhaustion")),
+    (TIMING_DST, ("timezone", "time zone", "dst", "daylight", "rollover", "leap day")),
     (STATE_CORRUPTION, ("out of order", "out-of-order", "illegal transition", "after delete",
-                        "before create", "انتقال غير صالح", "ترتيب غير صالح")),
-    (DOWNSTREAM_FAILURE, ("downstream", "upstream", "dependency failure", "5xx",
-                          "فشل التبعية", "الخدمة الخلفية")),
-    (EXOTIC_INPUT, ("arabic", "emoji", "unicode", "rtl", "normalisation", "normalization",
-                    "localisation", "localization", "zero-width", "زخرفة", "عربي")),
+                        "before create")),
+    (DOWNSTREAM_FAILURE, ("downstream", "upstream", "dependency failure", "5xx")),
+    (EXOTIC_INPUT, ("unicode", "emoji", "cjk", "non-ascii", "accented", "normalisation",
+                    "normalization", "localisation", "localization", "zero-width")),
     # Just-outside vocabulary ONLY. A bare "boundary" is the plain-BVA word and
     # would credit min/max cases that never leave the declared range.
     (BOUNDARY_SURPRISE, ("off-by-one", "off by one", "just outside", "just-outside",
                          "beyond the limit", "past the declared", "minimum-1", "maximum+1",
-                         "minlength-1", "maxlength+1", "خارج الحد", "تجاوز الحد")),
+                         "minlength-1", "maxlength+1")),
 )
 
 
 def _is_exotic_text(text: str) -> bool:
-    for ch in text:
-        code = ord(ch)
-        if "؀" <= ch <= "ۿ":                 # Arabic block
-            return True
-        if ch in _ZERO_WIDTH_CHARS:
-            return True
-        if 0x0300 <= code <= 0x036F:                   # combining marks (NFD residue)
-            return True
-        if code >= 0x1F000 or 0x2600 <= code <= 0x27BF or 0x1F1E6 <= code <= 0x1F1FF:
-            return True
-    return False
+    """General non-ASCII evidence.
+
+    Any code point at or above U+0080 counts: emoji, CJK, accented Latin,
+    zero-width and bidi controls, combining marks left behind by NFD. Plain ASCII
+    carries no signal. C1 controls (U+0080..U+009F) are technically non-ASCII too,
+    but `classify_case` checks the control-character rule FIRST, so they never
+    reach this one — the priority order in the rule table is what separates them.
+    """
+    return any(ord(ch) >= 0x80 for ch in text)
 
 
 def _iter_request_strings(request: dict):
@@ -499,8 +505,8 @@ def _build_boundary_surprise(ep, req, ctx) -> list[dict]:
 
 
 def _build_exotic_input(ep, req, ctx) -> list[dict]:
-    """Arabic/RTL, emoji, NFC-vs-NFD and zero-width payloads in an EXISTING
-    free-text field. These must round-trip, not explode."""
+    """CJK, emoji, NFC-vs-NFD and zero-width payloads in an EXISTING free-text
+    field. These must round-trip, not explode."""
     targets = _string_probe_targets(ep)
     if not targets:
         return []
@@ -509,9 +515,9 @@ def _build_exotic_input(ep, req, ctx) -> list[dict]:
     echoed = name in _response_props(ep)
     params, headers, body = _valid_request(ep)
     probes = (
-        ("Arabic with RTL mark", ARABIC_RTL_PAYLOAD, None),
+        ("CJK characters", CJK_PAYLOAD, None),
         ("emoji and flag sequences", EMOJI_PAYLOAD, None),
-        ("NFD-decomposed Arabic", _NFD_PAYLOAD, _NFC_PAYLOAD),
+        ("NFD-decomposed accented Latin", _NFD_PAYLOAD, _NFC_PAYLOAD),
         ("zero-width characters", ZERO_WIDTH_PAYLOAD, None),
     )
     cases: list[dict] = []

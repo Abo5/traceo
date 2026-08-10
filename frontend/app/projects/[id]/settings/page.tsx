@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { useParams } from "next/navigation";
 import { API, api, getToken } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
 import { useCan } from "@/lib/permissions";
 import { useProject } from "@/lib/project-context";
 import {
@@ -97,12 +96,12 @@ function Toggle({ on, onChange, disabled, testId, ariaLabel }: { on: boolean; on
         style={{
           position: "absolute",
           top: 1.5,
-          insetInlineStart: on ? 17 : 2,
+          left: on ? 17 : 2,
           width: 16,
           height: 16,
           borderRadius: 999,
           background: "#F2EFF7",
-          transition: "inset-inline-start 120ms ease-out",
+          transition: "left 120ms ease-out",
         }}
       />
     </button>
@@ -132,174 +131,84 @@ function CopyButton({ text, label, copied: copiedLabel }: { text: string; label:
 
 export default function SettingsPage() {
   const { id } = useParams<{ id: string }>();
-  const { lang } = useLang();
-  const ar = lang === "ar";
   const canDo = useCan();
   const { project, refresh } = useProject();
 
-  const L = ar
-    ? {
-        title: "الإعدادات",
-        sub: "مفاتيح الوصول والجدولة وتصدير البيانات",
-        tabKeys: "مفاتيح API",
-        tabSchedules: "الجدولة",
-        tabExport: "تصدير البيانات",
-        loading: "جارٍ التحميل…",
-        retry: "إعادة المحاولة",
-        loadError: "تعذّر التحميل",
-        // general
-        generalTitle: "عام",
-        automation: "وضع الأتمتة",
-        automationHint:
-          "تلقائي: تأكيد المتطلبات وتوليد الحالات بعد التحليل — الاعتماد والتشغيل يبقيان يدويين",
-        autoMode: "تلقائي",
-        manualMode: "يدوي",
-        projLanguage: "لغة المشروع",
-        notDetected: "لم تُحدَّد بعد — تُكتشف تلقائيًا",
-        arabicOpt: "العربية",
-        englishOpt: "الإنجليزية",
-        // keys
-        keysTitle: "مفاتيح API",
-        keysSub: "مفاتيح للوصول البرمجي وبوابة CI/CD — تُرسل في الترويسة X-API-Key",
-        newKey: "مفتاح جديد",
-        keyName: "اسم المفتاح",
-        keyPrefix: "البادئة",
-        created: "تاريخ الإنشاء",
-        lastUsed: "آخر استخدام",
-        state: "الحالة",
-        active: "فعّال",
-        revoked: "مُلغى",
-        revoke: "إلغاء",
-        revokeTitle: "إلغاء المفتاح",
-        revokeConfirm: "سيتوقف هذا المفتاح عن العمل فورًا ولا يمكن التراجع. متابعة؟",
-        confirm: "تأكيد",
-        cancel: "إلغاء",
-        create: "إنشاء",
-        creating: "جارٍ الإنشاء…",
-        keyCreated: "تم إنشاء المفتاح",
-        keyOnceWarning: "لن يُعرض المفتاح مرة أخرى — انسخه الآن واحفظه في مكان آمن",
-        copy: "نسخ",
-        copied: "تم النسخ ✓",
-        done: "تم",
-        keysEmpty: "لا توجد مفاتيح بعد",
-        keysEmptyHint: "أنشئ مفتاحًا لاستخدامه في CI/CD أو الوصول البرمجي",
-        // schedules
-        schedTitle: "الجدولة",
-        schedSub: "تشغيلات دورية تلقائية للحالات المعتمدة",
-        newSched: "جدولة جديدة",
-        editSched: "تعديل الجدولة",
-        schedName: "اسم الجدولة",
-        env: "البيئة",
-        pickEnv: "اختر بيئة…",
-        interval: "الفاصل الزمني",
-        intervalLabels: {
-          15: "كل 15 دقيقة",
-          30: "كل 30 دقيقة",
-          60: "كل ساعة",
-          360: "كل 6 ساعات",
-          1440: "يوميًا",
-        } as Record<number, string>,
-        enabled: "مفعّلة",
-        disabled: "معطّلة",
-        lastRun: "آخر تشغيل",
-        nextRun: "التشغيل القادم",
-        actions: "إجراءات",
-        edit: "تعديل",
-        del: "حذف",
-        delSchedTitle: "حذف الجدولة",
-        delSchedConfirm: "سيتم حذف هذه الجدولة نهائيًا. متابعة؟",
-        save: "حفظ",
-        schedEmpty: "لا توجد جدولات بعد",
-        schedEmptyHint: "أنشئ جدولة لتشغيل الحالات المعتمدة تلقائيًا على بيئة",
-        noEnvs: "لا توجد بيئات — أنشئ بيئة أولاً من صفحة البيئات",
-        // export
-        exportTitle: "تصدير البيانات",
-        exportSub: "تصدير كامل لبيانات المنشأة",
-        pdplNote:
-          "امتثالًا لنظام حماية البيانات الشخصية (PDPL)، يمكنك تصدير نسخة كاملة من بيانات منشأتك: المشاريع والمتطلبات وحالات الاختبار وملخصات التشغيلات — بصيغة JSON. لا تتضمن النسخة الأسرار المخزّنة ولا أدلة التنفيذ.",
-        exportBtn: "تنزيل نسخة البيانات (JSON)",
-        exporting: "جارٍ التصدير…",
-        exportError: "تعذّر التصدير",
-      }
-    : {
-        title: "Settings",
-        sub: "Access keys, scheduling and data export",
-        tabKeys: "API keys",
-        tabSchedules: "Schedules",
-        tabExport: "Data export",
-        loading: "Loading…",
-        retry: "Retry",
-        loadError: "Failed to load",
-        generalTitle: "General",
-        automation: "Automation mode",
-        automationHint:
-          "Auto: confirm requirements and generate cases after parsing — approval and runs stay manual",
-        autoMode: "Auto",
-        manualMode: "Manual",
-        projLanguage: "Project language",
-        notDetected: "Not detected yet — auto-detected from documents",
-        arabicOpt: "Arabic",
-        englishOpt: "English",
-        keysTitle: "API keys",
-        keysSub: "Keys for programmatic access and the CI/CD gate — sent as X-API-Key header",
-        newKey: "New key",
-        keyName: "Key name",
-        keyPrefix: "Prefix",
-        created: "Created",
-        lastUsed: "Last used",
-        state: "State",
-        active: "Active",
-        revoked: "Revoked",
-        revoke: "Revoke",
-        revokeTitle: "Revoke key",
-        revokeConfirm: "This key will stop working immediately and cannot be restored. Continue?",
-        confirm: "Confirm",
-        cancel: "Cancel",
-        create: "Create",
-        creating: "Creating…",
-        keyCreated: "Key created",
-        keyOnceWarning: "The key will not be shown again — copy it now and store it somewhere safe",
-        copy: "Copy",
-        copied: "Copied ✓",
-        done: "Done",
-        keysEmpty: "No keys yet",
-        keysEmptyHint: "Create a key for CI/CD or programmatic access",
-        schedTitle: "Schedules",
-        schedSub: "Automatic recurring runs of approved cases",
-        newSched: "New schedule",
-        editSched: "Edit schedule",
-        schedName: "Schedule name",
-        env: "Environment",
-        pickEnv: "Pick an environment…",
-        interval: "Interval",
-        intervalLabels: {
-          15: "Every 15 minutes",
-          30: "Every 30 minutes",
-          60: "Every hour",
-          360: "Every 6 hours",
-          1440: "Daily",
-        } as Record<number, string>,
-        enabled: "Enabled",
-        disabled: "Disabled",
-        lastRun: "Last run",
-        nextRun: "Next run",
-        actions: "Actions",
-        edit: "Edit",
-        del: "Delete",
-        delSchedTitle: "Delete schedule",
-        delSchedConfirm: "This schedule will be permanently deleted. Continue?",
-        save: "Save",
-        schedEmpty: "No schedules yet",
-        schedEmptyHint: "Create a schedule to run approved cases automatically against an environment",
-        noEnvs: "No environments — create one on the Environments page first",
-        exportTitle: "Data export",
-        exportSub: "Full export of your organisation data",
-        pdplNote:
-          "In line with the Personal Data Protection Law (PDPL), you can export a full copy of your organisation data: projects, requirements, test cases and run summaries — as JSON. Stored secrets and execution evidence are excluded.",
-        exportBtn: "Download data copy (JSON)",
-        exporting: "Exporting…",
-        exportError: "Export failed",
-      };
+  const L = {
+    title: "Settings",
+    sub: "Access keys, scheduling and data export",
+    tabKeys: "API keys",
+    tabSchedules: "Schedules",
+    tabExport: "Data export",
+    loading: "Loading…",
+    retry: "Retry",
+    loadError: "Failed to load",
+    generalTitle: "General",
+    automation: "Automation mode",
+    automationHint:
+      "Auto: confirm requirements and generate cases after parsing — approval and runs stay manual",
+    autoMode: "Auto",
+    manualMode: "Manual",
+    keysTitle: "API keys",
+    keysSub: "Keys for programmatic access and the CI/CD gate — sent as X-API-Key header",
+    newKey: "New key",
+    keyName: "Key name",
+    keyPrefix: "Prefix",
+    created: "Created",
+    lastUsed: "Last used",
+    state: "State",
+    active: "Active",
+    revoked: "Revoked",
+    revoke: "Revoke",
+    revokeTitle: "Revoke key",
+    revokeConfirm: "This key will stop working immediately and cannot be restored. Continue?",
+    confirm: "Confirm",
+    cancel: "Cancel",
+    create: "Create",
+    creating: "Creating…",
+    keyCreated: "Key created",
+    keyOnceWarning: "The key will not be shown again — copy it now and store it somewhere safe",
+    copy: "Copy",
+    copied: "Copied ✓",
+    done: "Done",
+    keysEmpty: "No keys yet",
+    keysEmptyHint: "Create a key for CI/CD or programmatic access",
+    schedTitle: "Schedules",
+    schedSub: "Automatic recurring runs of approved cases",
+    newSched: "New schedule",
+    editSched: "Edit schedule",
+    schedName: "Schedule name",
+    env: "Environment",
+    pickEnv: "Pick an environment…",
+    interval: "Interval",
+    intervalLabels: {
+      15: "Every 15 minutes",
+      30: "Every 30 minutes",
+      60: "Every hour",
+      360: "Every 6 hours",
+      1440: "Daily",
+    } as Record<number, string>,
+    enabled: "Enabled",
+    disabled: "Disabled",
+    lastRun: "Last run",
+    nextRun: "Next run",
+    actions: "Actions",
+    edit: "Edit",
+    del: "Delete",
+    delSchedTitle: "Delete schedule",
+    delSchedConfirm: "This schedule will be permanently deleted. Continue?",
+    save: "Save",
+    schedEmpty: "No schedules yet",
+    schedEmptyHint: "Create a schedule to run approved cases automatically against an environment",
+    noEnvs: "No environments — create one on the Environments page first",
+    exportTitle: "Data export",
+    exportSub: "Full export of your organisation data",
+    pdplNote:
+      "In line with the Personal Data Protection Law (PDPL), you can export a full copy of your organisation data: projects, requirements, test cases and run summaries — as JSON. Stored secrets and execution evidence are excluded.",
+    exportBtn: "Download data copy (JSON)",
+    exporting: "Exporting…",
+    exportError: "Export failed",
+  };
 
   const [tab, setTab] = useState<"keys" | "schedules" | "export">("keys");
 
@@ -332,11 +241,11 @@ export default function SettingsPage() {
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
-  // ---- General (automation + language) state ----
+  // ---- General (automation) state ----
   const [generalBusy, setGeneralBusy] = useState(false);
   const [generalError, setGeneralError] = useState<string | null>(null);
 
-  async function patchProject(body: { automation?: string; language?: string }) {
+  async function patchProject(body: { automation?: string }) {
     setGeneralBusy(true);
     setGeneralError(null);
     try {
@@ -512,7 +421,7 @@ export default function SettingsPage() {
     <div className="stack" data-testid="settings-page-root">
       <PageHeader title={L.title} sub={L.sub} testId="settings-page-header" />
 
-      {/* ---------- General: automation mode + language override ---------- */}
+      {/* ---------- General: automation mode ---------- */}
       <Card title={L.generalTitle}>
         <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 560 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
@@ -541,20 +450,6 @@ export default function SettingsPage() {
               </span>
             </span>
           </div>
-          <Field label={L.projLanguage}>
-            <Select
-              testId="settings-language-select"
-              disabled={generalBusy || !canDo("manage_projects")}
-              value={project?.language ?? ""}
-              onChange={(e) => {
-                if (e.target.value) patchProject({ language: e.target.value });
-              }}
-            >
-              {!project?.language && <option value="">{L.notDetected}</option>}
-              <option value="ar">{L.arabicOpt}</option>
-              <option value="en">{L.englishOpt}</option>
-            </Select>
-          </Field>
           {generalError && <div className="error-text" style={{ fontSize: 13 }}>{generalError}</div>}
         </div>
       </Card>
@@ -748,7 +643,6 @@ export default function SettingsPage() {
             <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>{createdKey.name}</div>
             <div
               className="code-block"
-              dir="ltr"
               data-testid="settings-key-value"
               style={{ overflowWrap: "anywhere", display: "flex", gap: 10, alignItems: "center", justifyContent: "space-between" }}
             >
@@ -786,7 +680,7 @@ export default function SettingsPage() {
                 required
                 maxLength={100}
                 testId="settings-key-name-input"
-                placeholder={ar ? "مثال: CI Pipeline" : "e.g. CI Pipeline"}
+                placeholder="e.g. CI Pipeline"
                 value={keyName}
                 onChange={(e) => setKeyName(e.target.value)}
               />
@@ -832,7 +726,7 @@ export default function SettingsPage() {
               required
               maxLength={100}
               testId="settings-schedule-name-input"
-              placeholder={ar ? "مثال: تشغيل ليلي" : "e.g. Nightly run"}
+              placeholder="e.g. Nightly run"
               value={schedForm.name}
               onChange={(e) => setSchedForm((f) => ({ ...f, name: e.target.value }))}
             />

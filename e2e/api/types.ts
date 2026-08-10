@@ -22,7 +22,7 @@ export interface AuthUser {
   name: string;
   email: string;
   role: Role;
-  locale: 'en' | 'ar';
+  locale: string;
   organisation_id: string;
   created_at: string | null;
   /** Present on register/login/me responses only. */
@@ -39,7 +39,6 @@ export interface RegisterBody {
   name: string;
   email: string;
   password: string;
-  locale?: 'en' | 'ar';
 }
 
 export interface InviteBody {
@@ -68,9 +67,7 @@ export interface Job {
 export interface Project {
   id: string;
   name: string;
-  /** Nullable — null until auto-detected from the first parsed document (autopilot contract). */
-  language: 'en' | 'ar' | null;
-  /** Autopilot mode — "auto" chains detect→confirm→generate; "manual" changes nothing. */
+  /** Autopilot mode — "auto" chains confirm_all→generate; "manual" changes nothing. */
   automation: 'auto' | 'manual';
   status: 'active' | 'archived';
   created_at: string | null;
@@ -79,8 +76,6 @@ export interface Project {
 
 export interface NewProject {
   name: string;
-  /** Optional — omitted/null lets the backend auto-detect from the first parsed document. */
-  language?: 'en' | 'ar' | null;
   /** Optional — server default is "auto"; test fixtures pin "manual" (see project.factory.ts). */
   automation?: 'auto' | 'manual';
 }
@@ -117,7 +112,6 @@ export interface SourceDocument {
   filename: string;
   mime_type: string;
   size: number;
-  language: string;
   version: number;
   parse_status: ParseStatus;
   parse_error: string | null;
@@ -203,7 +197,7 @@ export interface GenerationJobResult {
   duplicates: number;
 }
 
-// --- insight — the sixth engine (QA Insight Agent / وكيل الرؤى) ---------------
+// --- insight — the sixth engine (QA Insight Agent) ---------------------------
 
 /** One taxonomy row of GET /projects/{id}/insights. */
 export interface InsightCategory {

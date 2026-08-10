@@ -5,7 +5,6 @@ import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { API, api, getToken } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
 import { useCan } from "@/lib/permissions";
 import { Badge, Button, Card, Empty, PageHeader, Pill, Progress, RefChip, StatCard, StatusDot } from "@/components/ui";
 
@@ -13,7 +12,7 @@ type Tone = "success" | "warning" | "error" | "info" | "muted" | "accent";
 
 function M({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
-    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12, ...style }}>
+    <span style={{ fontFamily: "'JetBrains Mono',ui-monospace,monospace", fontSize: 12, ...style }}>
       {children}
     </span>
   );
@@ -46,69 +45,37 @@ async function downloadFile(path: string, filename: string): Promise<void> {
 
 export default function MatrixPage() {
   const { id } = useParams<{ id: string }>();
-  const { lang } = useLang();
   const canDo = useCan();
 
-  const L =
-    lang === "ar"
-      ? {
-          title: "مصفوفة التتبّع",
-          sub: "متطلب → حالة اختبار → نتيجة — التغطية الكاملة في مكان واحد",
-          coverage: "التغطية %",
-          gaps: "فجوات",
-          all: "الكل",
-          not_covered: "غير مغطى",
-          covered_not_run: "مغطى دون تشغيل",
-          passing: "ناجح",
-          failing: "فاشل",
-          errored: "خطأ",
-          exportXlsx: "تصدير Excel",
-          exporting: "جارٍ التصدير…",
-          matrix: "المصفوفة",
-          empty: "لا توجد متطلبات مؤكّدة",
-          emptyHint: "أكّد المتطلبات وولّد حالات لتظهر المصفوفة",
-          emptyFiltered: "لا صفوف مطابقة للمرشّح",
-          emptyFilteredHint: "جرّب مرشّحًا آخر",
-          gapsTitle: "الفجوات",
-          noGaps: "لا توجد فجوات — كل المتطلبات المؤكّدة مغطاة",
-          gapNoCases: "لا حالات معتمدة",
-          gapUnmappable: "تعذّر الربط بواجهة",
-          gapNoEndpoint: "لا توجد واجهة مطابقة",
-          gapDisabled: "لا حالات معتمدة (روابط موجودة)",
-          targetGen: "توليد مستهدف",
-          loadError: "تعذّر تحميل المصفوفة",
-          retry: "إعادة المحاولة",
-          cases: "حالة",
-        }
-      : {
-          title: "Traceability matrix",
-          sub: "requirement → test case → result — full coverage in one place",
-          coverage: "Coverage %",
-          gaps: "Gaps",
-          all: "All",
-          not_covered: "Not covered",
-          covered_not_run: "Covered, not run",
-          passing: "Passing",
-          failing: "Failing",
-          errored: "Errored",
-          exportXlsx: "Export Excel",
-          exporting: "Exporting…",
-          matrix: "Matrix",
-          empty: "No confirmed requirements",
-          emptyHint: "Confirm requirements and generate cases to populate the matrix",
-          emptyFiltered: "No rows match the filter",
-          emptyFilteredHint: "Try another filter",
-          gapsTitle: "Gaps",
-          noGaps: "No gaps — every confirmed requirement is covered",
-          gapNoCases: "No approved cases",
-          gapUnmappable: "Could not map to an endpoint",
-          gapNoEndpoint: "No reachable endpoint",
-          gapDisabled: "No approved cases (links exist)",
-          targetGen: "Targeted generation",
-          loadError: "Failed to load the matrix",
-          retry: "Retry",
-          cases: "cases",
-        };
+  const L = {
+    title: "Traceability matrix",
+    sub: "requirement → test case → result — full coverage in one place",
+    coverage: "Coverage %",
+    gaps: "Gaps",
+    all: "All",
+    not_covered: "Not covered",
+    covered_not_run: "Covered, not run",
+    passing: "Passing",
+    failing: "Failing",
+    errored: "Errored",
+    exportXlsx: "Export Excel",
+    exporting: "Exporting…",
+    matrix: "Matrix",
+    empty: "No confirmed requirements",
+    emptyHint: "Confirm requirements and generate cases to populate the matrix",
+    emptyFiltered: "No rows match the filter",
+    emptyFilteredHint: "Try another filter",
+    gapsTitle: "Gaps",
+    noGaps: "No gaps — every confirmed requirement is covered",
+    gapNoCases: "No approved cases",
+    gapUnmappable: "Could not map to an endpoint",
+    gapNoEndpoint: "No reachable endpoint",
+    gapDisabled: "No approved cases (links exist)",
+    targetGen: "Targeted generation",
+    loadError: "Failed to load the matrix",
+    retry: "Retry",
+    cases: "cases",
+  };
 
   const statusLabel = (s: string) =>
     (({
@@ -246,7 +213,6 @@ export default function MatrixPage() {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div
                           title={req.description}
-                          dir="auto"
                           style={{
                             fontSize: 13,
                             color: "var(--text)",
@@ -286,7 +252,6 @@ export default function MatrixPage() {
                                 >
                                   <StatusDot state={c.latest_outcome ?? c.state} testId="matrix-case-status-dot" />
                                   <span
-                                    dir="auto"
                                     style={{
                                       display: "block",
                                       minWidth: 0,

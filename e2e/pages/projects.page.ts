@@ -14,6 +14,10 @@ export class ProjectsPage {
   private get createButton(): Locator {
     return this.page.getByTestId('projects-list-create-button');
   }
+  /** Empty-state call to action — opens the SAME create modal as the header button. */
+  private get emptyCreateButton(): Locator {
+    return this.page.getByTestId('projects-empty-create-button');
+  }
   private get createModal(): Modal {
     return new Modal(this.page.getByTestId('projects-create-modal'));
   }
@@ -35,9 +39,19 @@ export class ProjectsPage {
     return this.page.getByTestId('projects-page-error-text');
   }
 
-  /** The create control — renders only with manage_projects (permission-visibility checks). */
+  /** The header create control — renders only with manage_projects (permission-visibility checks). */
   get createControl(): Locator {
     return this.createButton;
+  }
+
+  /** The empty-state create control — same permission gate, only shown with no projects. */
+  get emptyCreateControl(): Locator {
+    return this.emptyCreateButton;
+  }
+
+  /** The create dialog itself — open after either entry point is clicked. */
+  get createDialog(): Locator {
+    return this.page.getByTestId('projects-create-modal');
   }
 
   get createErrorText(): Locator {
@@ -60,16 +74,32 @@ export class ProjectsPage {
     await this.page.goto(routes.projects);
   }
 
+  /** Open the create modal from the page header. */
+  async openCreateModal(): Promise<void> {
+    await this.createButton.click();
+    await this.createModal.waitUntilOpen();
+  }
+
+  /** Open the create modal from the empty-state call to action. */
+  async openCreateModalFromEmptyState(): Promise<void> {
+    await this.emptyCreateButton.click();
+    await this.createModal.waitUntilOpen();
+  }
+
   /**
    * Open the create modal, fill it, submit, and wait for the dialog to close.
-   * The dialog has no language select any more — language is auto-detected from
-   * the first parsed document (autopilot contract).
+   * Name is the whole form: automation defaults to "auto" server-side and there
+   * is no project language (Traceo is English-only).
    */
   async createProject(project: NewProject): Promise<void> {
-    await this.createButton.click();
+    await this.openCreateModal();
+    await this.submitCreateForm(project.name);
+  }
+
+  /** Fill and submit the already-open create dialog. */
+  async submitCreateForm(name: string): Promise<void> {
     const modal = this.createModal;
-    await modal.waitUntilOpen();
-    await modal.control('projects-create-name-input').fill(project.name);
+    await modal.control('projects-create-name-input').fill(name);
     await modal.control('projects-create-submit-button').click();
     await modal.waitUntilClosed(); // closes only after the API call succeeds
   }

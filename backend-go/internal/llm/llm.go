@@ -76,9 +76,9 @@ func Get() Provider {
 // ---------- Mock (deterministic — full pipeline without model cost) ----------
 
 var (
-	idRe     = regexp.MustCompile(`(?i)\b((?:REQ|FR|BR|NFR|UC|م)[-_ ]?\d+(?:[-.]\d+)?)\b`)
-	bulletRe = regexp.MustCompile(`^\s*(?:[-*•▪]|\d+[.)]|[a-h][.)]|[أ-ي][.)])\s+(.+)$`)
-	wordRe   = regexp.MustCompile(`[a-zA-Zء-ي]{3,}`)
+	idRe     = regexp.MustCompile(`(?i)\b((?:REQ|FR|BR|NFR|UC)[-_ ]?\d+(?:[-.]\d+)?)\b`)
+	bulletRe = regexp.MustCompile(`^\s*(?:[-*•▪]|\d+[.)]|[a-h][.)])\s+(.+)$`)
+	wordRe   = regexp.MustCompile(`[a-zA-Z]{3,}`)
 	pathWord = regexp.MustCompile(`[a-zA-Z]{3,}`)
 )
 
@@ -134,14 +134,11 @@ func (m *mockProvider) extract(prompt string) map[string]any {
 	}
 	lowered := strings.ToLower(text)
 	rtype := "functional"
-	switch {
-	case regexp.MustCompile(`(أداء|performance|second|ثاني|latency|زمن)`).MatchString(lowered):
+	if regexp.MustCompile(`(performance|second|latency)`).MatchString(lowered) {
 		rtype = "non_functional"
-	case regexp.MustCompile(`(بيانات|حقل|سجل)`).MatchString(lowered):
-		rtype = "data"
 	}
 	priority := "medium"
-	if regexp.MustCompile(`(critical|أساسي|عالي|must|يجب)`).MatchString(lowered) {
+	if regexp.MustCompile(`(critical|must)`).MatchString(lowered) {
 		priority = "high"
 	}
 	confidence := 0.6

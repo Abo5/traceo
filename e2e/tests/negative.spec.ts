@@ -2,7 +2,7 @@
  * Negative paths (@negative @regression) — the system refuses wrong input on
  * BOTH sides of the contract: the UI surfaces errors / withholds submission,
  * and the API refuses with the uniform `{code, message}` shape (asserted on
- * ApiError.code + status, never on bilingual text — §6/§11).
+ * ApiError.code + status, never on message text — §6/§11).
  *
  * Backend sources of truth (read, not assumed):
  * - identity.py login: failure is a GENERIC 401 `invalid_credentials` — the

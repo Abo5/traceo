@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
 import { useCan } from "@/lib/permissions";
 import {
   Badge,
@@ -39,7 +38,7 @@ function asList(x: any): any[] {
 
 function M({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
-    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12, ...style }}>
+    <span style={{ fontFamily: "'JetBrains Mono',ui-monospace,monospace", fontSize: 12, ...style }}>
       {children}
     </span>
   );
@@ -48,14 +47,13 @@ function M({ children, style }: { children: ReactNode; style?: CSSProperties }) 
 function JsonBlock({ value }: { value: any }) {
   return (
     <pre
-      dir="ltr"
       style={{
         background: "var(--bg)",
         border: "1px solid var(--border)",
         borderRadius: 10,
         padding: "10px 12px",
         margin: 0,
-        fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace",
+        fontFamily: "'JetBrains Mono',ui-monospace,monospace",
         fontSize: 11.5,
         lineHeight: 1.6,
         color: "var(--text-secondary)",
@@ -75,125 +73,65 @@ function caseReqs(c: any): any[] {
 
 export default function ReviewPage() {
   const { id } = useParams<{ id: string }>();
-  const { lang } = useLang();
   const canDo = useCan();
 
-  const L =
-    lang === "ar"
-      ? {
-          title: "المراجعة",
-          sub: "راجع الحالات المولّدة — اعتمد أو ارفض أو عدّل قبل التنفيذ",
-          all: "الكل",
-          draft: "مسودة",
-          approved: "معتمد",
-          rejected: "مرفوض",
-          stale: "قديم",
-          search: "بحث في الحالات…",
-          queue: "قائمة الحالات",
-          empty: "لا توجد حالات",
-          emptyHint: "ولّد حالات اختبار من صفحة التوليد أولاً",
-          emptyFiltered: "لا نتائج مطابقة للمرشّحات",
-          emptyFilteredHint: "جرّب تغيير المرشّح أو البحث",
-          pickCase: "اختر حالة من القائمة",
-          pickCaseHint: "التفاصيل الكاملة والإجراءات تظهر هنا",
-          linkedReq: "المتطلب المرتبط",
-          technique: "الأسلوب",
-          priority: "الأولوية",
-          model: "النموذج",
-          promptV: "إصدار الموجّه",
-          preconditions: "الشروط المسبقة",
-          steps: "الخطوات",
-          request: "الطلب",
-          assertions: "التحقّقات",
-          extractions: "الاستخلاصات",
-          approve: "اعتماد",
-          reject: "رفض",
-          edit: "تعديل",
-          rejectTitle: "رفض الحالة",
-          reason: "سبب الرفض",
-          rIncorrect: "غير صحيحة",
-          rShallow: "سطحية",
-          rDuplicate: "مكرّرة",
-          rOther: "أخرى",
-          reasonText: "تفاصيل إضافية",
-          confirmReject: "تأكيد الرفض",
-          editTitle: "تعديل الحالة",
-          caseTitle: "العنوان",
-          description: "الوصف",
-          stepsJson: "الخطوات (JSON)",
-          assertionsJson: "التحقّقات (JSON)",
-          jsonInvalid: "JSON غير صالح",
-          save: "حفظ",
-          cancel: "إلغاء",
-          bulkSelected: "حالة محددة",
-          approveAll: "اعتماد الكل",
-          rejectAll: "رفض الكل",
-          clear: "إلغاء التحديد",
-          kbd: "a اعتماد · r رفض · j/k تنقّل",
-          loadError: "تعذّر تحميل البيانات",
-          retry: "إعادة المحاولة",
-          expected: "المتوقع",
-          high: "عالية",
-          medium: "متوسطة",
-          low: "منخفضة",
-        }
-      : {
-          title: "Review",
-          sub: "Review generated cases — approve, reject or edit before execution",
-          all: "All",
-          draft: "Draft",
-          approved: "Approved",
-          rejected: "Rejected",
-          stale: "Stale",
-          search: "Search cases…",
-          queue: "Case queue",
-          empty: "No test cases",
-          emptyHint: "Generate test cases from the Generate page first",
-          emptyFiltered: "No results match the filters",
-          emptyFilteredHint: "Try changing the filter or search",
-          pickCase: "Pick a case from the list",
-          pickCaseHint: "Full details and actions appear here",
-          linkedReq: "Linked requirement",
-          technique: "Technique",
-          priority: "Priority",
-          model: "Model",
-          promptV: "Prompt version",
-          preconditions: "Preconditions",
-          steps: "Steps",
-          request: "Request",
-          assertions: "Assertions",
-          extractions: "Extractions",
-          approve: "Approve",
-          reject: "Reject",
-          edit: "Edit",
-          rejectTitle: "Reject case",
-          reason: "Rejection reason",
-          rIncorrect: "Incorrect",
-          rShallow: "Shallow",
-          rDuplicate: "Duplicate",
-          rOther: "Other",
-          reasonText: "Additional details",
-          confirmReject: "Confirm rejection",
-          editTitle: "Edit case",
-          caseTitle: "Title",
-          description: "Description",
-          stepsJson: "Steps (JSON)",
-          assertionsJson: "Assertions (JSON)",
-          jsonInvalid: "Invalid JSON",
-          save: "Save",
-          cancel: "Cancel",
-          bulkSelected: "selected",
-          approveAll: "Approve all",
-          rejectAll: "Reject all",
-          clear: "Clear selection",
-          kbd: "a approve · r reject · j/k navigate",
-          loadError: "Failed to load data",
-          retry: "Retry",
-          expected: "Expected",
-          high: "High",
-          medium: "Medium",
-          low: "Low",
-        };
+  const L = {
+    title: "Review",
+    sub: "Review generated cases — approve, reject or edit before execution",
+    all: "All",
+    draft: "Draft",
+    approved: "Approved",
+    rejected: "Rejected",
+    stale: "Stale",
+    search: "Search cases…",
+    queue: "Case queue",
+    empty: "No test cases",
+    emptyHint: "Generate test cases from the Generate page first",
+    emptyFiltered: "No results match the filters",
+    emptyFilteredHint: "Try changing the filter or search",
+    pickCase: "Pick a case from the list",
+    pickCaseHint: "Full details and actions appear here",
+    linkedReq: "Linked requirement",
+    technique: "Technique",
+    priority: "Priority",
+    model: "Model",
+    promptV: "Prompt version",
+    preconditions: "Preconditions",
+    steps: "Steps",
+    request: "Request",
+    assertions: "Assertions",
+    extractions: "Extractions",
+    approve: "Approve",
+    reject: "Reject",
+    edit: "Edit",
+    rejectTitle: "Reject case",
+    reason: "Rejection reason",
+    rIncorrect: "Incorrect",
+    rShallow: "Shallow",
+    rDuplicate: "Duplicate",
+    rOther: "Other",
+    reasonText: "Additional details",
+    confirmReject: "Confirm rejection",
+    editTitle: "Edit case",
+    caseTitle: "Title",
+    description: "Description",
+    stepsJson: "Steps (JSON)",
+    assertionsJson: "Assertions (JSON)",
+    jsonInvalid: "Invalid JSON",
+    save: "Save",
+    cancel: "Cancel",
+    bulkSelected: "selected",
+    approveAll: "Approve all",
+    rejectAll: "Reject all",
+    clear: "Clear selection",
+    kbd: "a approve · r reject · j/k navigate",
+    loadError: "Failed to load data",
+    retry: "Retry",
+    expected: "Expected",
+    high: "High",
+    medium: "Medium",
+    low: "Low",
+  };
 
   const stateLabel = (s: string) =>
     (({ draft: L.draft, approved: L.approved, rejected: L.rejected, stale: L.stale } as Record<string, string>)[s] ?? s);
@@ -493,7 +431,7 @@ export default function ReviewPage() {
         >
           <M style={{ color: "var(--accent)", fontWeight: 700 }}>{checked.size}</M>
           <span style={{ fontSize: 13, color: "var(--text)" }}>{L.bulkSelected}</span>
-          <div style={{ marginInlineStart: "auto", display: "flex", gap: 8 }}>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
             <Button size="sm" disabled={busy} onClick={() => bulk("approve")} testId="review-bulk-approve-button">
               {L.approveAll}
             </Button>
@@ -508,7 +446,7 @@ export default function ReviewPage() {
       )}
 
       <div style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
-        {/* Queue list — first in DOM = right side in RTL */}
+        {/* Queue list */}
         <div style={{ width: 380, flexShrink: 0 }}>
           <Card title={L.queue} pad={false} testId="review-queue-card">
             <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 10 }}>
@@ -589,7 +527,6 @@ export default function ReviewPage() {
                             title={c.title}
                           >
                             <span
-                              dir="auto"
                               style={{
                                 display: "block",
                                 overflow: "hidden",
@@ -728,7 +665,7 @@ export default function ReviewPage() {
                       {L.preconditions}
                     </div>
                     <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.7 }}>
-                      {Array.isArray(detail.preconditions) ? detail.preconditions.join("، ") : String(detail.preconditions)}
+                      {Array.isArray(detail.preconditions) ? detail.preconditions.join(", ") : String(detail.preconditions)}
                     </div>
                   </div>
                 )}
@@ -875,18 +812,16 @@ export default function ReviewPage() {
           </Field>
           <Field label={L.stepsJson} testId="review-edit-steps-textarea">
             <Textarea
-              dir="ltr"
               rows={8}
-              style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 11.5 }}
+              style={{ fontFamily: "'JetBrains Mono',ui-monospace,monospace", fontSize: 11.5 }}
               value={editForm.steps}
               onChange={(e: any) => setEditForm((f) => ({ ...f, steps: e.target.value }))}
             />
           </Field>
           <Field label={L.assertionsJson} testId="review-edit-assertions-textarea">
             <Textarea
-              dir="ltr"
               rows={5}
-              style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 11.5 }}
+              style={{ fontFamily: "'JetBrains Mono',ui-monospace,monospace", fontSize: 11.5 }}
               value={editForm.assertions}
               onChange={(e: any) => setEditForm((f) => ({ ...f, assertions: e.target.value }))}
             />

@@ -6,10 +6,10 @@ Prerequisites (run from repo root):
   2. Demo SUT up:  cd demo/sut && uvicorn main:app --port 9000
 Then:              python3 demo/seed_demo.py
 
-Logs in as demo@traceo.sa (falls back to registering org "شركة نجم البرمجيات"),
-creates the "منصة الطلبات — الحكومية" project, uploads the Arabic requirements
-document, imports the OpenAPI spec, generates + approves test cases, executes a
-run against the SUT and prints a traceability summary.
+Logs in as demo@traceo.sa (falls back to registering org "Northstar Software"),
+creates the "Orders Platform" project, uploads the requirements document, imports
+the OpenAPI spec, generates + approves test cases, executes a run against the SUT
+and prints a traceability summary.
 """
 import json
 import sys
@@ -24,13 +24,13 @@ except ImportError:
 
 BASE = "http://localhost:8000/v1"
 DEMO_DIR = Path(__file__).resolve().parent
-REQ_DOC = DEMO_DIR / "sample_requirements_ar.md"
+REQ_DOC = DEMO_DIR / "sample_requirements_en.md"
 SPEC_FILE = DEMO_DIR / "sample_openapi.yaml"
 
 DEMO_EMAIL = "demo@traceo.sa"
 DEMO_PASSWORD = "Demo1234!"
-ORG_NAME = "شركة نجم البرمجيات"
-PROJECT_NAME = "منصة الطلبات — الحكومية"
+ORG_NAME = "Northstar Software"
+PROJECT_NAME = "Orders Platform"
 
 
 # ------------------------------------------------------------------ helpers
@@ -96,7 +96,7 @@ def main():
         else:
             step(f"Login failed ({r.status_code}) — registering org {ORG_NAME}")
             data = check(anon.post(f"{BASE}/auth/register", json={
-                "org_name": ORG_NAME, "name": "نواف القحطاني",
+                "org_name": ORG_NAME, "name": "Demo QA Lead",
                 "email": DEMO_EMAIL, "password": DEMO_PASSWORD,
             }), 200, 201, what="register")
             token = data.get("token") or data.get("access_token")
@@ -105,7 +105,7 @@ def main():
 
     with httpx.Client(timeout=60.0, headers={"Authorization": f"Bearer {token}"}) as c:
         step(f"Creating project: {PROJECT_NAME}")
-        proj = check(c.post(f"{BASE}/projects", json={"name": PROJECT_NAME, "language": "ar"}),
+        proj = check(c.post(f"{BASE}/projects", json={"name": PROJECT_NAME}),
                      200, 201, what="create project")
         pid = proj.get("id") or (proj.get("project") or {}).get("id")
         if not pid:

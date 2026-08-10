@@ -1,8 +1,8 @@
 """Requirements Parser (TRD §4.1, FR-REQ).
 
 Pipeline: upload -> async job -> text extraction (pdf/docx/md/txt) -> deterministic
-segmentation (Arabic + English, Arabic-Indic digit normalization) -> per-segment
-`extract_requirement` LLM call -> persist Requirements with provenance.
+segmentation -> per-segment `extract_requirement` LLM call -> persist Requirements
+with provenance.
 
 Re-upload of an existing filename bumps the document version and diffs the extraction
 against the previous inventory by external_id, then content_hash (FR-REQ-06, FR-TRC-04).
@@ -38,7 +38,7 @@ REQUIREMENT_TYPES = {"functional", "business_rule", "data", "interface", "non_fu
 # it (app/llm/mock.py) and strips the frame, so the offline path is unaffected.
 EXTRACT_PROMPT = (
     "Extract the software requirement from this segment. "
-    "Preserve the original language.\n"
+    "Answer in English.\n"
     + UNTRUSTED_NOTE
     + "SEGMENT:\n"
 )
@@ -59,46 +59,16 @@ EXTRACT_SCHEMA = {
 
 # --- deterministic text utilities -------------------------------------------------
 
-_ARABIC_INDIC = "٠١٢٣٤٥٦٧٨٩"        # U+0660..U+0669
-_EXTENDED_INDIC = "۰۱۲۳۴۵۶۷۸۹"      # U+06F0..U+06F9
-_DIGIT_TRANS = {ord(ch): str(i % 10) for i, ch in enumerate(_ARABIC_INDIC + _EXTENDED_INDIC)}
-
-
-def normalize_digits(text: str) -> str:
-    """Normalize Arabic-Indic and Extended Arabic-Indic digits to ASCII (٠-٩/۰-۹ -> 0-9)."""
-    return text.translate(_DIGIT_TRANS)
-
-
-ARABIC_RATIO_THRESHOLD = 0.25
-
-
-def detect_language(text: str) -> str:
-    """Deterministic, offline language detection (autopilot contract item 3).
-
-    Counts Arabic-block chars (U+0600–U+06FF) among all alphabetic chars;
-    ratio >= 0.25 => "ar", else "en". No text => "en". Pure function, NO LLM."""
-    arabic = alphabetic = 0
-    for ch in text:
-        if ch.isalpha():
-            alphabetic += 1
-            if "\u0600" <= ch <= "\u06ff":
-                arabic += 1
-    if not alphabetic:
-        return "en"
-    return "ar" if arabic / alphabetic >= ARABIC_RATIO_THRESHOLD else "en"
-
-
-# Requirement-ID openers: REQ-1 / FR-01 / BR_2 / NFR 3 / م-1 / numbered clauses "3.1.2"
+# Requirement-ID openers: REQ-1 / FR-01 / BR_2 / NFR 3 / numbered clauses "3.1.2"
 REQ_ID_LINE = re.compile(
     r"^\s*(?:"
     r"(?:REQ|FR|BR|NFR|UC|SRS|BUS)[-_ ]?\d+(?:[.-]\d+)*"
-    r"|م[-_ ]?\d+"
     r"|\d+(?:\.\d+)+"
     r")\b[.:)\-–—]?",
     re.IGNORECASE,
 )
 HEADING_RE = re.compile(r"^\s*#{1,6}\s+\S")
-BULLET_RE = re.compile(r"^\s*(?:[-*•▪◦]|\d+[.)]|[a-hأ-ي][.)])\s+\S")
+BULLET_RE = re.compile(r"^\s*(?:[-*•▪◦]|\d+[.)]|[a-h][.)])\s+\S")
 
 
 def _content_hash(description: str, criteria: list) -> str:
@@ -367,7 +337,6 @@ def _run_ingest(job, document_id: str, project_id: str, org_id: str, actor_id: s
             db.commit()
             raise
 
-        pages = [(page_no, normalize_digits(text)) for page_no, text in pages]
         segments = segment_pages(pages)
         job.message = f"Segmented document into {len(segments)} candidate requirements"
 
@@ -395,16 +364,6 @@ def _run_ingest(job, document_id: str, project_id: str, org_id: str, actor_id: s
         # requirements are visible to the autopilot chain's queries below
         db.flush()
         project = db.get(Project, project_id)
-
-        # -- language auto-detection (contract item 3): unconditional — it fills a
-        #    NULL project.language whenever a parse succeeds, in any automation mode.
-        if project is not None and project.language is None:
-            detected = detect_language("\n".join(text for _page, text in pages))
-            project.language = detected
-            doc.language = detected
-            audit(db, org_id, actor_id, "auto.language.detect", "project", project_id,
-                  {"language": detected, "document_id": doc.id})
-            result["language_detected"] = detected
 
         # -- autopilot chain (contract 4a): confirm ALL extracted requirements,
         #    then try the generation trigger (4b). Auto stops at draft cases —
@@ -480,7 +439,7 @@ async def upload_document(project_id: str, file: UploadFile = File(...),
     if not content:
         raise HTTPException(422, detail={"code": "empty_file", "message": "Uploaded file is empty."})
 
-    safename = re.sub(r"[^\w.\-؀-ۿ]", "_", filename)[:120]
+    safename = re.sub(r"[^\w.\-]", "_", filename)[:120]
     storage_key = f"{uuid.uuid4()}_{safename}"
     (settings.STORAGE_DIR / storage_key).write_bytes(content)
 
@@ -493,7 +452,7 @@ async def upload_document(project_id: str, file: UploadFile = File(...),
     doc = SourceDocument(
         organisation_id=user.organisation_id, project_id=project_id,
         filename=filename, mime_type=file.content_type or "", size=len(content),
-        storage_key=storage_key, language=project.language or "",
+        storage_key=storage_key, language="en",
         version=prior_max + 1, parse_status="pending",
     )
     db.add(doc)

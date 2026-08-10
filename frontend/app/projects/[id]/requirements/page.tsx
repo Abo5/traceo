@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { api, pollJob } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
 import { useCan } from "@/lib/permissions";
 import {
   Badge,
@@ -55,8 +54,7 @@ function jobPct(j: any): number {
 function M({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
     <span
-      dir="ltr"
-      style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12, ...style }}
+      style={{ fontFamily: "'JetBrains Mono',ui-monospace,monospace", fontSize: 12, ...style }}
     >
       {children}
     </span>
@@ -65,97 +63,51 @@ function M({ children, style }: { children: React.ReactNode; style?: React.CSSPr
 
 export default function RequirementsPage() {
   const { id } = useParams<{ id: string }>();
-  const { lang } = useLang();
   const canDo = useCan();
 
-  const L =
-    lang === "ar"
-      ? {
-          title: "المتطلبات",
-          sub: "ارفع مستند المتطلبات ليتم استخراجها وتأكيدها",
-          dropTitle: "اسحب مستند المتطلبات هنا أو انقر للاختيار",
-          dropHint: "PDF · DOCX · MD · TXT — حتى 50MB",
-          parsing: "جارٍ تحليل المستند واستخراج المتطلبات…",
-          documents: "المستندات",
-          version: "الإصدار",
-          noDocs: "لا توجد مستندات بعد",
-          noDocsHint: "ارفع مستند المتطلبات للبدء",
-          requirements: "المتطلبات المستخرجة",
-          all: "الكل",
-          extracted: "مستخرج",
-          confirmed: "مؤكّد",
-          changed: "متغيّر",
-          removed: "محذوف",
-          search: "بحث في المتطلبات…",
-          type: "النوع",
-          priority: "الأولوية",
-          anyType: "كل الأنواع",
-          anyPriority: "كل الأولويات",
-          confidence: "الثقة",
-          confirm: "تأكيد",
-          confirmAll: "اعتماد الكل",
-          edit: "تعديل",
-          empty: "لا توجد متطلبات",
-          emptyHint: "ارفع مستند المتطلبات للبدء",
-          emptyFiltered: "لا نتائج مطابقة للمرشّحات",
-          emptyFilteredHint: "جرّب تغيير المرشّحات أو البحث",
-          editTitle: "تعديل المتطلب",
-          externalId: "المعرّف",
-          description: "الوصف",
-          acceptance: "معايير القبول (سطر لكل معيار)",
-          save: "حفظ",
-          cancel: "إلغاء",
-          retry: "إعادة المحاولة",
-          loadError: "تعذّر تحميل البيانات",
-          high: "عالية",
-          medium: "متوسطة",
-          low: "منخفضة",
-          criteria: "معيار قبول",
-          v: "إصدار",
-        }
-      : {
-          title: "Requirements",
-          sub: "Upload the requirements document to extract and confirm them",
-          dropTitle: "Drop the requirements document here or click to browse",
-          dropHint: "PDF · DOCX · MD · TXT — up to 50MB",
-          parsing: "Parsing document and extracting requirements…",
-          documents: "Documents",
-          version: "Version",
-          noDocs: "No documents yet",
-          noDocsHint: "Upload a requirements document to get started",
-          requirements: "Extracted requirements",
-          all: "All",
-          extracted: "Extracted",
-          confirmed: "Confirmed",
-          changed: "Changed",
-          removed: "Removed",
-          search: "Search requirements…",
-          type: "Type",
-          priority: "Priority",
-          anyType: "All types",
-          anyPriority: "All priorities",
-          confidence: "Confidence",
-          confirm: "Confirm",
-          confirmAll: "Confirm all",
-          edit: "Edit",
-          empty: "No requirements",
-          emptyHint: "Upload a requirements document to get started",
-          emptyFiltered: "No results match the filters",
-          emptyFilteredHint: "Try changing the filters or search",
-          editTitle: "Edit requirement",
-          externalId: "External ID",
-          description: "Description",
-          acceptance: "Acceptance criteria (one per line)",
-          save: "Save",
-          cancel: "Cancel",
-          retry: "Retry",
-          loadError: "Failed to load data",
-          high: "High",
-          medium: "Medium",
-          low: "Low",
-          criteria: "acceptance criteria",
-          v: "v",
-        };
+  const L = {
+    title: "Requirements",
+    sub: "Upload the requirements document to extract and confirm them",
+    dropTitle: "Drop the requirements document here or click to browse",
+    dropHint: "PDF · DOCX · MD · TXT — up to 50MB",
+    parsing: "Parsing document and extracting requirements…",
+    documents: "Documents",
+    version: "Version",
+    noDocs: "No documents yet",
+    noDocsHint: "Upload a requirements document to get started",
+    requirements: "Extracted requirements",
+    all: "All",
+    extracted: "Extracted",
+    confirmed: "Confirmed",
+    changed: "Changed",
+    removed: "Removed",
+    search: "Search requirements…",
+    type: "Type",
+    priority: "Priority",
+    anyType: "All types",
+    anyPriority: "All priorities",
+    confidence: "Confidence",
+    confirm: "Confirm",
+    confirmAll: "Confirm all",
+    edit: "Edit",
+    empty: "No requirements",
+    emptyHint: "Upload a requirements document to get started",
+    emptyFiltered: "No results match the filters",
+    emptyFilteredHint: "Try changing the filters or search",
+    editTitle: "Edit requirement",
+    externalId: "External ID",
+    description: "Description",
+    acceptance: "Acceptance criteria (one per line)",
+    save: "Save",
+    cancel: "Cancel",
+    retry: "Retry",
+    loadError: "Failed to load data",
+    high: "High",
+    medium: "Medium",
+    low: "Low",
+    criteria: "acceptance criteria",
+    v: "v",
+  };
 
   const stateLabel = (s: string) =>
     (({ extracted: L.extracted, confirmed: L.confirmed, changed: L.changed, removed: L.removed } as Record<string, string>)[s] ?? s);
@@ -422,7 +374,7 @@ export default function RequirementsPage() {
                   {L.v}
                   {d.version ?? 1}
                 </Badge>
-                <div style={{ marginInlineStart: "auto" }}>
+                <div style={{ marginLeft: "auto" }}>
                   <Badge tone={PARSE_TONE[d.parse_status] ?? "muted"} testId="requirements-document-parse-status-badge" state={d.parse_status}>{d.parse_status ?? "—"}</Badge>
                 </div>
               </div>
@@ -525,7 +477,7 @@ export default function RequirementsPage() {
                     {r.external_id ?? "—"}
                   </M>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div dir="auto" style={{ fontSize: 14, color: "var(--text)", lineHeight: 1.6 }}>{r.description}</div>
+                    <div style={{ fontSize: 14, color: "var(--text)", lineHeight: 1.6 }}>{r.description}</div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8, alignItems: "center" }}>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                         <StatusDot state={r.state} testId="requirements-row-status-dot" />
@@ -582,7 +534,6 @@ export default function RequirementsPage() {
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Field label={L.externalId} testId="requirements-edit-external-id-input">
             <Input
-              dir="ltr"
               value={form.external_id}
               onChange={(e: any) => setForm((f) => ({ ...f, external_id: e.target.value }))}
             />

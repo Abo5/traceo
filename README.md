@@ -1,29 +1,31 @@
-# Traceo · تدقيق (TADQEEQ)
+# Traceo (TADQEEQ)
 
-**منصة تصميم الاختبارات والتتبّع بالذكاء الاصطناعي — السوق السعودي.**
-تحوّل Traceo وثيقة المتطلبات — بالعربية أو الإنجليزية — إلى حزمة اختبارات API قابلة للتنفيذ، مرتبطة بكل متطلب على حدة ومقيّدة بجرد واجهات مكتشف من مواصفة OpenAPI، مع مراجعة بشرية ومصفوفة تتبّع حيّة تُصدَّر كدليل تعاقدي وتدقيقي.
-**النموذج يقترح، والنظام يتحقق** — بوابة تأسيس (Grounding) صلبة: صفر معرّفات مختلَقة (BO-07).
+**AI test design & traceability platform.**
+Traceo turns a requirements document into an executable, requirement-linked API test suite — grounded in an endpoint inventory discovered from an OpenAPI spec, gated by human review, and backed by a live traceability matrix that exports as contractual and audit evidence.
+**The model proposes, the system verifies** — a hard grounding gate guarantees zero fabricated identifiers (BO-07).
+
+The product ships in **English only**, left to right. There is no runtime language mechanism: no dictionaries, no language switcher, no per-project language.
 
 ```mermaid
 flowchart LR
-    FE["Next.js RTL :3000"] --> API["FastAPI :8000 /v1"]
-    API --> ENG["6 محركات: تحليل، اكتشاف، توليد + بوابة تحقق، تنفيذ، تتبّع، رؤى"]
+    FE["Next.js :3000"] --> API["FastAPI :8000 /v1"]
+    API --> ENG["Six engines: ingestion, discovery, generation + grounding gate, execution, traceability, insight"]
     ENG --> DB[("SQLite / PostgreSQL")]
-    ENG --> LLM["LLM Abstraction: mock | Claude | self-hosted"]
-    ENG -.->|"بلا LLM — حتمي ودون اتصال"| INS["وكيل الرؤى: حالات حواف مقيّدة بجرد الواجهات"]
-    ENG -->|"HTTP"| SUT["النظام تحت الاختبار :9000"]
+    ENG --> LLM["LLM abstraction: mock | Claude | self-hosted"]
+    ENG -.->|"no LLM — deterministic and offline"| INS["QA Insight Agent: edge cases bound to the endpoint inventory"]
+    ENG -->|"HTTP"| SUT["System under test :9000"]
 ```
 
-**المحرك السادس — وكيل الرؤى (QA Insight Agent):** يقترح حالات حواف ضمن تسع فئات قانونية (حدود مفاجئة، مدخلات استثنائية، محارف تحكّم، تكرار العملية، إفساد الحالة، حواف الصلاحيات، التوقيت والتوقيت الصيفي، استنزاف الموارد، أعطال التبعيات). **حتمي 100%، صفر استدعاءات نماذج لغوية، ويعمل دون اتصال بالكامل** — وكل ما يولّده يمرّ ببوابة التأسيس نفسها قبل الحفظ: كل مسار وفعل وحقل مشتقّ من جرد الواجهات المكتشف، لا معرّفات مُختلقة (BO-07). المحرك اختياري بالكامل عبر واجهتيه (`GET /v1/projects/{id}/insights` و`POST /v1/projects/{id}/insights/generate`) ولا يغيّر أي مسار قائم.
+**Six engines:** ingestion, discovery, generation (+ grounding gate), execution, traceability — and the **QA Insight Agent**, which proposes edge cases across nine canonical categories (boundary surprises, exotic input, control characters, idempotency, state corruption, permission edges, timing/DST, resource exhaustion, downstream failures). The insight engine is **100% deterministic, makes zero LLM calls and runs fully offline**, and every case it emits passes the same grounding gate before it is persisted: every path, method and field is derived from the discovered endpoint inventory, never invented (BO-07). It is opt-in through its own endpoints (`GET /v1/projects/{id}/insights`, `POST /v1/projects/{id}/insights/generate`) and changes no existing flow.
 
-## المتطلبات — Prerequisites
+## Prerequisites
 
 - **Python 3.11+**
 - **Node 20+**
 
-## التشغيل السريع — Quickstart
+## Quickstart
 
-### 1) الخادم الخلفي — Backend (`:8000`)
+### 1) Backend (`:8000`)
 
 ```bash
 cd backend
@@ -32,13 +34,13 @@ python3 -m venv .venv
 .venv/bin/python -m uvicorn app.main:app --reload --port 8000
 ```
 
-### 2) النظام تحت الاختبار التجريبي — Demo SUT (`:9000`)
+### 2) Demo SUT (`:9000`)
 
 ```bash
 cd demo/sut && ../../backend/.venv/bin/python -m uvicorn main:app --port 9000
 ```
 
-### 3) الواجهة الأمامية — Frontend (`:3000`)
+### 3) Frontend (`:3000`)
 
 ```bash
 cd frontend
@@ -46,29 +48,29 @@ npm install
 npm run dev
 ```
 
-### 4) بيانات الديمو — Demo seed
+### 4) Demo seed
 
-بعد تشغيل الخادم والـ SUT (يتطلب `httpx` — استخدم بايثون البيئة الافتراضية):
+After the backend and the SUT are running (requires `httpx` — use the virtualenv python):
 
 ```bash
 backend/.venv/bin/python demo/seed_demo.py
 ```
 
-> الأمر الأصلي `python3 demo/seed_demo.py` يعمل أيضاً إذا كان `httpx` مثبتاً على النظام.
+> The plain `python3 demo/seed_demo.py` also works if `httpx` is installed system-wide.
 
-**حساب الديمو:** `demo@traceo.sa` / `Demo1234!`
+**Demo account:** `demo@traceo.sa` / `Demo1234!`
 
-### 5) الاختبارات — بوابتا الإطلاق (Release Gates)
+### 5) Tests — the release gates
 
-حزمة التأسيس Grounding (عينات اختلاق عدائية) وحزمة عزل المستأجرين — فشل أيٍّ منهما يمنع الإصدار:
+The grounding suite (adversarial fabrication probes) and the tenant-isolation suite; a failure in either blocks the release:
 
 ```bash
 cd backend && .venv/bin/python -m pytest
 ```
 
-#### اختبارات الواجهة E2E — Playwright
+#### E2E UI suite — Playwright
 
-تتطلب المنظومة كاملة قيد التشغيل (خطوات التشغيل السريع أعلاه، أو `docker compose --profile go --profile e2e up -d --wait`):
+Requires the full stack to be running (the quickstart above, or `docker compose --profile go --profile e2e up -d --wait`):
 
 ```bash
 cd e2e
@@ -77,90 +79,53 @@ npx playwright install chromium
 npx playwright test
 ```
 
-ممر الـ PR السريع (الوسوم السريعة دون المواصفات الثقيلة):
+PR fast lane (the fast tags without the heavy specs):
 
 ```bash
-npx playwright test --grep "@smoke|@critical|@permission|@i18n|@a11y" --grep-invert "@regression"
+npx playwright test --grep "@smoke|@critical|@permission|@a11y" --grep-invert "@regression"
 ```
 
-التفاصيل كاملة (المعمارية، الوسوم، سياسة حجر الهشاشة) في [docs/TEST_AUTOMATION_ARCHITECTURE.md](docs/TEST_AUTOMATION_ARCHITECTURE.md).
+Full details (architecture, tags, flakiness quarantine policy) in [docs/TEST_AUTOMATION_ARCHITECTURE.md](docs/TEST_AUTOMATION_ARCHITECTURE.md).
 
-## متغيرات البيئة الرئيسية — Environment Variables
+## Environment variables
 
-| المتغير | الافتراضي | الوصف |
+| Variable | Default | Description |
 |---|---|---|
-| `TRACEO_LLM_PROVIDER` | `auto` | `mock` (حتمي، دون اتصال) \| `anthropic` \| `auto` (anthropic إن وُجد مفتاح، وإلا mock) |
-| `ANTHROPIC_API_KEY` | — | مفتاح Claude API عند استخدام مزوّد `anthropic` |
-| `TRACEO_DATABASE_URL` | `sqlite:///backend/traceo.db` | رابط قاعدة البيانات (PostgreSQL في الإنتاج) |
+| `TRACEO_LLM_PROVIDER` | `auto` | `mock` (deterministic, offline) \| `anthropic` \| `auto` (anthropic when a key is present, otherwise mock) |
+| `ANTHROPIC_API_KEY` | — | Claude API key, used by the `anthropic` provider |
+| `TRACEO_DATABASE_URL` | `sqlite:///backend/traceo.db` | Database URL (PostgreSQL in production) |
+| `TRACEO_SEED_DEMO` | `1` | Seed the demo organisation on startup; must be `0` in production (startup refuses otherwise) |
 
-كامل الإعدادات في `backend/app/config.py` — كلها قابلة للتهيئة عبر متغيرات البيئة (NFR-POR-03).
+Every setting lives in `backend/app/config.py` and is configurable through environment variables (NFR-POR-03).
 
-## شجرة المستودع — Repository Layout
+## Repository layout
 
 ```
 traceo/
 ├── backend/
 │   ├── app/                # FastAPI: main, config, db, models, security, deps, jobs, llm/, modules/
-│   ├── tests/              # بوابتا الإطلاق: grounding + tenant isolation (pytest)
+│   ├── tests/              # release gates: grounding + tenant isolation (pytest)
 │   ├── requirements.txt
-│   └── API_CONTRACT.md     # عقد الواجهات الخلفية
-├── frontend/               # Next.js 15 (App Router) + TypeScript — عربي أولاً، RTL كامل
+│   └── API_CONTRACT.md     # backend API contract
+├── backend-go/             # Go parity port (Gin + GORM) — route-for-route identical
+├── frontend/               # Next.js 15 (App Router) + TypeScript — English, LTR
 │   └── FRONTEND_CONTRACT.md
+├── e2e/                    # Playwright suite (specs, page objects, API repositories, fixtures)
+│   └── test-data/          # reference seeds: sample_requirements_en.md, sample_openapi.yaml
 ├── demo/
-│   ├── sut/                # منصة الطلبات — SUT تجريبي بعيوب مقصودة للاكتشاف
-│   └── seed_demo.py        # تهيئة الديمو من طرف إلى طرف
-└── docs/                   # الوثائق
+│   ├── sut/                # Orders Platform — demo SUT with deliberate defects to discover
+│   └── seed_demo.py        # end-to-end demo provisioning
+└── docs/                   # documentation
 ```
 
-## الوثائق — Documentation
+## Documentation
 
-- [عرض المستثمرين (عربي)](docs/PITCH_INVESTORS_AR.html) — `docs/PITCH_INVESTORS_AR.html`
-- [المعمارية — Architecture](docs/ARCHITECTURE.md)
-- [رحلة المستخدم — User Journey](docs/USER_JOURNEY.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [User journey](docs/USER_JOURNEY.md)
+- [Test automation architecture](docs/TEST_AUTOMATION_ARCHITECTURE.md)
+- [Testid registry](docs/TESTID_REGISTRY.md)
+- `docs/PITCH_INVESTORS_AR.html` — legacy Arabic-language investor deck, kept for reference only; it predates the English-only pivot and is not part of the shipped product.
 
 ---
 
-# English
-
-**Traceo (TADQEEQ)** — AI test design & traceability platform for the Saudi market.
-It turns a requirements document — Arabic or English — into an executable, requirement-linked API test suite grounded in an endpoint inventory discovered from an OpenAPI spec, with human review and a live traceability matrix exportable as contractual/audit evidence. **The model proposes, the system verifies** — a hard grounding gate guarantees zero fabricated identifiers (BO-07).
-
-**Six engines:** ingestion, discovery, generation (+ grounding gate), execution, traceability — and the **QA Insight Agent**, which proposes edge cases across nine canonical categories (boundary surprises, exotic input, control characters, idempotency, state corruption, permission edges, timing/DST, resource exhaustion, downstream failures). The insight engine is **100% deterministic, makes zero LLM calls and runs fully offline**, and every case it emits passes the same grounding gate before it is persisted. It is opt-in through its own endpoints (`GET /v1/projects/{id}/insights`, `POST /v1/projects/{id}/insights/generate`) and changes no existing flow.
-
-**Prerequisites:** Python 3.11+, Node 20+.
-
-**Quickstart:**
-
-```bash
-# Backend (:8000)
-cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m uvicorn app.main:app --reload --port 8000
-
-# Demo SUT (:9000)
-cd demo/sut && ../../backend/.venv/bin/python -m uvicorn main:app --port 9000
-
-# Frontend (:3000)
-cd frontend && npm install && npm run dev
-
-# Demo data (requires httpx — use the backend venv python)
-backend/.venv/bin/python demo/seed_demo.py
-# Demo account: demo@traceo.sa / Demo1234!
-
-# Tests — the two release gates (grounding + tenant isolation)
-cd backend && .venv/bin/python -m pytest
-
-# E2E UI suite (Playwright) — needs the full stack running (Quickstart above,
-# or: docker compose --profile go --profile e2e up -d --wait)
-cd e2e && npm install && npx playwright install chromium && npx playwright test
-# PR fast lane:
-#   npx playwright test --grep "@smoke|@critical|@permission|@i18n|@a11y" --grep-invert "@regression"
-# Details: docs/TEST_AUTOMATION_ARCHITECTURE.md
-```
-
-**Key env vars:** `TRACEO_LLM_PROVIDER=mock|anthropic|auto`, `ANTHROPIC_API_KEY`, `TRACEO_DATABASE_URL`. See `backend/app/config.py`.
-
-**Docs:** [Investor pitch (AR)](docs/PITCH_INVESTORS_AR.html) · [Architecture](docs/ARCHITECTURE.md) · [User journey](docs/USER_JOURNEY.md)
-
----
-
-**مشروع TADQEEQ — سري.** جميع الحقوق محفوظة؛ هذا المستودع ووثائقه ملكية خاصة بمشروع Traceo (TADQEEQ) ولا يجوز تداوله خارج الفريق. — *TADQEEQ project — Confidential. Proprietary; do not distribute.*
+**TADQEEQ project — Confidential.** Proprietary; this repository and its documentation belong to the Traceo (TADQEEQ) project and must not be distributed outside the team.

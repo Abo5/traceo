@@ -29,11 +29,11 @@ var (
 	authTypes = []string{"none", "api_key", "basic", "bearer", "oauth2_cc"}
 	tcStates  = []string{"draft", "approved", "rejected", "stale", "archived"}
 
-	// v2 gap next-action vocabulary (Arabic, FR-051) — from backend traceability.py.
+	// v2 gap next-action vocabulary (FR-051) — from backend traceability.py.
 	gapNextActions = map[string]string{
-		"no_reachable_endpoint": "استورد مواصفة تغطي هذا المتطلب أو اربطه يدوياً",
-		"all_cases_disabled":    "اعتمد إحدى الحالات المرتبطة في المراجعة",
-		"no_approved_cases":     "ولّد حالات لهذا المتطلب",
+		"no_reachable_endpoint": "Import a specification that covers this requirement, or link it manually",
+		"all_cases_disabled":    "Approve one of the linked test cases in review",
+		"no_approved_cases":     "Generate test cases for this requirement",
 	}
 )
 
@@ -51,11 +51,7 @@ func isoPtr(t *time.Time) any {
 }
 
 func projectPayload(p *models.Project) gin.H {
-	var language any // null until set or auto-detected (automation addendum)
-	if p.Language != nil {
-		language = *p.Language
-	}
-	return gin.H{"id": p.ID, "name": p.Name, "language": language,
+	return gin.H{"id": p.ID, "name": p.Name,
 		"automation": p.Automation, "status": p.Status,
 		"created_at": iso(p.CreatedAt), "updated_at": iso(p.UpdatedAt)}
 }
@@ -110,14 +106,6 @@ func validateAuthType(c *gin.Context, authType string) bool {
 	return false
 }
 
-func validLanguage(c *gin.Context, lang string) bool {
-	if lang == "en" || lang == "ar" {
-		return true
-	}
-	httpx.Err(c, http.StatusUnprocessableEntity, "invalid_language", "Language must be 'en' or 'ar'")
-	return false
-}
-
 func validAutomation(c *gin.Context, automation string) bool {
 	if automation == "auto" || automation == "manual" {
 		return true
@@ -157,7 +145,6 @@ func createProject(c *gin.Context) {
 	u := httpx.User(c)
 	var body struct {
 		Name       string  `json:"name"`
-		Language   *string `json:"language"`   // optional; omitted/null => auto-detect later
 		Automation *string `json:"automation"` // optional; "auto" (default) | "manual"
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -168,13 +155,6 @@ func createProject(c *gin.Context) {
 		httpx.Err(c, http.StatusUnprocessableEntity, "validation_error", "Invalid field length")
 		return
 	}
-	var language *string
-	if body.Language != nil {
-		if !validLanguage(c, *body.Language) {
-			return
-		}
-		language = body.Language
-	}
 	automation := "auto"
 	if body.Automation != nil {
 		automation = *body.Automation
@@ -183,7 +163,7 @@ func createProject(c *gin.Context) {
 		return
 	}
 	project := models.Project{OrganisationID: u.OrganisationID,
-		Name: strings.TrimSpace(body.Name), Language: language, Automation: automation}
+		Name: strings.TrimSpace(body.Name), Automation: automation}
 	if err := db.DB.Create(&project).Error; err != nil {
 		httpx.Err(c, http.StatusInternalServerError, "internal_error", "Could not create project")
 		return
@@ -220,7 +200,6 @@ func updateProject(c *gin.Context) {
 	u := httpx.User(c)
 	var body struct {
 		Name       *string `json:"name"`
-		Language   *string `json:"language"`
 		Automation *string `json:"automation"`
 		Status     *string `json:"status"`
 	}
@@ -241,17 +220,6 @@ func updateProject(c *gin.Context) {
 		name := strings.TrimSpace(*body.Name)
 		changes["name"] = map[string]any{"from": project.Name, "to": name}
 		project.Name = name
-	}
-	if body.Language != nil {
-		if !validLanguage(c, *body.Language) {
-			return
-		}
-		var from any // null when never set/detected
-		if project.Language != nil {
-			from = *project.Language
-		}
-		changes["language"] = map[string]any{"from": from, "to": *body.Language}
-		project.Language = body.Language // free override anytime (automation addendum)
 	}
 	if body.Automation != nil {
 		if !validAutomation(c, *body.Automation) {

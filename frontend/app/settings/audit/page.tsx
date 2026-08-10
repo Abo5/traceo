@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
 import { Badge, Button, Empty, Mono, PageHeader, Table } from "@/components/ui";
 
 type AuditEntry = {
@@ -28,39 +27,6 @@ function actionTone(action: string): "success" | "warning" | "error" | "info" | 
 }
 
 export default function AuditPage() {
-  const { lang } = useLang();
-  const ar = lang === "ar";
-
-  const L = ar
-    ? {
-        title: "سجل التدقيق",
-        sub: "كل الإجراءات الحساسة في المنشأة — الأحدث أولًا",
-        members: "الأعضاء",
-        time: "الوقت",
-        actor: "المنفّذ",
-        action: "الإجراء",
-        object: "الكائن",
-        detail: "التفاصيل",
-        loadMore: "تحميل المزيد",
-        empty: "لا توجد سجلات بعد",
-        emptyHint: "ستظهر هنا أحداث الدخول والتعديلات والاعتمادات والتشغيلات",
-        loading: "جارٍ التحميل…",
-      }
-    : {
-        title: "Audit log",
-        sub: "Every sensitive action in the organisation — newest first",
-        members: "Members",
-        time: "Time",
-        actor: "Actor",
-        action: "Action",
-        object: "Object",
-        detail: "Detail",
-        loadMore: "Load more",
-        empty: "No entries yet",
-        emptyHint: "Logins, edits, approvals and runs will appear here",
-        loading: "Loading…",
-      };
-
   const [items, setItems] = useState<AuditEntry[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -109,13 +75,13 @@ export default function AuditPage() {
   return (
     <div className="stack" data-testid="audit-page-root">
       <PageHeader
-        title={L.title}
-        sub={L.sub}
+        title="Audit log"
+        sub="Every sensitive action in the organisation — newest first"
         testId="audit-page-header"
         actions={
           <Link href="/settings/members">
             <Button variant="ghost" size="sm" testId="audit-members-link-button">
-              {L.members}
+              Members
             </Button>
           </Link>
         }
@@ -124,13 +90,13 @@ export default function AuditPage() {
       {error && <div className="error-text" data-testid="audit-error-text">{error}</div>}
 
       {loading ? (
-        <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>{L.loading}</div>
+        <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>Loading…</div>
       ) : items.length === 0 ? (
-        <Empty title={L.empty} hint={L.emptyHint} testId="audit-empty-state" />
+        <Empty title="No entries yet" hint="Logins, edits, approvals and runs will appear here" testId="audit-empty-state" />
       ) : (
         <>
           <div className="card" style={{ padding: "6px 18px 12px" }}>
-            <Table head={[L.time, L.actor, L.action, L.object, L.detail]} testId="audit-table-root">
+            <Table head={["Time", "Actor", "Action", "Object", "Detail"]} testId="audit-table-root">
               {items.map((e) => (
                 <tr key={e.id} data-testid="audit-row">
                   <td>
@@ -177,7 +143,7 @@ export default function AuditPage() {
           {cursor && (
             <div style={{ display: "flex", justifyContent: "center" }}>
               <Button variant="secondary" disabled={loadingMore} testId="audit-load-more-button" onClick={more}>
-                {L.loadMore}
+                Load more
               </Button>
             </div>
           )}

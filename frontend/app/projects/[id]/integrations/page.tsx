@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { API, api, getToken } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
 import { useCan } from "@/lib/permissions";
 import {
   Badge,
@@ -85,139 +84,70 @@ function CopyButton({ text, label, copied }: { text: string; label: string; copi
 
 export default function IntegrationsPage() {
   const { id } = useParams<{ id: string }>();
-  const { lang } = useLang();
-  const ar = lang === "ar";
   const canDo = useCan();
 
-  const L = ar
-    ? {
-        title: "التكاملات",
-        sub: "اربط Traceo بأدوات فريقك — إشعارات، بوابة CI/CD، وتصدير Jira/Xray",
-        loading: "جارٍ التحميل…",
-        retry: "إعادة المحاولة",
-        loadError: "تعذّر التحميل",
-        // webhooks
-        whTitle: "Webhooks",
-        whSub: "إشعار عند اكتمال أي تشغيل — يعمل مع Slack Incoming Webhooks",
-        whSlackHint: "تلميح: الصق رابط Slack Incoming Webhook لاستقبال ملخص عربي في قناتك",
-        newWh: "إضافة Webhook",
-        editWh: "تعديل Webhook",
-        whName: "الاسم",
-        whUrl: "الرابط (URL)",
-        whSecret: "السر (اختياري)",
-        whSecretHint: "يُستخدم لتوقيع HMAC-SHA256 في الترويسة X-Traceo-Signature — اتركه فارغًا للإبقاء على الحالي",
-        enabled: "مفعّل",
-        disabled: "معطّل",
-        test: "اختبار",
-        testing: "جارٍ الاختبار…",
-        lastStatus: "آخر حالة",
-        lastFired: "آخر إرسال",
-        edit: "تعديل",
-        del: "حذف",
-        delWhTitle: "حذف Webhook",
-        delWhConfirm: "سيتم حذف هذا الـ Webhook نهائيًا. متابعة؟",
-        confirm: "تأكيد",
-        cancel: "إلغاء",
-        create: "إنشاء",
-        save: "حفظ",
-        saving: "جارٍ الحفظ…",
-        whEmpty: "لا توجد Webhooks بعد",
-        whEmptyHint: "أضف رابطًا لاستقبال إشعار عند اكتمال التشغيلات",
-        // gate
-        gateTitle: "بوابة CI/CD",
-        gateSub: "أوقف الدمج عندما تنخفض التغطية أو توجد عيوب حرجة",
-        minCoverage: "الحد الأدنى للتغطية %",
-        maxCritical: "الحد الأقصى للعيوب الحرجة",
-        checkGate: "فحص البوابة",
-        checking: "جارٍ الفحص…",
-        gatePass: "البوابة تسمح بالمرور ✓",
-        gateFail: "البوابة توقف الدمج",
-        coverage: "التغطية",
-        criticalDefects: "عيوب حرجة",
-        breach: "خرق",
-        limit: "الحد",
-        actual: "الفعلي",
-        curlHint: "أضف هذا الأمر إلى خط CI — أنشئ مفتاح API من صفحة الإعدادات",
-        copy: "نسخ",
-        copied: "تم النسخ ✓",
-        // xray
-        xrayTitle: "Jira / Xray",
-        xraySub: "صدّر نتائج تشغيل بصيغة Xray أو ملف عيوب قابل للاستيراد في Jira",
-        pickRun: "اختر تشغيلًا…",
-        run: "التشغيل",
-        dlXray: "تنزيل xray.json",
-        dlDefects: "تنزيل defects.csv",
-        dlError: "تعذّر التنزيل",
-        noRuns: "لا توجد تشغيلات بعد — شغّل الحالات المعتمدة أولًا",
-        // soon
-        soon: "قريباً",
-        confluenceTitle: "Confluence",
-        confluenceSub: "استيراد صفحات المتطلبات مباشرة بدلًا من رفع الملفات",
-        jiraSyncTitle: "مزامنة Jira",
-        jiraSyncSub: "مزامنة مباشرة ثنائية الاتجاه مع مشاريع Jira",
-      }
-    : {
-        title: "Integrations",
-        sub: "Connect Traceo to your team's tools — notifications, CI/CD gate and Jira/Xray export",
-        loading: "Loading…",
-        retry: "Retry",
-        loadError: "Failed to load",
-        whTitle: "Webhooks",
-        whSub: "Notify on run completion — works with Slack Incoming Webhooks",
-        whSlackHint: "Tip: paste a Slack Incoming Webhook URL to get an Arabic summary in your channel",
-        newWh: "Add webhook",
-        editWh: "Edit webhook",
-        whName: "Name",
-        whUrl: "URL",
-        whSecret: "Secret (optional)",
-        whSecretHint: "Used for the HMAC-SHA256 X-Traceo-Signature header — leave blank to keep the current one",
-        enabled: "Enabled",
-        disabled: "Disabled",
-        test: "Test",
-        testing: "Testing…",
-        lastStatus: "Last status",
-        lastFired: "Last fired",
-        edit: "Edit",
-        del: "Delete",
-        delWhTitle: "Delete webhook",
-        delWhConfirm: "This webhook will be permanently deleted. Continue?",
-        confirm: "Confirm",
-        cancel: "Cancel",
-        create: "Create",
-        save: "Save",
-        saving: "Saving…",
-        whEmpty: "No webhooks yet",
-        whEmptyHint: "Add a URL to get notified when runs complete",
-        gateTitle: "CI/CD Gate",
-        gateSub: "Block merges when coverage drops or critical defects exist",
-        minCoverage: "Min coverage %",
-        maxCritical: "Max critical defects",
-        checkGate: "Check gate",
-        checking: "Checking…",
-        gatePass: "Gate passing ✓",
-        gateFail: "Gate blocking the merge",
-        coverage: "Coverage",
-        criticalDefects: "critical defects",
-        breach: "Breach",
-        limit: "Limit",
-        actual: "Actual",
-        curlHint: "Add this command to your CI pipeline — create an API key on the Settings page",
-        copy: "Copy",
-        copied: "Copied ✓",
-        xrayTitle: "Jira / Xray",
-        xraySub: "Export run results as Xray import or a Jira-importable defects file",
-        pickRun: "Pick a run…",
-        run: "Run",
-        dlXray: "Download xray.json",
-        dlDefects: "Download defects.csv",
-        dlError: "Download failed",
-        noRuns: "No runs yet — execute approved cases first",
-        soon: "Coming soon",
-        confluenceTitle: "Confluence",
-        confluenceSub: "Pull requirement pages directly instead of uploading files",
-        jiraSyncTitle: "Jira sync",
-        jiraSyncSub: "Live two-way sync with Jira projects",
-      };
+  const L = {
+    title: "Integrations",
+    sub: "Connect Traceo to your team's tools — notifications, CI/CD gate and Jira/Xray export",
+    loading: "Loading…",
+    retry: "Retry",
+    loadError: "Failed to load",
+    whTitle: "Webhooks",
+    whSub: "Notify on run completion — works with Slack Incoming Webhooks",
+    whSlackHint: "Tip: paste a Slack Incoming Webhook URL to get a run summary posted to your channel",
+    newWh: "Add webhook",
+    editWh: "Edit webhook",
+    whName: "Name",
+    whUrl: "URL",
+    whSecret: "Secret (optional)",
+    whSecretHint: "Used for the HMAC-SHA256 X-Traceo-Signature header — leave blank to keep the current one",
+    enabled: "Enabled",
+    disabled: "Disabled",
+    test: "Test",
+    testing: "Testing…",
+    lastStatus: "Last status",
+    lastFired: "Last fired",
+    edit: "Edit",
+    del: "Delete",
+    delWhTitle: "Delete webhook",
+    delWhConfirm: "This webhook will be permanently deleted. Continue?",
+    confirm: "Confirm",
+    cancel: "Cancel",
+    create: "Create",
+    save: "Save",
+    saving: "Saving…",
+    whEmpty: "No webhooks yet",
+    whEmptyHint: "Add a URL to get notified when runs complete",
+    gateTitle: "CI/CD Gate",
+    gateSub: "Block merges when coverage drops or critical defects exist",
+    minCoverage: "Min coverage %",
+    maxCritical: "Max critical defects",
+    checkGate: "Check gate",
+    checking: "Checking…",
+    gatePass: "Gate passing ✓",
+    gateFail: "Gate blocking the merge",
+    coverage: "Coverage",
+    criticalDefects: "critical defects",
+    breach: "Breach",
+    limit: "Limit",
+    actual: "Actual",
+    curlHint: "Add this command to your CI pipeline — create an API key on the Settings page",
+    copy: "Copy",
+    copied: "Copied ✓",
+    xrayTitle: "Jira / Xray",
+    xraySub: "Export run results as Xray import or a Jira-importable defects file",
+    pickRun: "Pick a run…",
+    run: "Run",
+    dlXray: "Download xray.json",
+    dlDefects: "Download defects.csv",
+    dlError: "Download failed",
+    noRuns: "No runs yet — execute approved cases first",
+    soon: "Coming soon",
+    confluenceTitle: "Confluence",
+    confluenceSub: "Pull requirement pages directly instead of uploading files",
+    jiraSyncTitle: "Jira sync",
+    jiraSyncSub: "Live two-way sync with Jira projects",
+  };
 
   // ---- webhooks ----
   const [hooks, setHooks] = useState<Webhook[]>([]);
@@ -444,7 +374,7 @@ export default function IntegrationsPage() {
                           {L.lastStatus} · <Mono style={{ fontSize: 10.5 }}>{w.last_status}</Mono>
                         </Badge>
                       )}
-                      <span style={{ marginInlineStart: "auto", display: "inline-flex", gap: 6 }}>
+                      <span style={{ marginLeft: "auto", display: "inline-flex", gap: 6 }}>
                         {canDo("manage_projects") && (
                           <Button variant="secondary" size="sm" testId="integrations-webhook-test-button" disabled={testingId === w.id} onClick={() => testWh(w)}>
                             {testingId === w.id ? L.testing : L.test}
@@ -500,7 +430,6 @@ export default function IntegrationsPage() {
               <div style={{ width: 160 }}>
                 <Field label={L.minCoverage}>
                   <Input
-                    dir="ltr"
                     type="number"
                     min={0}
                     max={100}
@@ -513,7 +442,6 @@ export default function IntegrationsPage() {
               <div style={{ width: 160 }}>
                 <Field label={L.maxCritical}>
                   <Input
-                    dir="ltr"
                     type="number"
                     min={0}
                     testId="integrations-gate-max-critical-input"
@@ -597,7 +525,7 @@ export default function IntegrationsPage() {
             ) : null}
 
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <div className="code-block" dir="ltr" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+              <div className="code-block" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
                 {curl}
               </div>
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -685,7 +613,7 @@ export default function IntegrationsPage() {
               required
               maxLength={100}
               testId="integrations-webhook-name-input"
-              placeholder={ar ? "مثال: قناة الجودة في Slack" : "e.g. QA Slack channel"}
+              placeholder="e.g. QA Slack channel"
               value={whForm.name}
               onChange={(e) => setWhForm((f) => ({ ...f, name: e.target.value }))}
             />
@@ -693,7 +621,6 @@ export default function IntegrationsPage() {
           <Field label={L.whUrl} hint={L.whSlackHint}>
             <Input
               required
-              dir="ltr"
               testId="integrations-webhook-url-input"
               placeholder="https://hooks.slack.com/services/…"
               value={whForm.url}
@@ -702,7 +629,6 @@ export default function IntegrationsPage() {
           </Field>
           <Field label={L.whSecret} hint={L.whSecretHint}>
             <Input
-              dir="ltr"
               type="password"
               autoComplete="off"
               testId="integrations-webhook-secret-input"

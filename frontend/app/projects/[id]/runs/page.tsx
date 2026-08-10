@@ -5,7 +5,6 @@ import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
 import { useCan } from "@/lib/permissions";
 import { Badge, Button, Card, DateTimeText, Empty, Field, Input, Modal, PageHeader, Select, StatusDot, Table, stateTone } from "@/components/ui";
 
@@ -16,7 +15,7 @@ function asList(x: any): any[] {
 
 function M({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
-    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12, ...style }}>
+    <span style={{ fontFamily: "'JetBrains Mono',ui-monospace,monospace", fontSize: 12, ...style }}>
       {children}
     </span>
   );
@@ -32,7 +31,6 @@ const TERMINAL = ["completed", "aborted", "cancelled", "failed"];
 function NumberedChip({ n, color }: { n: string; color: string }) {
   return (
     <span
-      dir="ltr"
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -55,102 +53,51 @@ function NumberedChip({ n, color }: { n: string; color: string }) {
 
 export default function RunsPage() {
   const { id } = useParams<{ id: string }>();
-  const { lang } = useLang();
   const canDo = useCan();
 
-  const L =
-    lang === "ar"
-      ? {
-          title: "التشغيلات",
-          sub: "شغّل الحالات المعتمدة ضد بيئة وتابع النتائج مباشرة",
-          launch: "تشغيل جديد",
-          env: "البيئة",
-          pickEnv: "اختر بيئة…",
-          approvedCount: "حالة معتمدة جاهزة للتشغيل",
-          subset: "تشغيل مجموعة فرعية",
-          subsetPicked: "حالة محددة",
-          subsetTitle: "اختيار مجموعة فرعية",
-          subsetHint: "اترك الاختيار فارغًا لتشغيل جميع الحالات المعتمدة",
-          apply: "تطبيق",
-          clear: "مسح",
-          run: "تشغيل",
-          launching: "جارٍ الإطلاق…",
-          live: "التشغيل الجاري",
-          cancel: "إلغاء التشغيل",
-          report: "عرض التقرير",
-          total: "الكل",
-          passed: "ناجح",
-          failed: "فاشل",
-          errored: "خطأ",
-          skipped: "متجاوز",
-          history: "سجل التشغيلات",
-          runId: "المعرّف",
-          state: "الحالة",
-          counts: "النتائج",
-          started: "البداية",
-          finished: "النهاية",
-          initiator: "المشغّل",
-          noRuns: "لا توجد تشغيلات بعد",
-          noRunsHint: "شغّل الحالات المعتمدة لبدء التتبّع",
-          noEnvs: "لا توجد بيئات — أنشئ بيئة أولاً من صفحة البيئات",
-          noApproved: "لا توجد حالات معتمدة — اعتمد حالات من صفحة المراجعة",
-          loadError: "تعذّر تحميل البيانات",
-          retry: "إعادة المحاولة",
-          search: "بحث…",
-          step1: "الهدف",
-          step2: "النطاق",
-          step3: "القواعد",
-          rulesHint: "تقنيات التوليد المفعّلة — للقراءة فقط",
-          techniques: ["EP", "BVA", "سلبي", "جداول القرار", "التعريب"],
-        }
-      : {
-          title: "Runs",
-          sub: "Execute approved cases against an environment and watch results live",
-          launch: "New run",
-          env: "Environment",
-          pickEnv: "Pick an environment…",
-          approvedCount: "approved cases ready to run",
-          subset: "Run a subset",
-          subsetPicked: "cases selected",
-          subsetTitle: "Pick a subset",
-          subsetHint: "Leave empty to run all approved cases",
-          apply: "Apply",
-          clear: "Clear",
-          run: "Run",
-          launching: "Launching…",
-          live: "Live run",
-          cancel: "Cancel run",
-          report: "View report",
-          total: "Total",
-          passed: "Passed",
-          failed: "Failed",
-          errored: "Errored",
-          skipped: "Skipped",
-          history: "Run history",
-          runId: "ID",
-          state: "State",
-          counts: "Counts",
-          started: "Started",
-          finished: "Finished",
-          initiator: "Initiator",
-          noRuns: "No runs yet",
-          noRunsHint: "Run approved cases to start tracing",
-          noEnvs: "No environments — create one on the Environments page first",
-          noApproved: "No approved cases — approve cases on the Review page",
-          loadError: "Failed to load data",
-          retry: "Retry",
-          search: "Search…",
-          step1: "Target",
-          step2: "Scope",
-          step3: "Rules",
-          rulesHint: "Enabled generation techniques — read-only",
-          techniques: ["EP", "BVA", "Negative", "Decision tables", "Localisation"],
-        };
-
-  const stateLabel = (s: string) =>
-    lang === "ar"
-      ? ({ queued: "في الانتظار", running: "قيد التنفيذ", completed: "مكتمل", aborted: "مُجهض", cancelled: "ملغى", failed: "فاشل" } as Record<string, string>)[s] ?? s
-      : s;
+  const L = {
+    title: "Runs",
+    sub: "Execute approved cases against an environment and watch results live",
+    launch: "New run",
+    env: "Environment",
+    pickEnv: "Pick an environment…",
+    approvedCount: "approved cases ready to run",
+    subset: "Run a subset",
+    subsetPicked: "cases selected",
+    subsetTitle: "Pick a subset",
+    subsetHint: "Leave empty to run all approved cases",
+    apply: "Apply",
+    clear: "Clear",
+    run: "Run",
+    launching: "Launching…",
+    live: "Live run",
+    cancel: "Cancel run",
+    report: "View report",
+    total: "Total",
+    passed: "Passed",
+    failed: "Failed",
+    errored: "Errored",
+    skipped: "Skipped",
+    history: "Run history",
+    runId: "ID",
+    state: "State",
+    counts: "Counts",
+    started: "Started",
+    finished: "Finished",
+    initiator: "Initiator",
+    noRuns: "No runs yet",
+    noRunsHint: "Run approved cases to start tracing",
+    noEnvs: "No environments — create one on the Environments page first",
+    noApproved: "No approved cases — approve cases on the Review page",
+    loadError: "Failed to load data",
+    retry: "Retry",
+    search: "Search…",
+    step1: "Target",
+    step2: "Scope",
+    step3: "Rules",
+    rulesHint: "Enabled generation techniques — read-only",
+    techniques: ["EP", "BVA", "Negative", "Decision tables", "Localisation"],
+  };
 
   const [envs, setEnvs] = useState<any[]>([]);
   const [approved, setApproved] = useState<any[]>([]);
@@ -369,7 +316,7 @@ export default function RunsPage() {
                           borderRadius: 6,
                           background: "var(--surface-2)",
                           border: "1px solid var(--border)",
-                          fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace",
+                          fontFamily: "'JetBrains Mono',ui-monospace,monospace",
                           fontSize: 10.5,
                           fontWeight: 500,
                           color: "var(--text-secondary)",
@@ -421,9 +368,9 @@ export default function RunsPage() {
                   <M style={{ color: "var(--text-secondary)" }}>{shortId(liveRunId)}</M>
                   <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
                     <StatusDot state={live.state} testId="runs-live-status-dot" />
-                    <Badge tone={stateTone(live.state)} testId="runs-live-state-badge" state={live.state}>{stateLabel(live.state)}</Badge>
+                    <Badge tone={stateTone(live.state)} testId="runs-live-state-badge" state={live.state}>{live.state}</Badge>
                   </span>
-                  <div style={{ marginInlineStart: "auto", display: "flex", gap: 8 }}>
+                  <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
                     {!liveTerminal ? (
                       canDo("trigger_run") && (
                         <Button variant="danger" size="sm" testId="runs-live-cancel-button" disabled={cancelling} onClick={cancelRun}>
@@ -433,7 +380,7 @@ export default function RunsPage() {
                     ) : (
                       <Link href={`/projects/${id}/runs/${liveRunId}`}>
                         <Button variant="secondary" size="sm" testId="runs-live-report-button">
-                          {L.report} ←
+                          {L.report} →
                         </Button>
                       </Link>
                     )}
@@ -484,7 +431,7 @@ export default function RunsPage() {
                   <td>
                     <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
                       <StatusDot state={r.state} testId="runs-row-status-dot" />
-                      <Badge tone={stateTone(r.state)} testId="runs-row-state-badge" state={r.state}>{stateLabel(r.state)}</Badge>
+                      <Badge tone={stateTone(r.state)} testId="runs-row-state-badge" state={r.state}>{r.state}</Badge>
                     </span>
                   </td>
                   <td>

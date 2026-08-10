@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
 import { useCan } from "@/lib/permissions";
 import {
   Badge,
@@ -70,102 +69,54 @@ function textToVars(text: string): Record<string, string> {
 
 export default function EnvironmentsPage() {
   const { id } = useParams<{ id: string }>();
-  const { lang } = useLang();
-  const ar = lang === "ar";
   const canDo = useCan();
 
-  const L = ar
-    ? {
-        title: "البيئات",
-        sub: "بيئات التنفيذ التي تُشغَّل عليها حالات الاختبار",
-        newEnv: "بيئة جديدة",
-        editEnv: "تعديل البيئة",
-        name: "اسم البيئة",
-        baseUrl: "الرابط الأساسي",
-        authType: "نوع المصادقة",
-        authNames: {
-          none: "بدون",
-          api_key: "مفتاح API",
-          basic: "أساسية (Basic)",
-          bearer: "رمز Bearer",
-          oauth2_cc: "OAuth2 Client Credentials",
-        } as Record<string, string>,
-        headerName: "اسم الترويسة",
-        keyValue: "قيمة المفتاح",
-        username: "اسم المستخدم",
-        password: "كلمة المرور",
-        token: "الرمز",
-        tokenUrl: "رابط الرمز",
-        clientId: "معرّف العميل",
-        clientSecret: "سر العميل",
-        secretHint: "تُحفظ الأسرار مشفّرة ولا تُعرض بعد الحفظ — اتركها فارغة للإبقاء على السر الحالي",
-        secretSaved: "سر محفوظ",
-        variables: "المتغيرات",
-        variablesHint: "سطر لكل متغيّر بصيغة KEY=VALUE — تُستخدم في الاستيفاء {{var}}",
-        tls: "التحقق من شهادة TLS",
-        save: "حفظ",
-        cancel: "إلغاء",
-        create: "إنشاء",
-        edit: "تعديل",
-        del: "حذف",
-        check: "فحص الاتصال",
-        checking: "جارٍ الفحص…",
-        reachable: "قابل للوصول",
-        unreachable: "غير قابل للوصول",
-        authApplied: "مصادقة مفعّلة",
-        empty: "لا توجد بيئات بعد",
-        emptyHint: "أنشئ بيئة (مثل Staging) لتشغيل الاختبارات عليها",
-        confirmDeleteTitle: "حذف البيئة",
-        confirmDelete: "سيتم حذف هذه البيئة نهائيًا. متابعة؟",
-        confirm: "تأكيد",
-        loading: "جارٍ التحميل…",
-      }
-    : {
-        title: "Environments",
-        sub: "Execution environments your test cases run against",
-        newEnv: "New environment",
-        editEnv: "Edit environment",
-        name: "Environment name",
-        baseUrl: "Base URL",
-        authType: "Auth type",
-        authNames: {
-          none: "None",
-          api_key: "API key",
-          basic: "Basic",
-          bearer: "Bearer token",
-          oauth2_cc: "OAuth2 Client Credentials",
-        } as Record<string, string>,
-        headerName: "Header name",
-        keyValue: "Key value",
-        username: "Username",
-        password: "Password",
-        token: "Token",
-        tokenUrl: "Token URL",
-        clientId: "Client ID",
-        clientSecret: "Client secret",
-        secretHint:
-          "Secrets are stored encrypted and never shown after saving — leave blank to keep the current secret",
-        secretSaved: "Secret saved",
-        variables: "Variables",
-        variablesHint: "One per line as KEY=VALUE — used for {{var}} interpolation",
-        tls: "Verify TLS certificate",
-        save: "Save",
-        cancel: "Cancel",
-        create: "Create",
-        edit: "Edit",
-        del: "Delete",
-        check: "Check connectivity",
-        checking: "Checking…",
-        reachable: "Reachable",
-        unreachable: "Unreachable",
-        authApplied: "Auth applied",
-        empty: "No environments yet",
-        emptyHint: "Create an environment (e.g. Staging) to run tests against",
-        confirmDeleteTitle: "Delete environment",
-        confirmDelete: "This environment will be permanently deleted. Continue?",
-        confirm: "Confirm",
-        loading: "Loading…",
-      };
+  const L = {
+    title: "Environments",
+    sub: "Execution environments your test cases run against",
+    newEnv: "New environment",
+    editEnv: "Edit environment",
+    name: "Environment name",
+    baseUrl: "Base URL",
+    authType: "Auth type",
+    authNames: {
+      none: "None",
+      api_key: "API key",
+      basic: "Basic",
+      bearer: "Bearer token",
+      oauth2_cc: "OAuth2 Client Credentials",
+    } as Record<string, string>,
+    headerName: "Header name",
+    keyValue: "Key value",
+    username: "Username",
+    password: "Password",
+    token: "Token",
+    tokenUrl: "Token URL",
+    clientId: "Client ID",
+    clientSecret: "Client secret",
+    secretHint:
+      "Secrets are stored encrypted and never shown after saving — leave blank to keep the current secret",
+    secretSaved: "Secret saved",
+    variables: "Variables",
+    variablesHint: "One per line as KEY=VALUE — used for {{var}} interpolation",
+    tls: "Verify TLS certificate",
+    save: "Save",
+    cancel: "Cancel",
+    create: "Create",
+    edit: "Edit",
+    del: "Delete",
+    check: "Check connectivity",
+    checking: "Checking…",
+    reachable: "Reachable",
+    unreachable: "Unreachable",
+    authApplied: "Auth applied",
+    empty: "No environments yet",
+    emptyHint: "Create an environment (e.g. Staging) to run tests against",
+    confirmDeleteTitle: "Delete environment",
+    confirmDelete: "This environment will be permanently deleted. Continue?",
+    confirm: "Confirm",
+    loading: "Loading…",
+  };
 
   const [envs, setEnvs] = useState<Env[]>([]);
   const [loading, setLoading] = useState(true);
@@ -311,7 +262,6 @@ export default function EnvironmentsPage() {
           <>
             <Field label={L.headerName}>
               <Input
-                dir="ltr"
                 placeholder="X-API-Key"
                 testId="environments-auth-header-input"
                 value={form.header}
@@ -320,7 +270,6 @@ export default function EnvironmentsPage() {
             </Field>
             <Field label={L.keyValue} hint={L.secretHint}>
               <Input
-                dir="ltr"
                 type="password"
                 autoComplete="off"
                 testId="environments-auth-key-input"
@@ -335,7 +284,6 @@ export default function EnvironmentsPage() {
           <>
             <Field label={L.username}>
               <Input
-                dir="ltr"
                 autoComplete="off"
                 testId="environments-auth-username-input"
                 value={form.username}
@@ -344,7 +292,6 @@ export default function EnvironmentsPage() {
             </Field>
             <Field label={L.password} hint={L.secretHint}>
               <Input
-                dir="ltr"
                 type="password"
                 autoComplete="off"
                 testId="environments-auth-password-input"
@@ -358,7 +305,6 @@ export default function EnvironmentsPage() {
         return (
           <Field label={L.token} hint={L.secretHint}>
             <Input
-              dir="ltr"
               type="password"
               autoComplete="off"
               testId="environments-auth-token-input"
@@ -372,7 +318,6 @@ export default function EnvironmentsPage() {
           <>
             <Field label={L.tokenUrl}>
               <Input
-                dir="ltr"
                 placeholder="https://auth.example.com/oauth/token"
                 testId="environments-auth-token-url-input"
                 value={form.token_url}
@@ -381,7 +326,6 @@ export default function EnvironmentsPage() {
             </Field>
             <Field label={L.clientId}>
               <Input
-                dir="ltr"
                 autoComplete="off"
                 testId="environments-auth-client-id-input"
                 value={form.client_id}
@@ -390,7 +334,6 @@ export default function EnvironmentsPage() {
             </Field>
             <Field label={L.clientSecret} hint={L.secretHint}>
               <Input
-                dir="ltr"
                 type="password"
                 autoComplete="off"
                 testId="environments-auth-client-secret-input"
@@ -534,7 +477,6 @@ export default function EnvironmentsPage() {
           <Field label={L.baseUrl}>
             <Input
               required
-              dir="ltr"
               placeholder="https://staging.example.com"
               testId="environments-base-url-input"
               value={form.base_url}
@@ -565,7 +507,6 @@ export default function EnvironmentsPage() {
 
           <Field label={L.variables} hint={L.variablesHint}>
             <Textarea
-              dir="ltr"
               rows={3}
               testId="environments-variables-textarea"
               placeholder={"admin_token=...\nuser_id=42"}

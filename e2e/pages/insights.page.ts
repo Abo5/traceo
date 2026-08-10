@@ -1,11 +1,11 @@
 /**
  * /projects/[id]/insights — frontend/app/projects/[id]/insights/page.tsx.
- * The sixth engine's screen (QA Insight Agent / وكيل الرؤى).
+ * The sixth engine's screen (QA Insight Agent).
  *
  * The taxonomy is fixed: the page always renders the 9 canonical rows, each
  * repeating data-testid="insights-category-row" and carrying its canonical id
  * as mono text — so a row is addressed by that id (entity data), never by the
- * bilingual label (§5, §6). The status badge carries data-state with the
+ * visible label (§5, §6). The status badge carries data-state with the
  * literal backend value (covered | gap | n_a).
  *
  * The page owns the 202 job: it polls it and swaps the progress bar for the

@@ -81,7 +81,7 @@ export async function api<T = any>(
   try {
     res = await fetch(API + path, { method, headers, body });
   } catch (e: any) {
-    throw new ApiError("network_error", e?.message || "تعذّر الاتصال بالخادم", 0);
+    throw new ApiError("network_error", e?.message || "Could not reach the server", 0);
   }
 
   let data: any = undefined;
@@ -99,13 +99,13 @@ export async function api<T = any>(
     if (detail && typeof detail === "object") {
       throw new ApiError(
         detail.code || `http_${res.status}`,
-        detail.message || detail.msg || res.statusText || "خطأ غير متوقع",
+        detail.message || detail.msg || res.statusText || "Unexpected error",
         res.status
       );
     }
     throw new ApiError(
       `http_${res.status}`,
-      typeof detail === "string" && detail ? detail : res.statusText || "خطأ غير متوقع",
+      typeof detail === "string" && detail ? detail : res.statusText || "Unexpected error",
       res.status
     );
   }
@@ -128,14 +128,14 @@ export async function pollJob(jobId: string, onProgress?: (j: any) => void): Pro
     if (state === "failed") {
       const err = j?.error;
       const msg =
-        (err && typeof err === "object" ? err.message : err) || "فشلت المهمة";
+        (err && typeof err === "object" ? err.message : err) || "The job failed";
       const code = (err && typeof err === "object" && err.code) || "job_failed";
       throw new ApiError(code, msg, 500);
     }
     if (state === "cancelled" || state === "aborted") {
-      throw new ApiError("job_cancelled", "أُلغيت المهمة", 409);
+      throw new ApiError("job_cancelled", "The job was cancelled", 409);
     }
     await sleep(1000);
   }
-  throw new ApiError("job_timeout", "انتهت مهلة انتظار المهمة", 408);
+  throw new ApiError("job_timeout", "Timed out waiting for the job", 408);
 }

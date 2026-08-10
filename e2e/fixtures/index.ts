@@ -65,7 +65,7 @@ export const test = base.extend<TraceoFixtures, TraceoWorkerFixtures>({
   },
 
   generatedCase: async ({ api, project }, use) => {
-    await api.ingestion.uploadAndConfirm(project.id, sampleFile('sample_requirements_ar.md'));
+    await api.ingestion.uploadAndConfirm(project.id, sampleFile('sample_requirements_en.md'));
     await api.discovery.importSpec(project.id, sampleFile('sample_openapi.yaml'));
     const cases = await api.generation.generateAndWait(project.id);
     const draft = cases.find((c) => c.state === 'draft');

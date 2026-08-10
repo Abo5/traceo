@@ -65,10 +65,10 @@ def startup():
                 org = Organisation(name="Traceo Demo Org", plan="team")
                 db.add(org)
                 db.flush()
-                db.add(User(organisation_id=org.id, email="demo@traceo.sa", name="Nawaf Al-Qahtani",
-                            password_hash=hash_password("Demo1234!"), role="qa_lead", locale="ar"))
-                db.add(User(organisation_id=org.id, email="admin@traceo.sa", name="Reem Al-Otaibi",
-                            password_hash=hash_password("Demo1234!"), role="admin", locale="ar"))
+                db.add(User(organisation_id=org.id, email="demo@traceo.sa", name="Demo QA Lead",
+                            password_hash=hash_password("Demo1234!"), role="qa_lead", locale="en"))
+                db.add(User(organisation_id=org.id, email="admin@traceo.sa", name="Demo Admin",
+                            password_hash=hash_password("Demo1234!"), role="admin", locale="en"))
                 db.commit()
         finally:
             db.close()

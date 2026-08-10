@@ -1,4 +1,4 @@
-// Ingestion parsing pipeline: text extraction (pdf/docx/md/txt), Arabic-Indic digit
+// Ingestion parsing pipeline: text extraction (pdf/docx/md/txt), digit
 // normalization, deterministic segmentation, per-segment LLM structuring.
 // Port of backend/app/modules/ingestion.py (TRD §4.1, FR-REQ).
 package ingestion
@@ -77,11 +77,11 @@ func normalizeDigits(text string) string {
 	}, text)
 }
 
-// Requirement-ID openers: REQ-1 / FR-01 / BR_2 / NFR 3 / م-1 / numbered clauses "3.1.2"
+// Requirement-ID openers: REQ-1 / FR-01 / BR_2 / NFR 3 / numbered clauses "3.1.2"
 var (
-	reqIDLine = regexp.MustCompile(`(?i)^\s*(?:(?:REQ|FR|BR|NFR|UC|SRS|BUS)[-_ ]?\d+(?:[.-]\d+)*|م[-_ ]?\d+|\d+(?:\.\d+)+)\b[.:)\-–—]?`)
+	reqIDLine = regexp.MustCompile(`(?i)^\s*(?:(?:REQ|FR|BR|NFR|UC|SRS|BUS)[-_ ]?\d+(?:[.-]\d+)*|\d+(?:\.\d+)+)\b[.:)\-–—]?`)
 	headingRe = regexp.MustCompile(`^\s*#{1,6}\s+\S`)
-	bulletRe  = regexp.MustCompile(`^\s*(?:[-*•▪◦]|\d+[.)]|[a-hأ-ي][.)])\s+\S`)
+	bulletRe  = regexp.MustCompile(`^\s*(?:[-*•▪◦]|\d+[.)]|[a-h][.)])\s+\S`)
 )
 
 func contentHash(description string, criteria []string) string {

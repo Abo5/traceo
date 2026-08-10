@@ -4,7 +4,7 @@
  * (API-created project + storage-state auth, §9). The gate is delta-based:
  * only violations absent from e2e/a11y-baseline.json fail (see helpers/a11y.ts).
  * Page readiness is asserted on `{domain}-page-root` testids, never on
- * bilingual text (§5, §6).
+ * visible copy (§5, §6).
  */
 import { test, expect } from '../fixtures';
 import { checkA11y } from '../helpers/a11y';

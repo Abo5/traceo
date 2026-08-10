@@ -33,7 +33,6 @@ export async function registerForeignOrg(): Promise<ForeignOrg> {
     name: 'E2E Foreign Admin',
     email: uniqueEmail('foreign-admin'),
     password: `E2e-pass-${suffix}`,
-    locale: config.lang,
   });
 
   const http = new TraceoHttp(ctx, config.apiUrl).withAuth({

@@ -17,7 +17,7 @@
  *   are written back as the new baseline for the scanned pageKeys.
  *
  * Fingerprints deliberately use the axe node target (a stable CSS selector),
- * never bilingual text (§5/§6) — selectors survive AR/EN copy changes.
+ * never visible text (§5/§6) — selectors survive copy changes.
  *
  * Scoping: pass `exclude` selectors for regions whose CONTENTS vary with
  * parallel-test state (e.g. entity lists other tests append to) — their node

@@ -37,7 +37,7 @@ var mapSchema = map[string]any{
 	"required": []any{"selected", "confidence"},
 }
 
-var wordRe = regexp.MustCompile(`[a-zء-ي]{3,}`)
+var wordRe = regexp.MustCompile(`[a-z]{3,}`)
 
 func tokens(text string) map[string]bool {
 	out := map[string]bool{}

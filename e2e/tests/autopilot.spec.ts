@@ -2,10 +2,13 @@
  * Autopilot chain (automation:"auto") — the ONLY spec that leaves the server's
  * automation default on. It arranges nothing but the raw inputs:
  *
- *   create project (NO language, automation "auto") → upload Arabic .md
- *   → parse job → auto.language.detect (Arabic ratio >= 0.25 ⇒ "ar")
- *   → auto.requirements.confirm_all → import OpenAPI spec → auto.generate
- *   → draft cases — WITHOUT ever calling confirm_all or generate.
+ *   create project (automation "auto") → upload the requirements .md
+ *   → parse job → auto.requirements.confirm_all → import OpenAPI spec
+ *   → auto.generate → draft cases — WITHOUT ever calling confirm_all or generate.
+ *
+ * There is no language step in the chain: Traceo is English-only, so the
+ * autopilot goes straight from a successful parse to confirming every extracted
+ * requirement and triggering generation.
  *
  * Approval and runs stay manual (BO-07) — the autopilot stops at drafts, so the
  * review page is where the chain must land. Every wait funnels through
@@ -23,14 +26,10 @@ const FIRST_VISIT_TIMEOUT_MS = 20_000;
 const AUTOPILOT_POLL_TIMEOUT_MS = 180_000;
 
 /** Audit actions the contract prescribes for the chain — prefixed "auto.". */
-const AUTOPILOT_ACTIONS = [
-  'auto.language.detect',
-  'auto.requirements.confirm_all',
-  'auto.generate',
-] as const;
+const AUTOPILOT_ACTIONS = ['auto.requirements.confirm_all', 'auto.generate'] as const;
 
 test.describe('autopilot @critical @regression', () => {
-  test('upload + import alone yield reviewable drafts, a detected language and auto.* audit entries', async ({
+  test('upload + import alone yield reviewable drafts and auto.* audit entries', async ({
     api,
     asQaLead,
   }) => {
@@ -38,14 +37,12 @@ test.describe('autopilot @critical @regression', () => {
     test.setTimeout(300_000);
     const lead = api.as('qa_lead');
 
-    // Override the factory's deterministic "manual" default on purpose; language
-    // stays omitted so the backend must detect it.
+    // Override the factory's deterministic "manual" default on purpose.
     const project = await lead.projects.create(projectFactory({ automation: 'auto' }));
     expect(project.automation).toBe('auto');
-    expect(project.language).toBeNull(); // nullable — null until detected
 
-    await test.step('upload the Arabic requirements document (no confirm_all)', async () => {
-      await lead.ingestion.uploadAndWait(project.id, sampleFile('sample_requirements_ar.md'));
+    await test.step('upload the requirements document (no confirm_all)', async () => {
+      await lead.ingestion.uploadAndWait(project.id, sampleFile('sample_requirements_en.md'));
     });
 
     await test.step('import the OpenAPI sample (no generate)', async () => {
@@ -60,11 +57,6 @@ test.describe('autopilot @critical @regression', () => {
           timeout: AUTOPILOT_POLL_TIMEOUT_MS,
         })
         .toBeGreaterThan(0);
-    });
-
-    await test.step('project.language was auto-detected as "ar"', async () => {
-      // Deterministic, offline: Arabic-block ratio of the sample is >= 0.25.
-      expect((await lead.projects.get(project.id)).language).toBe('ar');
     });
 
     await test.step('every auto step left an "auto."-prefixed audit entry', async () => {

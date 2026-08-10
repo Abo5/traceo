@@ -5,7 +5,7 @@
   "description": "Traceo E2E test framework (Playwright + TypeScript) — docs/TEST_AUTOMATION_ARCHITECTURE.md",
   "scripts": {
     "test": "playwright test",
-    "test:pr": "playwright test --grep \"@smoke|@critical|@permission\"",
+    "test:pr": "playwright test --grep \"@smoke|@critical|@permission|@a11y\" --grep-invert \"@regression\"",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

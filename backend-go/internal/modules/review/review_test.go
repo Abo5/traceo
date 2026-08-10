@@ -51,8 +51,7 @@ func setup(t *testing.T) {
 	orgA, tok = mk("A", "a@x.com", "admin")
 	_, tokOth = mk("B", "b@x.com", "admin")
 
-	lang := "en"
-	p := models.Project{OrganisationID: orgA, Name: "P", Language: &lang, Status: "active", Automation: "manual"}
+	p := models.Project{OrganisationID: orgA, Name: "P", Status: "active", Automation: "manual"}
 	db.DB.Create(&p)
 	projA = p.ID
 	r1 := models.Requirement{OrganisationID: orgA, ProjectID: projA, ExternalID: "FR-1",

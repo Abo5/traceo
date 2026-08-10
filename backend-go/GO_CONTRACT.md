@@ -73,13 +73,13 @@ Timestamps: RFC3339 UTC. IDs: uuid v4 strings. JSON tags snake_case on every res
 - **projects**: /projects CRUD, /projects/{id}/dashboard (incl. v2 trend/regression_watch/
   gaps_detail/open_defects/median_duration_ms), environments CRUD + check
 - **ingestion**: documents upload+list, requirements list/patch/create/delete/confirm_all;
-  parsing: PDF (ledongthuc/pdf), DOCX (zip+xml w:t), MD/TXT; Arabic-digit normalization,
+  parsing: PDF (ledongthuc/pdf), DOCX (zip+xml w:t), MD/TXT; digit normalization,
   segmentation, per-segment llm extract, re-upload diff + mark stale
 - **discovery**: api-specs import (file/url, openapi3+swagger2, $ref resolve, SSRF guard),
   endpoints list (incl. v2 test_count/covered_params_pct/last_outcome), PATCH excluded
 - **generation**: generate job — mapper (lexical prefilter + llm pick from closed list),
   deterministic techniques (positive, EP invalid, BVA, negatives incl. oversized+injection,
-  decision tables, localisation with Arabic round-trip), GroundingValidate(case, inventory)
+  decision tables, localisation with a non-ASCII round-trip), GroundingValidate(case, inventory)
   exported — discards violations, counts them; duplicates skip
 - **review**: test-cases list/get/patch, approve/reject/bulk, manual create, links add/remove
 - **execution**: runs launch (auth once per env: api_key/basic/bearer/oauth2_cc), goroutine
@@ -89,13 +89,13 @@ Timestamps: RFC3339 UTC. IDs: uuid v4 strings. JSON tags snake_case on every res
   cancel, display_id; fires integrations.FireWebhooks on terminal state (lazy/no cycle)
 - **traceability**: matrix rows/coverage_pct/gaps(+v2 reasons+next_action), MarkStale(),
   requirement history
-- **reporting**: matrix.xlsx (excelize, 4 sheets, RTL when project ar, styled header FF8A22),
-  run report JSON (severity, perf p50/p95/max), report.html (self-contained dark RTL printable),
-  compare (+unchanged+coverage_delta)
+- **reporting**: matrix.xlsx (excelize, 4 sheets, always LTR, styled header FF8A22),
+  run report JSON (severity, perf p50/p95/max), report.html (self-contained dark printable,
+  always `dir="ltr" lang="en"`), compare (+unchanged+coverage_delta)
 - **integrations**: api-keys CRUD+revoke, X-API-Key alt auth for gate/runs/traceability reads,
   CI gate (+?exit=1→412), webhooks CRUD+test+FireWebhooks (HMAC, Slack text payload),
   xray.json + defects.csv (BOM), schedules CRUD + goroutine ticker scheduler, org export
-- **insight** (the sixth engine, QA Insight Agent / وكيل الرؤى): GET /projects/{id}/insights
+- **insight** (the sixth engine, QA Insight Agent): GET /projects/{id}/insights
   + POST /projects/{id}/insights/generate — deterministic, ZERO LLM calls, reuses
   generation.GroundingValidate (see the addendum below)
 - **reference**: GET /reference/features static catalog (37 features)
@@ -103,19 +103,18 @@ Timestamps: RFC3339 UTC. IDs: uuid v4 strings. JSON tags snake_case on every res
 
 ## Automation addendum (fixed contract — parity with the Python backend is mandatory)
 
-1. `POST /v1/projects` body: `name` (required), `language` OPTIONAL (`"ar"|"en"`; omitted/null
-   => auto-detect later), `automation` OPTIONAL (`"auto"|"manual"`, default `"auto"`).
-   Existing clients sending `language` keep working.
-2. `Project.language` is NULLABLE in the DB and API responses (null until detected).
-   `Project.automation` is NOT NULL, default `"auto"`. `PATCH /v1/projects/{id}` accepts both
-   fields — freedom to override anytime.
-3. Language auto-detection (deterministic, offline, NO LLM — `autopilot.DetectLanguage`):
-   when a document parse job succeeds and `project.language` is null, count Arabic-block
-   chars (U+0600–U+06FF) vs total alphabetic chars in the parsed text; ratio >= 0.25 =>
-   `"ar"` else `"en"`; persist on the project. Runs regardless of the automation mode.
+0. **The product is ENGLISH-ONLY.** There is no project language: `Project.Language` does
+   not exist (removed via the AutoMigrate convention — the legacy SQLite column is simply
+   left behind, unread and unwritten), `language` appears in no request or response payload,
+   and no behaviour anywhere branches on a language. All output is LTR English.
+1. `POST /v1/projects` body: `name` (required), `automation` OPTIONAL (`"auto"|"manual"`,
+   default `"auto"`). A `language` key in the body is ignored (unknown fields always are).
+2. `Project.automation` is NOT NULL, default `"auto"`. `PATCH /v1/projects/{id}` accepts
+   `name`, `automation` and `status` — freedom to override anytime.
+3. (removed — language auto-detection and the `auto.language.detect` audit action are gone.)
 4. Autopilot chain — ONLY when `project.automation == "auto"`:
-   a. after a successful document parse: language detection (3), then confirm ALL of the
-      project's requirements currently in state `"extracted"`, then (b);
+   a. after a successful document parse: confirm ALL of the project's requirements currently
+      in state `"extracted"`, then (b);
    b. generation auto-trigger (also after a successful api-spec import): >= 1 included
       endpoint AND >= 1 confirmed requirement AND no generation job for the project
       queued/running (`jobs.TrySubmitForProject("generate", projectID, ...)` is the atomic
@@ -123,8 +122,8 @@ Timestamps: RFC3339 UTC. IDs: uuid v4 strings. JSON tags snake_case on every res
       over all confirmed requirements (`generation.Run` with nil requirement ids);
    c. approval and runs stay MANUAL — auto stops at draft cases ready for review (BO-07);
    d. every auto step writes an AuditEntry with an `auto.`-prefixed action
-      (`auto.language.detect`, `auto.requirements.confirm_all`, `auto.generate`),
-      attributed to the user whose upload/import initiated the chain.
+      (`auto.requirements.confirm_all`, `auto.generate`), attributed to the user whose
+      upload/import initiated the chain.
 5. All pre-existing manual endpoints keep working unchanged (confirm_all, generate, …) —
    automation adds defaults, removes nothing.
 
@@ -154,7 +153,8 @@ in the test-case payloads (`review.caseDict` → list + detail).
    match, or `insight.Classify` for legacy cases — a pure function that MIRRORS the Python
    `classify_case()` rule table line for line (step evidence first, then title keywords, no
    technique/type fallback), so both backends report the same `covered_count` for the same
-   project. Plain BVA is deliberately NOT `boundary_surprise`: taxonomy A defines that
+   project. Its exotic_input evidence is general NON-ASCII (any rune above U+007F in a
+   request value), never a script-specific rule; control characters still outrank it. Plain BVA is deliberately NOT `boundary_surprise`: taxonomy A defines that
    category as the edges BEYOND plain BVA. Rules documented in classify.go.
    `suggestable_count` is a dry run of the SAME planner the job uses (`insight.plan`),
    filtered by the same grounding gate — it creates nothing and already-existing cases are
@@ -178,7 +178,8 @@ in the test-case payloads (`review.caseDict` → list + detail).
 case (same counts per category for the same inventory — verified by a cross-backend parity
 probe). `exotic_input` mutates an EXISTING free-text BODY field or QUERY parameter — never a
 path parameter, which is routing rather than payload — with the four character-set probes
-(Arabic/RTL marks, emoji, NFC-vs-NFD, zero-width); oversized values belong to
+(mixed-script CJK + accented Latin, emoji, NFC-vs-NFD, zero-width — a general non-ASCII
+mix with ZERO Arabic); oversized values belong to
 `resource_exhaustion` per contract item D, not here;
 `control_chars` writes NUL/C0 into one; `boundary_surprise` uses the just-OUTSIDE values
 plain BVA never emits (min-1, max+1, maxLength+1, minLength-1); `idempotency` repeats the
@@ -200,11 +201,11 @@ backend-go/tests as Go tests (httptest against a fresh in-memory app+temp sqlite
 grounding gate (adversarial fixtures — zero fabricated identifiers persisted), tenant
 isolation (org B gets 404/empty on all org A resources), e2e flow (register→project→upload
 md→confirm→import spec→generate→approve→matrix+xlsx), integrations (api key auth, gate),
-autopilot (nullable language + automation defaults, detection rule, auto chain to draft
-cases, manual-mode opt-out, preset language kept, double-trigger guard), insight
+autopilot (automation defaults + no language field in any payload, auto chain to draft
+cases, manual-mode opt-out, double-trigger guard), insight
 (taxonomy strings + order, covered/gap/n_a semantics, legacy classifier, 422
 invalid_category, 202 job pattern, capability guards + tenant isolation, adversarial
 grounding over every persisted edge case, offline guarantee, mock-determinism under the
-untrusted-data framing).
+untrusted-data framing, exotic probes non-ASCII yet Arabic-free).
 `gofmt -l .` silent; `go vet ./...` clean; `go build ./...` clean;
 `go test -race -count=1 ./...` green.

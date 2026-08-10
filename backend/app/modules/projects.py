@@ -30,7 +30,6 @@ from .traceability import (GAP_NEXT_ACTIONS, derive_severity, gap_reason,
 router = APIRouter()
 
 _AUTH_TYPES = ("none", "api_key", "basic", "bearer", "oauth2_cc")
-_LANGUAGES = ("en", "ar")
 _AUTOMATIONS = ("auto", "manual")
 _TC_STATES = ("draft", "approved", "rejected", "stale", "archived")
 
@@ -42,7 +41,7 @@ def _iso(dt):
 
 
 def _project_payload(p: Project) -> dict:
-    return {"id": p.id, "name": p.name, "language": p.language,
+    return {"id": p.id, "name": p.name,
             "automation": p.automation, "status": p.status,
             "created_at": _iso(p.created_at), "updated_at": _iso(p.updated_at)}
 
@@ -84,15 +83,11 @@ def _validate_auth_type(auth_type: str) -> str:
 
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
-    # Omitted/null => language stays unknown until auto-detected from the first
-    # successfully parsed document (or set explicitly later).
-    language: str | None = None
     automation: str = "auto"  # auto|manual
 
 
 class ProjectUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
-    language: str | None = None
     automation: str | None = None  # auto|manual
     status: str | None = None  # active|archived
 
@@ -120,14 +115,11 @@ class EnvironmentUpdate(BaseModel):
 @router.post("/projects", status_code=201)
 def create_project(body: ProjectCreate, user: User = Depends(require("manage_projects")),
                    db: Session = Depends(get_db)):
-    if body.language is not None and body.language not in _LANGUAGES:
-        raise HTTPException(422, detail={"code": "invalid_language",
-                                         "message": "Language must be 'en' or 'ar'"})
     if body.automation not in _AUTOMATIONS:
         raise HTTPException(422, detail={"code": "invalid_automation",
                                          "message": "Automation must be 'auto' or 'manual'"})
     project = Project(organisation_id=user.organisation_id, name=body.name.strip(),
-                      language=body.language, automation=body.automation)
+                      automation=body.automation)
     db.add(project)
     db.flush()
     audit(db, user.organisation_id, user.id, "project.create", "project", project.id,
@@ -160,12 +152,6 @@ def update_project(project_id: str, body: ProjectUpdate,
     if body.name is not None:
         changes["name"] = {"from": project.name, "to": body.name.strip()}
         project.name = body.name.strip()
-    if body.language is not None:
-        if body.language not in _LANGUAGES:
-            raise HTTPException(422, detail={"code": "invalid_language",
-                                             "message": "Language must be 'en' or 'ar'"})
-        changes["language"] = {"from": project.language, "to": body.language}
-        project.language = body.language
     if body.automation is not None:
         if body.automation not in _AUTOMATIONS:
             raise HTTPException(422, detail={"code": "invalid_automation",

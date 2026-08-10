@@ -73,7 +73,7 @@ const MATRIX: Record<string, { allowed: readonly Role[]; probe: Probe }> = {
   upload_documents: {
     allowed: ['admin', 'qa_lead', 'qa_engineer'],
     probe: (client, ctx) =>
-      client.ingestion.uploadDocument(ctx.projectId, sampleFile('sample_requirements_ar.md')),
+      client.ingestion.uploadDocument(ctx.projectId, sampleFile('sample_requirements_en.md')),
   },
   // ingestion.py: POST /requirements (manual authoring — repeatable, unique body)
   edit_requirements: {

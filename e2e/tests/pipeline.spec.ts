@@ -3,7 +3,7 @@
  * upload → confirm → import spec → generate with mock LLM), then the human
  * decision is exercised through the UI: qa_lead approves the draft on the
  * review page (approve_reject = admin|qa_lead — backend/app/security.py).
- * State asserted via data-state, never via bilingual text (§5, §6).
+ * State asserted via data-state, never via visible copy (§5, §6).
  */
 import { test, expect } from '../fixtures';
 import { ReviewPage } from '../pages/review.page';

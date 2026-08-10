@@ -14,15 +14,16 @@
 // identical. Change one side and you must change the other.
 //
 // RULES, in strict priority order (first match wins — the order matters because
-// one case can carry several signals, e.g. a NUL byte inside an Arabic string):
+// one case can carry several signals, e.g. a NUL byte inside a CJK string):
 //
 //  0. an explicit, legal edge_category always wins.
 //  1. REQUEST-VALUE signals (strongest: they describe what the case actually
 //     sends, not what someone called it):
 //     1a. a C0/C1 control character or NUL in any string value -> control_chars
-//     1b. Arabic/RTL marks, emoji, zero-width or combining marks -> exotic_input
-//     NOTE: only *request values* are inspected, never the title — in an
-//     Arabic project every title is Arabic and would false-positive.
+//     1b. any non-ASCII character in a request value (CJK, accented Latin,
+//     emoji, zero-width/bidi marks, NFD combining marks)      -> exotic_input
+//     NOTE: only *request values* are inspected, never the title — a title is
+//     prose and would false-positive on any typographic character.
 //     1c. >= 2 steps repeating the SAME mutating (method, path)  -> idempotency
 //     1d. a string value >= 1000 chars, or a pagination-named parameter with an
 //     extreme value                                   -> resource_exhaustion
@@ -31,8 +32,8 @@
 //     1g. a date/date-time-shaped value carrying a timezone offset, a leap day
 //     or a 12-31/01-01 rollover                                -> timing_dst
 //     1h. >= 2 steps whose mutating (method, path) pairs differ -> state_corruption
-//  2. TITLE keywords (English + Arabic), for hand-written cases that state the
-//     intent without a machine-readable signal.
+//  2. TITLE keywords, for hand-written cases that state the intent without a
+//     machine-readable signal.
 //  3. otherwise "" — the case belongs to no edge family.
 //
 // DELIBERATELY NOT A RULE: technique "bva" / type "boundary" do NOT imply
@@ -56,26 +57,23 @@ var titleHints = []struct {
 	category string
 	needles  []string
 }{
-	{"control_chars", []string{"null byte", "nul byte", "control char",
-		"محارف تحكم", "بايت صفري"}},
-	{"idempotency", []string{"idempot", "duplicate submit", "double submit", "replay",
-		"تكرار الإرسال", "التكرار"}},
+	{"control_chars", []string{"null byte", "nul byte", "control char"}},
+	{"idempotency", []string{"idempot", "duplicate submit", "double submit", "replay"}},
 	{"permission_edge", []string{"unauthenticated", "unauthorised", "unauthorized",
-		"forbidden", "permission", "privilege", "lower-privileged", "صلاحية", "بدون مصادقة"}},
+		"forbidden", "permission", "privilege", "lower-privileged"}},
 	{"resource_exhaustion", []string{"oversized", "too large", "payload limit",
-		"pagination", "exhaustion", "حمولة كبيرة", "استنزاف"}},
+		"pagination", "exhaustion"}},
 	{"timing_dst", []string{"timezone", "time zone", "dst", "daylight", "rollover",
-		"leap day", "التوقيت", "المنطقة الزمنية"}},
+		"leap day"}},
 	{"state_corruption", []string{"out of order", "out-of-order", "illegal transition",
-		"after delete", "before create", "انتقال غير صالح", "ترتيب غير صالح"}},
-	{"downstream_failure", []string{"downstream", "upstream", "dependency failure",
-		"5xx", "فشل التبعية", "الخدمة الخلفية"}},
-	{"exotic_input", []string{"arabic", "emoji", "unicode", "rtl", "normalisation",
-		"normalization", "localisation", "localization", "zero-width", "زخرفة", "عربي"}},
+		"after delete", "before create"}},
+	{"downstream_failure", []string{"downstream", "upstream", "dependency failure", "5xx"}},
+	{"exotic_input", []string{"non-ascii", "emoji", "unicode", "normalisation",
+		"normalization", "localisation", "localization", "zero-width"}},
 	// Just-outside vocabulary ONLY. A bare "boundary" is the plain-BVA word.
 	{"boundary_surprise", []string{"off-by-one", "off by one", "just outside",
 		"just-outside", "beyond the limit", "past the declared", "minimum-1", "maximum+1",
-		"minlength-1", "maxlength+1", "خارج الحد", "تجاوز الحد"}},
+		"minlength-1", "maxlength+1"}},
 }
 
 // paginationParamNames — the same closed set the Python engine uses.
@@ -270,25 +268,19 @@ func hasControlChar(s string) bool {
 	return false
 }
 
-// isExoticText — Arabic letters, zero-width/bidi formatting marks, NFD combining
-// marks, or emoji. Mirrors _is_exotic_text.
+// isExoticText — ANY non-ASCII character in a request value. Mirrors
+// _is_exotic_text.
 //
-// Plain Arabic counts here, and that is deliberate: taxonomy item A names
-// "Arabic/RTL" as an exotic_input probe, and the builder's own first probe is
-// Arabic text. A legacy case that already round-trips Arabic through a field
-// therefore covers what this category would otherwise suggest.
+// The evidence is deliberately general: the exotic_input probes send accented
+// Latin, CJK, emoji, zero-width/bidi marks and NFD combining marks, and every
+// one of those lives above U+007F. A legacy case that already round-trips any
+// non-ASCII text through a field therefore covers what this category would
+// otherwise suggest. Control characters are caught by rule 1a first, which runs
+// before this one, so the C1 range never lands here.
 func isExoticText(s string) bool {
 	for _, r := range s {
-		switch {
-		case r >= 0x0600 && r <= 0x06ff: // Arabic block
+		if r > 0x7f {
 			return true
-		case r == 0x200b || r == 0x200c || r == 0x200d || r == 0x200e || r == 0x200f ||
-			r == 0x202a || r == 0x202b || r == 0x202c || r == 0x202e || r == 0xfeff:
-			return true // zero-width and bidi formatting marks
-		case r >= 0x0300 && r <= 0x036f:
-			return true // combining diacritical marks — NFD residue
-		case r >= 0x1f000 || (r >= 0x2600 && r <= 0x27bf) || (r >= 0x1f1e6 && r <= 0x1f1ff):
-			return true // emoji, dingbats, regional indicators
 		}
 	}
 	return false

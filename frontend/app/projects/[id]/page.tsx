@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
 import { useCan } from "@/lib/permissions";
 import {
   Badge,
@@ -73,124 +72,65 @@ const TC_STATES = ["draft", "approved", "rejected", "stale", "archived"] as cons
 
 export default function ProjectDashboardPage() {
   const { id } = useParams<{ id: string }>();
-  const { lang } = useLang();
-  const ar = lang === "ar";
   const { project } = useProject();
   const canDo = useCan();
 
-  const L = ar
-    ? {
-        title: "نظرة عامة",
-        sub: "من المتطلب إلى الاختبار المنفّذ — حالة المشروع الآن",
-        reqs: "المتطلبات",
-        confirmed: "المؤكدة",
-        cases: "حالات الاختبار",
-        coverage: "التغطية %",
-        caseStates: "حالات الاختبار حسب الحالة",
-        latestRun: "آخر تشغيل",
-        noRuns: "لا توجد تشغيلات بعد",
-        viewRun: "عرض التقرير",
-        openDefects: "عيوب مفتوحة",
-        criticalOf: "حرجة",
-        medianDur: "وسيط مدة التشغيل",
-        trendTitle: "اتجاه التغطية",
-        regTitle: "مراقبة الانحدار",
-        regEmpty: "لا انحدارات — كل ما نجح سابقاً ما زال ينجح",
-        gapsTitle: "فجوات التغطية",
-        gapsEmpty: "لا فجوات — كل متطلب مؤكد له حالة معتمدة",
-        targetedGen: "توليد مستهدف",
-        openReport: "فتح التقرير",
-        gapReasons: {
-          no_reachable_endpoint: "لا توجد واجهة مطابقة",
-          all_cases_disabled: "لا حالات معتمدة (روابط موجودة)",
-          no_approved_cases: "لا حالات معتمدة",
-          unmappable: "تعذّر الربط بواجهة",
-        } as Record<string, string>,
-        quick: "إجراءات سريعة",
-        uploadDoc: "رفع مستند متطلبات",
-        importSpec: "استيراد مواصفة API",
-        goGenerate: "توليد حالات",
-        goReview: "المراجعة",
-        goRun: "تشغيل جديد",
-        pipeline: "خط المعالجة",
-        steps: [
-          "تحليل المتطلبات",
-          "اكتشاف الواجهات",
-          "التوليد المقيّد",
-          "المراجعة البشرية",
-          "التنفيذ والتتبّع",
-        ],
-        stateNames: {
-          draft: "مسودة",
-          approved: "معتمدة",
-          rejected: "مرفوضة",
-          stale: "قديمة",
-          archived: "مؤرشفة",
-        } as Record<string, string>,
-        passed: "ناجح",
-        failed: "فاشل",
-        errored: "خطأ",
-        total: "الإجمالي",
-        loadError: "تعذّر تحميل لوحة المشروع",
-        retry: "إعادة المحاولة",
-        loading: "جارٍ التحميل…",
-      }
-    : {
-        title: "Overview",
-        sub: "From requirement to executed test — project status now",
-        reqs: "Requirements",
-        confirmed: "Confirmed",
-        cases: "Test cases",
-        coverage: "Coverage %",
-        caseStates: "Test cases by state",
-        latestRun: "Latest run",
-        noRuns: "No runs yet",
-        viewRun: "View report",
-        openDefects: "Open defects",
-        criticalOf: "critical",
-        medianDur: "Median run duration",
-        trendTitle: "Coverage trend",
-        regTitle: "Regression watch",
-        regEmpty: "No regressions — everything that passed still passes",
-        gapsTitle: "Coverage gaps",
-        gapsEmpty: "No gaps — every confirmed requirement has an approved case",
-        targetedGen: "Targeted generation",
-        openReport: "Open report",
-        gapReasons: {
-          no_reachable_endpoint: "No matching endpoint",
-          all_cases_disabled: "No approved cases (links exist)",
-          no_approved_cases: "No approved cases",
-          unmappable: "Could not map to an endpoint",
-        } as Record<string, string>,
-        quick: "Quick actions",
-        uploadDoc: "Upload requirements doc",
-        importSpec: "Import API spec",
-        goGenerate: "Generate cases",
-        goReview: "Review",
-        goRun: "New run",
-        pipeline: "Pipeline",
-        steps: [
-          "Requirements analysis",
-          "Endpoint discovery",
-          "Grounded generation",
-          "Human review",
-          "Execution & traceability",
-        ],
-        stateNames: {
-          draft: "Draft",
-          approved: "Approved",
-          rejected: "Rejected",
-          stale: "Stale",
-          archived: "Archived",
-        } as Record<string, string>,
-        passed: "Passed",
-        failed: "Failed",
-        errored: "Errored",
-        total: "Total",
-        loadError: "Failed to load the project dashboard",
-        retry: "Retry",
-        loading: "Loading…",
-      };
+  const L = {
+    title: "Overview",
+    sub: "From requirement to executed test — project status now",
+    reqs: "Requirements",
+    confirmed: "Confirmed",
+    cases: "Test cases",
+    coverage: "Coverage %",
+    caseStates: "Test cases by state",
+    latestRun: "Latest run",
+    noRuns: "No runs yet",
+    viewRun: "View report",
+    openDefects: "Open defects",
+    criticalOf: "critical",
+    medianDur: "Median run duration",
+    trendTitle: "Coverage trend",
+    regTitle: "Regression watch",
+    regEmpty: "No regressions — everything that passed still passes",
+    gapsTitle: "Coverage gaps",
+    gapsEmpty: "No gaps — every confirmed requirement has an approved case",
+    targetedGen: "Targeted generation",
+    openReport: "Open report",
+    gapReasons: {
+      no_reachable_endpoint: "No matching endpoint",
+      all_cases_disabled: "No approved cases (links exist)",
+      no_approved_cases: "No approved cases",
+      unmappable: "Could not map to an endpoint",
+    } as Record<string, string>,
+    quick: "Quick actions",
+    uploadDoc: "Upload requirements doc",
+    importSpec: "Import API spec",
+    goGenerate: "Generate cases",
+    goReview: "Review",
+    goRun: "New run",
+    pipeline: "Pipeline",
+    steps: [
+      "Requirements analysis",
+      "Endpoint discovery",
+      "Grounded generation",
+      "Human review",
+      "Execution & traceability",
+    ],
+    stateNames: {
+      draft: "Draft",
+      approved: "Approved",
+      rejected: "Rejected",
+      stale: "Stale",
+      archived: "Archived",
+    } as Record<string, string>,
+    passed: "Passed",
+    failed: "Failed",
+    errored: "Errored",
+    total: "Total",
+    loadError: "Failed to load the project dashboard",
+    retry: "Retry",
+    loading: "Loading…",
+  };
 
   const [dash, setDash] = useState<Dashboard | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -250,7 +190,7 @@ export default function ProjectDashboardPage() {
           <div className="grid-stats">
             <div style={{ position: "relative" }}>
               <StatCard value={`${dash.coverage_pct}%`} label={L.coverage} color="var(--accent)" testId="dashboard-coverage-stat" />
-              <span style={{ position: "absolute", top: 10, insetInlineEnd: 10 }}>
+              <span style={{ position: "absolute", top: 10, right: 10 }}>
                 <RefChip id="FR-050" />
               </span>
             </div>
@@ -273,7 +213,7 @@ export default function ProjectDashboardPage() {
                 color={defects.critical > 0 ? "var(--error)" : "var(--text)"}
                 testId="dashboard-open-defects-stat"
               />
-              <span style={{ position: "absolute", top: 10, insetInlineEnd: 10 }}>
+              <span style={{ position: "absolute", top: 10, right: 10 }}>
                 <RefChip id="FR-052" />
               </span>
             </div>
@@ -348,7 +288,6 @@ export default function ProjectDashboardPage() {
                     >
                       <SeverityBadge severity={r.severity} testId="dashboard-regression-severity-badge" />
                       <span
-                        dir="auto"
                         style={{
                           flex: 1,
                           minWidth: 0,
@@ -509,7 +448,6 @@ export default function ProjectDashboardPage() {
                 <div className="pipeline-step" key={i}>
                   <span
                     className="pipeline-num"
-                    dir="ltr"
                     style={{
                       color: PIPELINE_COLORS[i],
                       background: "var(--bg)",

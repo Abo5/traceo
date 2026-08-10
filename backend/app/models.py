@@ -34,19 +34,16 @@ class User(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(200), default="")
     password_hash: Mapped[str] = mapped_column(Text)  # Argon2id
     role: Mapped[str] = mapped_column(String(20), default="qa_engineer")  # admin|qa_lead|qa_engineer|viewer
-    locale: Mapped[str] = mapped_column(String(5), default="en")  # en|ar — drives RTL
+    locale: Mapped[str] = mapped_column(String(5), default="en")
 
 
 class Project(TimestampMixin, Base):
     __tablename__ = "projects"
     organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
-    # Primary requirements language. NULL until set explicitly or auto-detected
-    # from the first successfully parsed document (deterministic, offline).
-    language: Mapped[str | None] = mapped_column(String(5), nullable=True)  # ar|en|null
-    # Autopilot mode: "auto" chains parse -> language detect -> confirm_all ->
-    # generate; "manual" leaves every step to the user. Approval/runs stay
-    # manual either way (BO-07).
+    # Autopilot mode: "auto" chains parse -> confirm_all -> generate; "manual"
+    # leaves every step to the user. Approval/runs stay manual either way
+    # (BO-07).
     automation: Mapped[str] = mapped_column(String(10), default="auto",
                                             server_default="auto")  # auto|manual
     status: Mapped[str] = mapped_column(String(20), default="active")  # active|archived
@@ -72,6 +69,8 @@ class SourceDocument(TimestampMixin, Base):
     mime_type: Mapped[str] = mapped_column(String(100), default="")
     size: Mapped[int] = mapped_column(Integer, default=0)
     storage_key: Mapped[str] = mapped_column(String(300))
+    # Document content language. Traceo is English-only, so this is always "en";
+    # the column is kept because the document payload has always carried it.
     language: Mapped[str] = mapped_column(String(5), default="en")
     version: Mapped[int] = mapped_column(Integer, default=1)  # increments per re-upload
     parse_status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|parsing|parsed|failed
@@ -134,9 +133,9 @@ class Endpoint(TimestampMixin, Base):
     observed_count: Mapped[int] = mapped_column(Integer, default=0)
 
 
-# Legal TestCase.technique values. "localisation" is the FR-034 Arabic round-trip
-# probe; "edge_case" is produced only by the Insight engine (modules/insight.py)
-# and is always accompanied by a non-null edge_category.
+# Legal TestCase.technique values. "localisation" is the FR-034 Unicode
+# round-trip probe; "edge_case" is produced only by the Insight engine
+# (modules/insight.py) and is always accompanied by a non-null edge_category.
 TECHNIQUES: tuple[str, ...] = (
     "ep", "bva", "decision_table", "negative", "manual", "localisation", "edge_case",
 )

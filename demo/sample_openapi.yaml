@@ -1,36 +1,36 @@
 openapi: 3.0.3
 info:
-  title: "منصة الطلبات — Orders Platform API"
+  title: "Orders Platform API"
   version: "2.0.0"
   description: >-
-    الواجهات البرمجية لمنصة الطلبات الحكومية: تسجيل الدخول، إدارة العملاء،
-    الطلبات، والفواتير. جميع الواجهات محمية برمز Bearer عدا تسجيل الدخول.
-    المسارات هنا نسبية — عنوان البيئة الأساسي يتضمن البادئة /api/v2.
+    The Orders Platform API: sign-in, customer management, orders and invoices.
+    Every operation requires a Bearer token except sign-in. Paths here are
+    relative — the environment base URL already carries the /api/v2 prefix.
 
 servers:
   - url: http://localhost:9000/api/v2
-    description: "بيئة الاختبار — النظام قيد الفحص (Demo SUT)"
+    description: "Test environment — the system under test (Demo SUT)"
 
 security:
   - bearerAuth: []
 
 tags:
   - name: auth
-    description: "المصادقة وتسجيل الدخول"
+    description: "Authentication and sign-in"
   - name: customers
-    description: "إدارة العملاء"
+    description: "Customer management"
   - name: orders
-    description: "إدارة الطلبات"
+    description: "Order management"
   - name: invoices
-    description: "الفواتير"
+    description: "Invoices"
 
 paths:
   /auth/login:
     post:
       tags: [auth]
       operationId: login
-      summary: "تسجيل الدخول برقم الجوال وكلمة المرور"
-      description: "الواجهة الوحيدة غير المحمية — تعيد رمز دخول عند صحة البيانات."
+      summary: "Sign in with a phone number and password"
+      description: "The only unprotected operation — returns an access token for valid credentials."
       security: []
       requestBody:
         required: true
@@ -45,13 +45,13 @@ paths:
                   pattern: '^05[0-9]{8}$'
                   minLength: 10
                   maxLength: 10
-                  description: "رقم الجوال: يبدأ بـ 05 ومكوّن من 10 أرقام فقط"
+                  description: "Phone number: starts with 05 and is exactly 10 digits"
                 password:
                   type: string
-                  description: "كلمة المرور"
+                  description: "Account password"
       responses:
         '200':
-          description: "تم تسجيل الدخول بنجاح"
+          description: "Signed in successfully"
           content:
             application/json:
               schema:
@@ -59,16 +59,16 @@ paths:
                 properties:
                   access_token:
                     type: string
-                    description: "رمز الدخول المستخدم في ترويسة Authorization"
+                    description: "Access token used in the Authorization header"
         '401':
-          description: "رقم الجوال أو كلمة المرور غير صحيحة"
+          description: "Phone number or password is incorrect"
 
   /customers:
     post:
       tags: [customers]
       operationId: createCustomer
-      summary: "إنشاء عميل جديد"
-      description: "يتحقق من صيغة رقم الجوال والبريد الإلكتروني وعمر العميل قبل الإنشاء."
+      summary: "Create a customer"
+      description: "Validates the phone format, the email format and the customer age before creating."
       requestBody:
         required: true
         content:
@@ -80,76 +80,76 @@ paths:
                 name:
                   type: string
                   minLength: 2
-                  description: "اسم العميل (عربي أو لاتيني)"
+                  description: "Customer name (any script)"
                 phone:
                   type: string
                   pattern: '^05[0-9]{8}$'
-                  description: "رقم الجوال: يبدأ بـ 05 ومكوّن من 10 أرقام فقط"
+                  description: "Phone number: starts with 05 and is exactly 10 digits"
                 email:
                   type: string
                   format: email
-                  description: "البريد الإلكتروني بصيغة صحيحة"
+                  description: "A well-formed email address"
                 age:
                   type: integer
                   minimum: 18
                   maximum: 120
-                  description: "عمر العميل بين 18 و120 عاماً (حدود شاملة)"
+                  description: "Customer age between 18 and 120 (bounds inclusive)"
       responses:
         '201':
-          description: "تم إنشاء العميل"
+          description: "Customer created"
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Customer'
         '422':
-          description: "بيانات غير صالحة — رقم جوال أو بريد أو عمر مخالف للقيود"
+          description: "Invalid data — phone, email or age outside the declared constraints"
 
   /customers/{id}:
     get:
       tags: [customers]
       operationId: getCustomer
-      summary: "جلب بيانات عميل بمعرّفه"
+      summary: "Fetch a customer by id"
       parameters:
         - name: id
           in: path
           required: true
-          description: "معرّف العميل، مثل CUST-001"
+          description: "Customer id, e.g. CUST-001"
           schema:
             type: string
       responses:
         '200':
-          description: "بيانات العميل"
+          description: "Customer record"
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Customer'
         '404':
-          description: "العميل غير موجود"
+          description: "Customer not found"
 
   /orders:
     get:
       tags: [orders]
       operationId: listOrders
-      summary: "قائمة الطلبات مع ترشيح بالحالة وترقيم صفحات"
+      summary: "List orders with status filtering and pagination"
       parameters:
         - name: status
           in: query
           required: false
-          description: "ترشيح الطلبات بحالتها — أي قيمة أخرى تُرفض بالرمز 422"
+          description: "Filter orders by status — any other value is rejected with 422"
           schema:
             type: string
             enum: [pending, confirmed, dispatched, delivered, cancelled]
         - name: page
           in: query
           required: false
-          description: "رقم الصفحة — يبدأ من 1"
+          description: "Page number — starts at 1"
           schema:
             type: integer
             minimum: 1
             default: 1
       responses:
         '200':
-          description: "صفحة من الطلبات"
+          description: "A page of orders"
           content:
             application/json:
               schema:
@@ -157,19 +157,19 @@ paths:
                 properties:
                   items:
                     type: array
-                    description: "الطلبات المطابقة للترشيح"
+                    description: "Orders matching the filter"
                     items:
                       $ref: '#/components/schemas/Order'
                   page:
                     type: integer
-                    description: "رقم الصفحة الحالية"
+                    description: "The current page number"
         '422':
-          description: "حالة غير معروفة أو رقم صفحة أقل من 1"
+          description: "Unknown status or a page number below 1"
     post:
       tags: [orders]
       operationId: createOrder
-      summary: "إنشاء طلب جديد"
-      description: "الطلب يتطلب عنصراً واحداً على الأقل وإجمالياً أكبر من صفر."
+      summary: "Create an order"
+      description: "An order requires at least one item and a total greater than zero."
       requestBody:
         required: true
         content:
@@ -180,52 +180,52 @@ paths:
               properties:
                 customer_id:
                   type: string
-                  description: "معرّف العميل صاحب الطلب"
+                  description: "Id of the customer the order belongs to"
                 items:
                   type: array
                   minItems: 1
-                  description: "عناصر الطلب — عنصر واحد على الأقل"
+                  description: "Order lines — at least one"
                   items:
                     type: object
                     required: [sku, qty]
                     properties:
                       sku:
                         type: string
-                        description: "رمز الصنف"
+                        description: "Stock keeping unit"
                       qty:
                         type: integer
                         minimum: 1
-                        description: "الكمية"
+                        description: "Quantity"
                 total:
                   type: number
                   minimum: 0.01
-                  description: "إجمالي الطلب — يجب أن يكون أكبر من صفر"
+                  description: "Order total — must be greater than zero"
       responses:
         '201':
-          description: "تم إنشاء الطلب بحالة pending"
+          description: "Order created in state pending"
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Order'
         '422':
-          description: "عناصر فارغة أو إجمالي غير موجب"
+          description: "Empty items or a non-positive total"
 
   /orders/{id}/cancel:
     post:
       tags: [orders]
       operationId: cancelOrder
-      summary: "إلغاء طلب قبل الشحن"
-      description: "الإلغاء مسموح قبل الشحن فقط — الطلب المشحون أو المُسلَّم يُرفض إلغاؤه."
+      summary: "Cancel an order before dispatch"
+      description: "Cancellation is allowed before dispatch only — a dispatched or delivered order cannot be cancelled."
       parameters:
         - name: id
           in: path
           required: true
-          description: "معرّف الطلب، مثل ORD-1001"
+          description: "Order id, e.g. ORD-1001"
           schema:
             type: string
       responses:
         '200':
-          description: "تم إلغاء الطلب"
+          description: "Order cancelled"
           content:
             application/json:
               schema:
@@ -235,29 +235,29 @@ paths:
                     type: string
                   status:
                     type: string
-                    description: "الحالة بعد الإلغاء: cancelled"
+                    description: "State after cancellation: cancelled"
                   message:
                     type: string
-                    description: "رسالة تأكيد بالعربية"
+                    description: "Confirmation message"
         '409':
-          description: "لا يمكن إلغاء طلب مشحون dispatched أو مُسلَّم delivered"
+          description: "A dispatched or delivered order cannot be cancelled"
 
   /invoices/{id}:
     get:
       tags: [invoices]
       operationId: getInvoice
-      summary: "جلب فاتورة بمعرّفها"
-      description: "الفاتورة تعرض اسم العميل العربي بترميز سليم واتجاه العرض RTL."
+      summary: "Fetch an invoice by id"
+      description: "The invoice returns the customer name with its characters intact, whatever script they use."
       parameters:
         - name: id
           in: path
           required: true
-          description: "معرّف الفاتورة، مثل INV-2001"
+          description: "Invoice id, e.g. INV-2001"
           schema:
             type: string
       responses:
         '200':
-          description: "بيانات الفاتورة"
+          description: "Invoice record"
           content:
             application/json:
               schema:
@@ -267,62 +267,62 @@ paths:
                     type: string
                   customer_name:
                     type: string
-                    description: "اسم العميل العربي بترميز UTF-8 سليم"
+                    description: "Customer name, returned as UTF-8 with no character loss"
                   total:
                     type: number
-                    description: "إجمالي الفاتورة"
-                  rendered_direction:
+                    description: "Invoice total"
+                  encoding:
                     type: string
-                    enum: [rtl, ltr]
-                    description: "اتجاه عرض الفاتورة — rtl للفواتير العربية"
+                    enum: [utf-8]
+                    description: "Character encoding the invoice was rendered with"
         '404':
-          description: "الفاتورة غير موجودة"
+          description: "Invoice not found"
 
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
-      description: "رمز Bearer مطلوب على كل الواجهات عدا تسجيل الدخول /auth/login"
+      description: "A Bearer token is required on every operation except /auth/login"
 
   schemas:
     Customer:
       type: object
-      description: "سجل العميل"
+      description: "Customer record"
       properties:
         id:
           type: string
-          description: "معرّف العميل"
+          description: "Customer id"
         name:
           type: string
-          description: "اسم العميل"
+          description: "Customer name"
         phone:
           type: string
-          description: "رقم الجوال"
+          description: "Phone number"
         email:
           type: string
-          description: "البريد الإلكتروني"
+          description: "Email address"
         age:
           type: integer
-          description: "العمر"
+          description: "Age"
 
     Order:
       type: object
-      description: "سجل الطلب"
+      description: "Order record"
       properties:
         id:
           type: string
-          description: "معرّف الطلب"
+          description: "Order id"
         customer_id:
           type: string
-          description: "معرّف العميل"
+          description: "Customer id"
         status:
           type: string
           enum: [pending, confirmed, dispatched, delivered, cancelled]
-          description: "حالة الطلب"
+          description: "Order status"
         items:
           type: array
-          description: "عناصر الطلب"
+          description: "Order lines"
           items:
             type: object
             properties:
@@ -332,4 +332,4 @@ components:
                 type: integer
         total:
           type: number
-          description: "إجمالي الطلب"
+          description: "Order total"

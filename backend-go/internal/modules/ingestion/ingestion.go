@@ -1,8 +1,8 @@
 // Package ingestion — Requirements Parser (TRD §4.1, FR-REQ).
 //
 // Pipeline: upload -> async job -> text extraction (pdf/docx/md/txt) -> deterministic
-// segmentation (Arabic + English, Arabic-Indic digit normalization) -> per-segment
-// `extract_requirement` LLM call -> persist Requirements with provenance.
+// segmentation -> per-segment `extract_requirement` LLM call -> persist
+// Requirements with provenance.
 //
 // Re-upload of an existing filename bumps the document version and diffs the
 // extraction against the previous inventory by external_id, then content_hash
@@ -36,7 +36,8 @@ import (
 
 var allowedExtensions = map[string]bool{".pdf": true, ".docx": true, ".md": true, ".txt": true}
 
-// unsafeName matches everything Python's [^\w.\-؀-ۿ] strips (unicode \w ≈ [\p{L}\p{N}_]).
+// unsafeName strips everything outside unicode letters/digits plus "_", "." and
+// "-" (unicode \w ≈ [\p{L}\p{N}_]), matching the Python backend.
 var unsafeName = regexp.MustCompile(`[^\p{L}\p{N}_.\-]`)
 
 func Register(r *gin.RouterGroup) {
@@ -288,15 +289,10 @@ func runIngest(job *jobs.Job, documentID, projectID, orgID, actorID string) (any
 	}
 	httpx.Audit(orgID, &actorID, "document.parsed", "source_document", doc.ID, detail)
 
-	// Autopilot chain (automation contract 3+4a): language detection over the
-	// parsed text, then — auto mode only — confirm extracted requirements and
-	// try the generation trigger. Runs synchronously so the parse job only
-	// reports completed once the chain has fired.
-	texts := make([]string, 0, len(pages))
-	for _, p := range pages {
-		texts = append(texts, p.Text)
-	}
-	autopilot.AfterParse(projectID, orgID, actorID, strings.Join(texts, "\n"))
+	// Autopilot chain (automation contract 4a): auto mode only — confirm the
+	// extracted requirements and try the generation trigger. Runs synchronously
+	// so the parse job only reports completed once the chain has fired.
+	autopilot.AfterParse(projectID, orgID, actorID)
 	return result, nil
 }
 
@@ -304,7 +300,7 @@ func runIngest(job *jobs.Job, documentID, projectID, orgID, actorID string) (any
 
 func uploadDocument(c *gin.Context) {
 	projectID := c.Param("project_id")
-	project, ok := httpx.ProjectScoped(c, projectID)
+	_, ok := httpx.ProjectScoped(c, projectID)
 	if !ok {
 		return
 	}
@@ -361,14 +357,10 @@ func uploadDocument(c *gin.Context) {
 			projectID, u.OrganisationID, filename).
 		Select("COALESCE(MAX(version), 0)").Scan(&priorMax)
 
-	docLanguage := "en" // project language may still be null (detected post-parse)
-	if project.Language != nil {
-		docLanguage = *project.Language
-	}
 	doc := models.SourceDocument{
 		OrganisationID: u.OrganisationID, ProjectID: projectID,
 		Filename: filename, MimeType: fh.Header.Get("Content-Type"), Size: int64(len(content)),
-		StorageKey: storageKey, Language: docLanguage,
+		StorageKey: storageKey, Language: "en",
 		Version: priorMax + 1, ParseStatus: "pending",
 	}
 	if err := db.DB.Create(&doc).Error; err != nil {

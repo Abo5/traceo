@@ -1,11 +1,9 @@
 // AUTOPILOT GATES — v2 automation contract parity with the Python backend.
 //
-// Covered: project create/update defaults (nullable language, automation
-// default "auto", existing clients unchanged), deterministic offline language
-// detection (Arabic-block ratio >= 0.25), the full auto chain (upload -> parse
-// -> detect -> confirm_all -> auto-generate -> DRAFT cases only, approval stays
-// manual per BO-07), manual-mode opt-out, preset language never overwritten,
-// and the generation double-trigger guard.
+// Covered: project create/update defaults (automation default "auto", no
+// language field anywhere in the payload), the full auto chain (upload -> parse
+// -> confirm_all -> auto-generate -> DRAFT cases only, approval stays manual per
+// BO-07), manual-mode opt-out, and the generation double-trigger guard.
 package tests_test
 
 import (
@@ -13,7 +11,6 @@ import (
 	"time"
 
 	"traceo/internal/jobs"
-	"traceo/internal/modules/autopilot"
 )
 
 // --- helpers ---------------------------------------------------------------
@@ -90,31 +87,28 @@ func waitForCases(t *testing.T, headers map[string]string, pid string) []any {
 
 // --- contract 1+2: create/update fields ------------------------------------
 
-func TestProjectAutomationAndNullableLanguage(t *testing.T) {
-	headers := registerOrg(t, "منظمة الأتمتة")
+func TestProjectAutomationDefaultsAndNoLanguageField(t *testing.T) {
+	headers := registerOrg(t, "Automation Org")
 
-	// name only => language null (auto-detect later), automation defaults "auto"
-	p := createProjectRaw(t, headers, M{"name": "مشروع بلا لغة"})
-	if p["language"] != nil {
-		t.Fatalf("language must be null until detected, got %v", p["language"])
+	// name only => automation defaults to "auto"; the payload carries no language
+	p := createProjectRaw(t, headers, M{"name": "Project Without Language"})
+	if _, present := p["language"]; present {
+		t.Fatalf("project payload must not carry a language field: %v", p)
 	}
 	if p["automation"] != "auto" {
 		t.Fatalf("automation must default to 'auto', got %v", p["automation"])
 	}
 	pid, _ := p["id"].(string)
 	got := getProjectMap(t, headers, pid)
-	if got["language"] != nil || got["automation"] != "auto" {
+	if _, present := got["language"]; present {
+		t.Fatalf("read-back payload must not carry a language field: %v", got)
+	}
+	if got["automation"] != "auto" {
 		t.Fatalf("read-back mismatch: %v", got)
 	}
 
-	// existing clients sending language keep working
-	p2 := createProjectRaw(t, headers, M{"name": "مشروع عربي", "language": "ar"})
-	if p2["language"] != "ar" {
-		t.Fatalf("explicit language lost: %v", p2["language"])
-	}
-
 	// explicit automation manual
-	p3 := createProjectRaw(t, headers, M{"name": "يدوي", "automation": "manual"})
+	p3 := createProjectRaw(t, headers, M{"name": "Manual", "automation": "manual"})
 	if p3["automation"] != "manual" {
 		t.Fatalf("automation manual lost: %v", p3["automation"])
 	}
@@ -123,51 +117,29 @@ func TestProjectAutomationAndNullableLanguage(t *testing.T) {
 	if w := do(t, "POST", "/v1/projects", M{"name": "x", "automation": "bogus"}, headers); w.Code != 422 {
 		t.Fatalf("invalid automation must 422, got %d", w.Code)
 	}
-	if w := do(t, "POST", "/v1/projects", M{"name": "x", "language": "fr"}, headers); w.Code != 422 {
-		t.Fatalf("invalid language must 422, got %d", w.Code)
-	}
 
-	// update endpoint accepts both fields — freedom to override anytime
-	w := do(t, "PATCH", "/v1/projects/"+pid, M{"language": "en", "automation": "manual"}, headers)
+	// update endpoint still overrides automation, and never grows a language back
+	w := do(t, "PATCH", "/v1/projects/"+pid, M{"automation": "manual"}, headers)
 	if w.Code != 200 {
 		t.Fatalf("project update failed: %d %.300s", w.Code, w.Body.String())
 	}
 	upd := jsonMap(t, w)
-	if upd["language"] != "en" || upd["automation"] != "manual" {
+	if upd["automation"] != "manual" {
 		t.Fatalf("override not applied: %v", upd)
+	}
+	if _, present := upd["language"]; present {
+		t.Fatalf("update payload must not carry a language field: %v", upd)
 	}
 	if w := do(t, "PATCH", "/v1/projects/"+pid, M{"automation": "sometimes"}, headers); w.Code != 422 {
 		t.Fatalf("invalid automation on update must 422, got %d", w.Code)
 	}
 }
 
-// --- contract 3: deterministic language detection ---------------------------
-
-func TestLanguageDetectionRule(t *testing.T) {
-	cases := []struct {
-		text string
-		want string
-	}{
-		{"يجب أن يبدأ رقم الجوال بـ 05", "ar"},
-		{"The system shall reject invalid phone numbers", "en"},
-		{"", "en"},           // no alphabetic chars => en
-		{"123 456 !!", "en"}, // digits/punctuation only => en
-		{"عabc", "ar"},       // 1 Arabic of 4 letters = 0.25 => ar (boundary inclusive)
-		{"عabcd", "en"},      // 1 of 5 = 0.2 < 0.25 => en
-		{"متطلب mixed with English words النظام", "ar"},
-	}
-	for _, c := range cases {
-		if got := autopilot.DetectLanguage(c.text); got != c.want {
-			t.Fatalf("DetectLanguage(%q) = %q, want %q", c.text, got, c.want)
-		}
-	}
-}
-
 // --- contract 4: the auto chain --------------------------------------------
 
 func TestAutopilotUploadToDraftCases(t *testing.T) {
-	headers := registerOrg(t, "شركة الطيار الآلي")
-	p := createProjectRaw(t, headers, M{"name": "مشروع تلقائي"}) // auto + null language
+	headers := registerOrg(t, "Autopilot Works")
+	p := createProjectRaw(t, headers, M{"name": "Autopilot Project"}) // automation "auto"
 	pid, _ := p["id"].(string)
 
 	// spec import with zero confirmed requirements must NOT trigger generation
@@ -176,13 +148,8 @@ func TestAutopilotUploadToDraftCases(t *testing.T) {
 		t.Fatalf("generation ran with no confirmed requirements: %d cases", len(cases))
 	}
 
-	// upload the Arabic requirements doc; the parse job runs the whole chain
-	uploadAndParse(t, headers, pid, "requirements_ar.md")
-
-	// (3) language detected and persisted on the project
-	if got := getProjectMap(t, headers, pid); got["language"] != "ar" {
-		t.Fatalf("expected detected language 'ar', got %v", got["language"])
-	}
+	// upload the requirements doc; the parse job runs the whole chain
+	uploadAndParse(t, headers, pid, "requirements_en.md")
 
 	// (4a) every extracted requirement auto-confirmed
 	if extracted := listState(t, headers, pid, "requirements", "extracted"); len(extracted) != 0 {
@@ -204,27 +171,25 @@ func TestAutopilotUploadToDraftCases(t *testing.T) {
 
 	// (4d) every auto step audited with the "auto." action prefix
 	actions := auditActions(t, headers)
-	for _, want := range []string{"auto.language.detect", "auto.requirements.confirm_all", "auto.generate"} {
+	for _, want := range []string{"auto.requirements.confirm_all", "auto.generate"} {
 		if !actions[want] {
 			t.Fatalf("missing audit action %q in %v", want, actions)
 		}
 	}
+	if actions["auto.language.detect"] {
+		t.Fatalf("language detection was removed but still audits: %v", actions)
+	}
 }
 
 func TestManualModeStopsAtExtraction(t *testing.T) {
-	headers := registerOrg(t, "منظمة اليدوي")
-	p := createProjectRaw(t, headers, M{"name": "مشروع يدوي", "automation": "manual"})
+	headers := registerOrg(t, "Manual Org")
+	p := createProjectRaw(t, headers, M{"name": "Manual Project", "automation": "manual"})
 	pid, _ := p["id"].(string)
 
 	importSpec(t, headers, pid)
-	uploadAndParse(t, headers, pid, "requirements_ar.md")
+	uploadAndParse(t, headers, pid, "requirements_en.md")
 
-	// language detection is contract item 3 — it runs regardless of the mode
-	if got := getProjectMap(t, headers, pid); got["language"] != "ar" {
-		t.Fatalf("language detection must run in manual mode too, got %v", got["language"])
-	}
-
-	// but the chain stops: nothing confirmed, nothing generated
+	// the chain stops: nothing confirmed, nothing generated
 	if confirmed := listState(t, headers, pid, "requirements", "confirmed"); len(confirmed) != 0 {
 		t.Fatalf("manual mode auto-confirmed %d requirements", len(confirmed))
 	}
@@ -239,9 +204,6 @@ func TestManualModeStopsAtExtraction(t *testing.T) {
 	if actions["auto.requirements.confirm_all"] || actions["auto.generate"] {
 		t.Fatalf("manual mode wrote autopilot audit entries: %v", actions)
 	}
-	if !actions["auto.language.detect"] {
-		t.Fatalf("auto.language.detect audit missing: %v", actions)
-	}
 
 	// the manual endpoints still work unchanged on top
 	w := do(t, "POST", "/v1/projects/"+pid+"/requirements/confirm_all", nil, headers)
@@ -250,22 +212,6 @@ func TestManualModeStopsAtExtraction(t *testing.T) {
 	}
 	if confirmed := listState(t, headers, pid, "requirements", "confirmed"); len(confirmed) < 2 {
 		t.Fatalf("manual confirm_all confirmed nothing")
-	}
-}
-
-func TestPresetLanguageNeverOverwritten(t *testing.T) {
-	headers := registerOrg(t, "منظمة اللغة الثابتة")
-	p := createProjectRaw(t, headers,
-		M{"name": "لغة محددة مسبقاً", "language": "en", "automation": "manual"})
-	pid, _ := p["id"].(string)
-
-	uploadAndParse(t, headers, pid, "requirements_ar.md") // Arabic content
-
-	if got := getProjectMap(t, headers, pid); got["language"] != "en" {
-		t.Fatalf("preset language overwritten: %v", got["language"])
-	}
-	if actions := auditActions(t, headers); actions["auto.language.detect"] {
-		t.Fatal("auto.language.detect ran although language was already set")
 	}
 }
 

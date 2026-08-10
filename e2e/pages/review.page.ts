@@ -2,7 +2,7 @@
  * /projects/[id]/review — frontend/app/projects/[id]/review/page.tsx.
  * Queue rows repeat data-testid="review-case-row" and carry data-state with the
  * literal TestCase.state; a case is addressed by its title (entity data, not
- * bilingual UI copy). Approve/reject act on the case selected into the detail
+ * visible UI copy). Approve/reject act on the case selected into the detail
  * pane, so per-case actions select first and wait for the detail to catch up.
  * Locators private, no assertions (§5, §7).
  */

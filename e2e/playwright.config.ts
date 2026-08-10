@@ -5,7 +5,7 @@ export default defineConfig({
   testDir: './tests',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 1 : 0, // الإعادة كاشف هشاشة (§16)
+  retries: process.env.CI ? 1 : 0, // a retry is a flakiness DETECTOR (§16)
   workers: process.env.CI ? 4 : undefined,
   timeout: 30_000,
   expect: { timeout: 7_000 },

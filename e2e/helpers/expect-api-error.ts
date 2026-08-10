@@ -1,7 +1,7 @@
 /**
  * Uniform-error assertion for negative/validation specs (§11): awaits a
  * repository call that MUST fail and asserts the backend's typed refusal —
- * `code` (the contract) and `status`, never message text (bilingual, §6).
+ * `code` (the contract) and `status`, never message text (§6).
  * Fails loudly when the call unexpectedly succeeds.
  */
 import { ApiError } from '../api/errors';

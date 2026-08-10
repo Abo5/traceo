@@ -39,13 +39,12 @@ func TestSmoke(t *testing.T) {
 	u2 := models.User{OrganisationID: org2.ID, Email: "z@b.c", PasswordHash: h, Role: "admin"}
 	db.DB.Create(&u2)
 
-	lang := "ar"
-	p := models.Project{OrganisationID: org.ID, Name: "مشروع", Language: &lang, Automation: "manual"}
+	p := models.Project{OrganisationID: org.ID, Name: "Project", Automation: "manual"}
 	db.DB.Create(&p)
 	env := models.Environment{OrganisationID: org.ID, ProjectID: p.ID, Name: "staging"}
 	db.DB.Create(&env)
 	r1 := models.Requirement{OrganisationID: org.ID, ProjectID: p.ID, ExternalID: "FR-1",
-		Description: "يجب <تسجيل> الدخول", Priority: "high", State: "confirmed", Confidence: 0.876}
+		Description: "The user <must> be able to sign in", Priority: "high", State: "confirmed", Confidence: 0.876}
 	db.DB.Create(&r1)
 	r2 := models.Requirement{OrganisationID: org.ID, ProjectID: p.ID, ExternalID: "",
 		Description: "uncovered", State: "confirmed"}

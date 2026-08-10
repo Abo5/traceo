@@ -27,7 +27,7 @@ def _setup_world(client, register_org, create_project, with_test_case=False):
     Returns (headers_a, headers_b, project_id, requirement_id, test_case_id|None)."""
     a = register_org("Org A")
     b = register_org("Org B")
-    pid = create_project(a, name="مشروع المنظمة أ")
+    pid = create_project(a, name="Org A Project")
     rid = add_requirement(
         client, a, pid, "REQ-ISO-1",
         "Create a customer via POST /customers with valid phone and age")
@@ -47,7 +47,7 @@ def _setup_world(client, register_org, create_project, with_test_case=False):
                 "request": {
                     "headers": {"Content-Type": "application/json"},
                     "params": {},
-                    "body": {"name": "أحمد", "phone": "0512345678", "age": 30},
+                    "body": {"name": "Adam", "phone": "0512345678", "age": 30},
                 },
                 "assertions": [{"type": "status_code", "expected": 201}],
                 "extractions": [],
@@ -109,7 +109,7 @@ def test_org_b_listings_do_not_leak_org_a_objects(
     assert items_of(r.json()) == [], f"org B project list leaked: {r.text[:300]}"
 
     # B creates its own project: its scoped listings stay empty of A's data
-    pid_b = create_project(b, name="مشروع المنظمة ب")
+    pid_b = create_project(b, name="Org B Project")
     for suffix in ("requirements", "endpoints", "test-cases", "documents", "runs"):
         r = client.get(f"/v1/projects/{pid_b}/{suffix}", headers=b)
         assert r.status_code == 200, f"{suffix}: {r.status_code} {r.text[:300]}"

@@ -38,7 +38,7 @@ func setupIsolationWorld(t *testing.T, withTestCase bool) isolationWorld {
 	t.Helper()
 	a := registerOrg(t, "Org A")
 	b := registerOrg(t, "Org B")
-	pid := createProject(t, a, "مشروع المنظمة أ", "ar")
+	pid := createProject(t, a, "Org A Project")
 	rid := addRequirement(t, a, pid, "REQ-ISO-1",
 		"Create a customer via POST /customers with valid phone and age", nil)
 	importSpec(t, a, pid)
@@ -60,7 +60,7 @@ func setupIsolationWorld(t *testing.T, withTestCase bool) isolationWorld {
 			"request": M{
 				"headers": M{"Content-Type": "application/json"},
 				"params":  M{},
-				"body":    M{"name": "أحمد", "phone": "0512345678", "age": 30},
+				"body":    M{"name": "Ahmad", "phone": "0512345678", "age": 30},
 			},
 			"assertions":  []M{{"type": "status_code", "expected": 201}},
 			"extractions": []M{},
@@ -146,7 +146,7 @@ func TestOrgBListingsDoNotLeakOrgAObjects(t *testing.T) {
 	}
 
 	// B creates its own project: its scoped listings stay empty of A's data
-	pidB := createProject(t, world.b, "مشروع المنظمة ب", "ar")
+	pidB := createProject(t, world.b, "Org B Project")
 	for _, suffix := range []string{"requirements", "endpoints", "test-cases", "documents", "runs"} {
 		w = do(t, "GET", "/v1/projects/"+pidB+"/"+suffix, nil, world.b)
 		if w.Code != 200 {
