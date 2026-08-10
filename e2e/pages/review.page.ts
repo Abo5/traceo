@@ -105,6 +105,19 @@ export class ReviewPage {
     return this.page.getByTestId('review-error-retry-button');
   }
 
+  /**
+   * Header shortcut that approves every draft in the queue at once. Renders only
+   * with approve_reject and only while at least one draft is queued, so its
+   * absence is meaningful in both permission and empty-queue checks.
+   */
+  get approveEveryDraftControl(): Locator {
+    return this.page.getByTestId('review-approve-all-button');
+  }
+
+  private get approveEveryModal(): Locator {
+    return this.page.getByTestId('review-approve-all-modal');
+  }
+
   // --- actions ----------------------------------------------------------------
 
   async goto(projectId: string): Promise<void> {
@@ -131,6 +144,18 @@ export class ReviewPage {
     await this.rejectModal.getByTestId('review-reject-reason-select').selectOption(reason);
     await this.rejectConfirmButton.click();
     await this.rejectModal.waitFor({ state: 'detached' });
+  }
+
+  /**
+   * One-click approval of every draft in the queue, through the header button and
+   * its confirmation modal. Unlike approveAll() this ticks nothing — it is the
+   * shortcut a reviewer uses when the whole generated batch is acceptable.
+   */
+  async approveEveryDraft(): Promise<void> {
+    await this.approveEveryDraftControl.click();
+    await this.approveEveryModal.waitFor({ state: 'visible' });
+    await this.page.getByTestId('review-approve-all-confirm-button').click();
+    await this.approveEveryModal.waitFor({ state: 'detached' });
   }
 
   /** Tick every queued case and bulk-approve; waits for the bulk bar to clear. */

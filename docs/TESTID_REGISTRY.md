@@ -324,6 +324,10 @@ The **QA Insight Agent** screen — the sixth engine: fully deterministic, no la
 | `review-page-header` | PageHeader | Page title + shortcuts hint |
 | `review-error-retry-button` | Button | Dismiss/retry after a load error |
 | `review-bulk-bar` | bar | Bulk action bar (rendered while cases are checked) |
+| `review-approve-all-button` | Button | Header shortcut — approve every queued draft in one click (shows the count; hidden without `approve_reject` or when no drafts remain) |
+| `review-approve-all-modal` | Modal | Confirmation for the approve-all shortcut |
+| `review-approve-all-confirm-button` | Button | Confirms approving every queued draft |
+| `review-approve-all-cancel-button` | Button | Dismisses the approve-all confirmation |
 | `review-bulk-approve-button` | Button | Bulk approve checked cases |
 | `review-bulk-reject-button` | Button | Bulk reject checked cases |
 | `review-bulk-clear-button` | Button | Clear the selection |

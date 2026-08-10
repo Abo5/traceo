@@ -22,4 +22,25 @@ test.describe('generation pipeline @critical', () => {
 
     await expect(review.stateOf(generatedCase.title)).toHaveAttribute('data-state', 'approved');
   });
+
+  test('qa_lead approves the whole draft batch with one button', async ({
+    api,
+    asQaLead,
+    generatedCase,
+  }) => {
+    const review = new ReviewPage(asQaLead);
+    await review.goto(generatedCase.project_id);
+
+    await test.step('approve every draft from the header shortcut', async () => {
+      await review.approveEveryDraft();
+    });
+
+    // The queue is generated, so assert on the server rather than on a sample row:
+    // nothing may be left in draft, and the batch must actually have been non-empty.
+    const drafts = await api.review.list(generatedCase.project_id, { state: 'draft' });
+    const approved = await api.review.list(generatedCase.project_id, { state: 'approved' });
+    expect(drafts).toHaveLength(0);
+    expect(approved.length).toBeGreaterThan(0);
+    await expect(review.approveEveryDraftControl).toBeHidden(); // nothing left to approve
+  });
 });

@@ -23,6 +23,10 @@ import {
 
 type Tone = "success" | "warning" | "error" | "info" | "muted" | "accent";
 
+// The bulk endpoint takes ids in the request body; keep each call well inside
+// any proxy/body limit so a 900-case queue still approves in one click.
+const APPROVE_ALL_CHUNK = 250;
+
 const STATE_TONE: Record<string, Tone> = {
   draft: "muted",
   approved: "success",
@@ -124,6 +128,13 @@ export default function ReviewPage() {
     approveAll: "Approve all",
     rejectAll: "Reject all",
     clear: "Clear selection",
+    approveEveryDraft: "Approve all drafts",
+    approveEveryTitle: "Approve all drafts",
+    approveEveryBody: (n: number) =>
+      `Approve ${n} draft case${n === 1 ? "" : "s"} in one step? Approved cases become executable; you can still reject them individually afterwards.`,
+    approveEveryFiltered: "Only cases matching the current filter and search are included.",
+    approveEveryConfirm: "Approve them all",
+    approving: "Approving…",
     kbd: "a approve · r reject · j/k navigate",
     loadError: "Failed to load data",
     retry: "Retry",
@@ -158,6 +169,7 @@ export default function ReviewPage() {
   const [editForm, setEditForm] = useState({ title: "", description: "", priority: "", steps: "", assertions: "" });
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [approveAllOpen, setApproveAllOpen] = useState(false);
 
   function fetchList() {
     const qs = new URLSearchParams();
@@ -297,6 +309,32 @@ export default function ReviewPage() {
     }
   }
 
+  // Approve every draft currently in the queue. The bulk endpoint is atomic per call,
+  // so large queues are sent in chunks rather than one unbounded request.
+  async function approveAllDrafts() {
+    const ids = cases.filter((c: any) => c.state === "draft").map((c: any) => c.id);
+    if (ids.length === 0 || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      for (let i = 0; i < ids.length; i += APPROVE_ALL_CHUNK) {
+        await api(`/test-cases/bulk`, {
+          method: "POST",
+          body: { ids: ids.slice(i, i + APPROVE_ALL_CHUNK), action: "approve" },
+        });
+      }
+      const done = new Set(ids);
+      setCases((prev) => prev.map((c) => (done.has(c.id) ? { ...c, state: "approved" } : c)));
+      setDetail((d: any) => (d && done.has(d.id) ? { ...d, state: "approved" } : d));
+      setChecked(new Set());
+      setApproveAllOpen(false);
+    } catch (e: any) {
+      setError(e?.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function openEdit() {
     if (!detail) return;
     setJsonError(null);
@@ -388,6 +426,7 @@ export default function ReviewPage() {
   }, []);
 
   const hasFilters = stateF !== "all" || !!q.trim();
+  const draftCount = useMemo(() => cases.filter((c: any) => c.state === "draft").length, [cases]);
   const detailReqs = useMemo(() => (detail ? caseReqs(detail) : []), [detail]);
   const steps: any[] = Array.isArray(detail?.steps) ? detail.steps : [];
 
@@ -401,7 +440,22 @@ export default function ReviewPage() {
             {L.sub} <RefChip id="FR-035" /> <RefChip id="FR-036" />
           </span>
         }
-        actions={<M style={{ color: "var(--text-secondary)", fontSize: 11 }}>{L.kbd}</M>}
+        actions={
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            <M style={{ color: "var(--text-secondary)", fontSize: 11 }}>{L.kbd}</M>
+            {canDo("approve_reject") && draftCount > 0 && (
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={busy}
+                onClick={() => setApproveAllOpen(true)}
+                testId="review-approve-all-button"
+              >
+                {busy ? L.approving : `${L.approveEveryDraft} (${draftCount})`}
+              </Button>
+            )}
+          </div>
+        }
       />
 
       {error && (
@@ -758,6 +812,28 @@ export default function ReviewPage() {
       </div>
 
       {/* Reject modal */}
+      <Modal
+        open={approveAllOpen}
+        onClose={() => setApproveAllOpen(false)}
+        title={L.approveEveryTitle}
+        testId="review-approve-all-modal"
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ fontSize: 13, color: "var(--text)" }}>{L.approveEveryBody(draftCount)}</div>
+          {hasFilters && (
+            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{L.approveEveryFiltered}</div>
+          )}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <Button variant="ghost" onClick={() => setApproveAllOpen(false)} testId="review-approve-all-cancel-button">
+              {L.cancel}
+            </Button>
+            <Button variant="primary" disabled={busy} onClick={approveAllDrafts} testId="review-approve-all-confirm-button">
+              {busy ? L.approving : L.approveEveryConfirm}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
       <Modal open={rejectOpen} onClose={() => setRejectOpen(false)} title={L.rejectTitle} testId="review-reject-modal">
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Field label={L.reason} testId="review-reject-reason-select">
