@@ -21,6 +21,8 @@ class MockProvider:
             data = self._extract(prompt)
         elif prompt_id.startswith("map_requirement"):
             data = self._map(prompt)
+        elif prompt_id.startswith("enrich_endpoints"):
+            data = self._enrich(prompt)
         else:
             data = {}
         jsonschema.validate(data, schema)
@@ -91,3 +93,47 @@ class MockProvider:
         top = [i for s, i in scored[:3] if s >= max(1, (scored[0][0] // 2 if scored else 1))]
         confidence = min(0.95, 0.35 + 0.15 * (scored[0][0] if scored else 0))
         return {"selected": top, "confidence": round(confidence, 2)}
+
+    # --- endpoint inventory enrichment (annotations only; the caller's gate still
+    #     re-verifies every method+path against the deterministic inventory) ---
+    def _enrich(self, prompt: str) -> dict:
+        # SENTINEL CONTRACT: enrichment.ENRICH_INSTRUCTIONS ends with "PAYLOAD:\n"
+        # — same convention as map_requirement above.
+        try:
+            payload = json.loads(prompt.split("PAYLOAD:\n", 1)[-1])
+        except Exception:
+            return {"endpoints": []}
+        out = []
+        for ep in payload.get("endpoints", []):
+            if not isinstance(ep, dict):
+                continue
+            method = str(ep.get("method", "")).upper()
+            path = str(ep.get("path", ""))
+            if not method or not path:
+                continue
+            # Deterministic English: verb from the method, subject from the last
+            # literal (non-templated) path segment.
+            verb = MOCK_VERBS.get(method, "Call")
+            literals = [s for s in path.split("/") if s and not s.startswith("{")]
+            resource = literals[-1] if literals else "root"
+            group = literals[0] if literals else "root"
+            out.append({
+                "method": method,
+                "path": path,
+                "description": f"{verb} the {resource} resource via {method} {path}.",
+                "group": group,
+                "criticality": MOCK_CRITICALITY.get(method, "low"),
+            })
+        return {"endpoints": out}
+
+
+# Deterministic enrichment vocabulary — kept module level so the Go mock can
+# mirror it exactly (parity: same file in, same annotations out).
+MOCK_VERBS = {
+    "GET": "Read", "POST": "Create", "PUT": "Replace", "PATCH": "Update",
+    "DELETE": "Delete", "HEAD": "Check", "OPTIONS": "Describe",
+}
+MOCK_CRITICALITY = {
+    "DELETE": "high", "PUT": "high", "POST": "medium", "PATCH": "medium",
+    "GET": "low", "HEAD": "low", "OPTIONS": "low",
+}

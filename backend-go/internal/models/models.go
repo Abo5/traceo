@@ -183,6 +183,15 @@ type Endpoint struct {
 	// ObservedCount is how many times traffic capture saw this endpoint
 	// (FR-021 AC-3); stays 0 for endpoints that were declared, not observed.
 	ObservedCount int `gorm:"default:0" json:"observed_count"`
+	// AI enrichment (API collection import contract item 3) — descriptive ONLY.
+	// Written exclusively by the validated enrichment layer, which may never
+	// create, rename or delete an endpoint nor touch a path, parameter or field.
+	// All three are NULLABLE and arrive through the AutoMigrate convention (no
+	// backfill): plain-text one-line description, short resource group name, and
+	// a criticality hint constrained to high|medium|low.
+	AIDescription *string `gorm:"column:ai_description;type:text" json:"ai_description"`
+	AIGroup       *string `gorm:"column:ai_group;size:80" json:"ai_group"`
+	AICriticality *string `gorm:"column:ai_criticality;size:8" json:"ai_criticality"`
 }
 
 type TestCase struct {

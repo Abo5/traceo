@@ -8,10 +8,13 @@
  */
 import { test, expect } from '../fixtures';
 import { checkA11y } from '../helpers/a11y';
+import { sampleFile } from '../helpers/test-data';
+import { EndpointsPage } from '../pages/endpoints.page';
 import { LoginPage } from '../pages/login.page';
 import { ProjectsPage } from '../pages/projects.page';
 import { PROJECT_SECTIONS, ProjectShellPage } from '../pages/project-shell.page';
 import { RegisterPage } from '../pages/register.page';
+import { projectFactory } from '../test-data/project.factory';
 
 test.describe('accessibility @a11y', () => {
   // Dev-server first navigation compiles the route on demand (up to ~20s),
@@ -68,4 +71,37 @@ test.describe('accessibility @a11y', () => {
       await checkA11y(asQaLead, `project:${section}`);
     });
   }
+
+  /**
+   * The section loop above scans every project page EMPTY — which is the only
+   * state most of them have under an isolated project. The endpoints page is
+   * the exception worth a second scan: importing an API collection is what
+   * makes its inventory table, its format badge and its AI-enrichment columns
+   * exist at all, and none of those elements is reachable from the empty state.
+   *
+   * The scan reuses the EXISTING `project:endpoints` baseline key rather than
+   * inventing a second one: both states are the same page, the baseline entry
+   * is empty, and sharing the key means new markup cannot introduce debt on
+   * either state without failing. Arrangement is API-side (§9) — this is an
+   * accessibility scan, not an import test (that is tests/collections.spec.ts).
+   */
+  test('endpoints page with an imported inventory has no new a11y violations', async ({
+    api,
+    asQaLead,
+  }) => {
+    // "auto" rather than the manual `project` fixture: enrichment is gated on
+    // that flag, and the AI badges are precisely the new elements this scan
+    // exists to cover. Nothing else auto-runs — the autopilot needs confirmed
+    // requirements, and this project has none.
+    const project = await api.as('qa_lead').projects.create(projectFactory({ automation: 'auto' }));
+    await api.discovery.importSpec(project.id, sampleFile('calendar-api.postman_collection.json'));
+
+    const endpoints = new EndpointsPage(asQaLead);
+    await endpoints.goto(project.id);
+    await expect(endpoints.root).toBeVisible({ timeout: 20_000 });
+    // Scan the SETTLED table, not the loading placeholder.
+    await expect(endpoints.rows.first()).toBeVisible({ timeout: 20_000 });
+
+    await checkA11y(asQaLead, 'project:endpoints');
+  });
 });

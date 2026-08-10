@@ -8,11 +8,16 @@ const USER_KEY = "traceo_user";
 export class ApiError extends Error {
   code: string;
   status: number;
-  constructor(code: string, message: string, status: number) {
+  /** Field-level detail lines the API attached to the error (e.g. 422 invalid_spec). */
+  errors: string[];
+  constructor(code: string, message: string, status: number, errors?: unknown) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.status = status;
+    this.errors = Array.isArray(errors)
+      ? errors.map((e) => (typeof e === "string" ? e : e?.message ?? JSON.stringify(e)))
+      : [];
   }
 }
 
@@ -100,7 +105,8 @@ export async function api<T = any>(
       throw new ApiError(
         detail.code || `http_${res.status}`,
         detail.message || detail.msg || res.statusText || "Unexpected error",
-        res.status
+        res.status,
+        detail.errors
       );
     }
     throw new ApiError(

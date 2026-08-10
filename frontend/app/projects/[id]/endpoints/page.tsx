@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { useParams } from "next/navigation";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { useCan } from "@/lib/permissions";
 import { Badge, Button, Card, Empty, Input, PageHeader, Pill, Progress, RefChip, StatusDot, Table } from "@/components/ui";
 
@@ -53,12 +53,56 @@ function MethodBadge({ method }: { method: string }) {
   );
 }
 
-function Toggle({ on, onChange, disabled, testId }: { on: boolean; onChange: () => void; disabled?: boolean; testId?: string }) {
+/** Human labels for the `format` the import endpoint reports back. */
+const FORMAT_LABELS: Record<string, string> = {
+  openapi3: "OpenAPI 3.x",
+  swagger2: "Swagger 2.0",
+  postman2: "Postman Collection v2",
+  har: "HAR 1.2",
+  insomnia4: "Insomnia v4",
+};
+
+const CRITICALITY_TONES: Record<string, "error" | "warning" | "muted"> = {
+  high: "error",
+  medium: "warning",
+  low: "muted",
+};
+
+/** Small marker that flags neighbouring content as AI-suggested, not discovered fact. */
+function AiMark({ title }: { title: string }) {
+  return (
+    <span
+      title={title}
+      aria-label={title}
+      style={{
+        fontFamily: "'JetBrains Mono',ui-monospace,monospace",
+        fontSize: 9,
+        fontWeight: 700,
+        letterSpacing: "0.1em",
+        color: "var(--c-violet-text)",
+        border: "1px solid var(--c-violet)",
+        borderRadius: 4,
+        padding: "0 4px",
+        lineHeight: "14px",
+        display: "inline-block",
+        flexShrink: 0,
+      }}
+    >
+      AI
+    </span>
+  );
+}
+
+function Toggle({ on, onChange, disabled, testId, label }: { on: boolean; onChange: () => void; disabled?: boolean; testId?: string; label?: string }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={on}
+      // The switch has no text of its own, so without a name a screen reader
+      // announces 37 identical "switch, on" controls with nothing to tell them
+      // apart (axe: button-name). The caller names the row it belongs to.
+      aria-label={label}
       disabled={disabled}
       data-testid={testId}
       onClick={onChange}
@@ -98,16 +142,23 @@ export default function EndpointsPage() {
 
   const L = {
     title: "Endpoints",
-    sub: "Import an OpenAPI / Swagger spec to discover testable endpoints",
-    importCard: "Import spec",
+    sub: "Import an API spec or request collection to discover testable endpoints",
+    importCard: "Import spec or collection",
+    accepts:
+      "Accepts OpenAPI 3.x, Swagger 2.0, Postman Collection v2, HAR 1.2 and Insomnia v4 exports (JSON or YAML).",
     tabUrl: "Fetch from URL",
     tabFile: "Upload file",
     urlPh: "https://example.com/openapi.json",
     fetchBtn: "Import",
-    filePick: "Pick a JSON / YAML file",
+    filePick: "Pick a file",
     importing: "Importing…",
     warnings: "Warnings",
+    rejected: "File rejected",
     importResult: "Import result",
+    format: "Format",
+    enriched: "AI enriched",
+    discarded: "Discarded",
+    aiNote: "AI-suggested — not discovered from the spec",
     inventory: "Endpoint inventory",
     method: "Method",
     path: "Path",
@@ -121,7 +172,7 @@ export default function EndpointsPage() {
     open: "Open",
     included: "Included",
     empty: "No endpoints yet",
-    emptyHint: "Import an OpenAPI spec to discover endpoints",
+    emptyHint: "Import an OpenAPI spec, Postman collection, HAR or Insomnia export to discover endpoints",
     loadError: "Failed to load data",
     retry: "Retry",
     added: "Added",
@@ -134,6 +185,7 @@ export default function EndpointsPage() {
   const [url, setUrl] = useState("");
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const [importErrorList, setImportErrorList] = useState<string[]>([]);
   const [result, setResult] = useState<any | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -163,6 +215,7 @@ export default function EndpointsPage() {
   async function doImport(payload: { url?: string; file?: File }) {
     setImporting(true);
     setImportError(null);
+    setImportErrorList([]);
     setResult(null);
     try {
       let res: any;
@@ -177,6 +230,7 @@ export default function EndpointsPage() {
       await loadEps();
     } catch (e: any) {
       setImportError(e?.message || String(e));
+      setImportErrorList(e instanceof ApiError ? e.errors : []);
     } finally {
       setImporting(false);
     }
@@ -205,6 +259,12 @@ export default function EndpointsPage() {
     ? diffKeys.filter(([k]) => typeof result[k] === "number")
     : [];
   const warnings: any[] = Array.isArray(result?.warnings) ? result.warnings : [];
+  const detectedFormat: string | null =
+    result && typeof result.format === "string" && result.format ? result.format : null;
+  const enrichedCount: number | null =
+    result && typeof result.enriched === "number" ? result.enriched : null;
+  const discardedCount: number | null =
+    result && typeof result.enrichment_discarded === "number" ? result.enrichment_discarded : null;
 
   return (
     <div data-testid="endpoints-page-root" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -212,6 +272,13 @@ export default function EndpointsPage() {
 
       {canDo("import_spec") && (
       <Card title={L.importCard} testId="endpoints-import-card">
+        <div
+          data-testid="endpoints-import-accepts-hint"
+          style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 12, lineHeight: 1.6 }}
+        >
+          {L.accepts}
+        </div>
+
         <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
           <Pill active={tab === "url"} onClick={() => setTab("url")} testId="endpoints-import-url-pill">
             {L.tabUrl}
@@ -240,7 +307,7 @@ export default function EndpointsPage() {
               ref={fileRef}
               data-testid="endpoints-import-file-input"
               type="file"
-              accept=".json,.yaml,.yml"
+              accept=".json,.yaml,.yml,.har,application/json,application/yaml,text/yaml"
               style={{ display: "none" }}
               onChange={(e) => {
                 const f = e.target.files?.[0];
@@ -255,19 +322,75 @@ export default function EndpointsPage() {
         )}
 
         {importError && (
-          <div style={{ marginTop: 12, fontSize: 13, color: "var(--error)" }}>{importError}</div>
+          <div
+            data-testid="endpoints-import-error"
+            style={{
+              marginTop: 12,
+              border: "1px solid var(--error)",
+              background: "var(--error-subtle, rgba(255,92,114,.12))",
+              borderRadius: 12,
+              padding: "10px 14px",
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--error)" }}>
+              {L.rejected} — {importError}
+            </div>
+            {importErrorList.length > 0 && (
+              <ul
+                data-testid="endpoints-import-error-list"
+                style={{ margin: "6px 0 0", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 4 }}
+              >
+                {importErrorList.map((msg, i) => (
+                  <li key={i} data-testid="endpoints-import-error-item" style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                    <M style={{ fontSize: 11 }}>{msg}</M>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         )}
 
         {result && (
           <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-            {diffEntries.length > 0 && (
+            {(detectedFormat || diffEntries.length > 0) && (
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{L.importResult}:</span>
+                {detectedFormat && (
+                  <span
+                    data-testid="endpoints-import-format-badge"
+                    data-format={detectedFormat}
+                    data-state={detectedFormat}
+                    title={detectedFormat}
+                  >
+                    <Badge tone="info">
+                      {L.format} <M style={{ fontSize: 11 }}>{FORMAT_LABELS[detectedFormat] ?? detectedFormat}</M>
+                    </Badge>
+                  </span>
+                )}
                 {diffEntries.map(([k, label]) => (
                   <Badge key={k} tone={k === "removed" ? "error" : k === "updated" ? "warning" : k === "added" ? "success" : "muted"} testId={`endpoints-import-${k}-badge`}>
                     {label} <M style={{ fontSize: 11 }}>{result[k]}</M>
                   </Badge>
                 ))}
+              </div>
+            )}
+            {(enrichedCount !== null || discardedCount !== null) && (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <AiMark title={L.aiNote} />
+                {enrichedCount !== null && (
+                  <Badge tone="accent" testId="endpoints-import-enriched-badge">
+                    {L.enriched} <M style={{ fontSize: 11 }}>{enrichedCount}</M>
+                  </Badge>
+                )}
+                {discardedCount !== null && (
+                  <Badge
+                    tone={discardedCount > 0 ? "warning" : "muted"}
+                    testId="endpoints-import-enrichment-discarded-badge"
+                  >
+                    {L.discarded} <M style={{ fontSize: 11 }}>{discardedCount}</M>
+                  </Badge>
+                )}
+                <span style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>{L.aiNote}</span>
               </div>
             )}
             {warnings.length > 0 && (
@@ -328,6 +451,11 @@ export default function EndpointsPage() {
               const secured = Array.isArray(ep.security) ? ep.security.length > 0 : !!ep.security;
               const testCount = ep.test_count ?? 0;
               const covPct = ep.covered_params_pct ?? null;
+              const aiDescription = typeof ep.ai_description === "string" && ep.ai_description ? ep.ai_description : null;
+              const aiGroup = typeof ep.ai_group === "string" && ep.ai_group ? ep.ai_group : null;
+              const aiCriticality =
+                typeof ep.ai_criticality === "string" && ep.ai_criticality ? ep.ai_criticality : null;
+              const hasAi = !!(aiDescription || aiGroup || aiCriticality);
               return (
                 <tr
                   key={ep.id}
@@ -341,7 +469,55 @@ export default function EndpointsPage() {
                     <MethodBadge method={ep.method} />
                   </td>
                   <td>
-                    <M style={{ color: "var(--text)" }}>{ep.path}</M>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4, maxWidth: 380 }}>
+                      <M style={{ color: "var(--text)" }}>{ep.path}</M>
+                      {hasAi && (
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                          <AiMark title={L.aiNote} />
+                          {aiGroup && (
+                            <span
+                              data-testid="endpoints-row-ai-group"
+                              title={L.aiNote}
+                              style={{
+                                fontSize: 10.5,
+                                color: "var(--c-violet-text)",
+                                background: "rgba(155,107,255,.12)",
+                                border: "1px solid transparent",
+                                borderRadius: 6,
+                                padding: "1px 7px",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {aiGroup}
+                            </span>
+                          )}
+                          {aiCriticality && (
+                            <span
+                              data-testid="endpoints-row-ai-criticality"
+                              data-state={aiCriticality}
+                              title={L.aiNote}
+                            >
+                              <Badge
+                                tone={CRITICALITY_TONES[aiCriticality] ?? "muted"}
+                                state={aiCriticality}
+                                testId="endpoints-row-ai-criticality-badge"
+                              >
+                                {aiCriticality}
+                              </Badge>
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {aiDescription && (
+                        <div
+                          data-testid="endpoints-row-ai-description"
+                          title={L.aiNote}
+                          style={{ fontSize: 12, lineHeight: 1.5, color: "var(--text-secondary)" }}
+                        >
+                          {aiDescription}
+                        </div>
+                      )}
+                    </div>
                   </td>
                   <td style={{ fontSize: 13, color: "var(--text-secondary)" }}>{ep.summary ?? "—"}</td>
                   <td>
@@ -356,7 +532,11 @@ export default function EndpointsPage() {
                     ) : (
                       <div className="row" style={{ gap: 6, alignItems: "center" }}>
                         <div style={{ width: 52 }}>
-                          <Progress pct={covPct} tone={covPct >= 80 ? "success" : covPct >= 40 ? "warning" : "error"} />
+                          <Progress
+                            pct={covPct}
+                            tone={covPct >= 80 ? "success" : covPct >= 40 ? "warning" : "error"}
+                            label={`Parameter coverage for ${ep.method} ${ep.path}`}
+                          />
                         </div>
                         <M style={{ fontSize: 10.5, color: "var(--text-secondary)" }}>{covPct}%</M>
                       </div>
@@ -377,7 +557,13 @@ export default function EndpointsPage() {
                   </td>
                   <td>
                     {canDo("import_spec") && (
-                      <Toggle on={!ep.excluded} disabled={busyRow === ep.id} onChange={() => toggleRow(ep)} testId="endpoints-row-include-toggle" />
+                      <Toggle
+                        on={!ep.excluded}
+                        disabled={busyRow === ep.id}
+                        onChange={() => toggleRow(ep)}
+                        testId="endpoints-row-include-toggle"
+                        label={`Include ${ep.method} ${ep.path} in generation`}
+                      />
                     )}
                   </td>
                 </tr>

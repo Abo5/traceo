@@ -1,13 +1,23 @@
-"""OpenAPI/Swagger Discovery Engine (TRD §4.2) — fully deterministic, NO LLM.
+"""Discovery Engine (TRD §4.2) — fully deterministic, NO LLM.
 
-Imports an OpenAPI 3.x or Swagger 2.0 specification (multipart file or URL), resolves
-internal $refs cycle-safely, and flattens every operation into an Endpoint inventory row.
-That inventory is the ground truth the generation module's grounding gate validates
-against — which is why this engine is deterministic end to end.
+Imports an API description (multipart file or URL) and flattens every operation into
+an Endpoint inventory row. That inventory is the ground truth the generation module's
+grounding gate validates against — which is why this engine is deterministic end to
+end. Five input formats share ONE route:
+
+  * OpenAPI 3.x / Swagger 2.0 — parsed here, internal $refs resolved cycle-safely.
+  * Postman Collection v2.0/v2.1, HAR 1.2, Insomnia v4 — converted by
+    modules/collections.py into the identical inventory shape.
 
 Broken/unresolvable operations are recorded as warnings and skipped, never fatal
 (FR-DSC-04). URL fetches are SSRF-guarded. Re-import bumps the spec version and
-REPLACES the endpoint inventory, returning an added/removed/changed diff.
+rewrites the endpoint inventory, returning an added/removed/changed diff — subject
+to the fidelity order spec > traffic > dom > postman (SRS §L2): an import never
+overwrites or deletes rows discovered by a higher-fidelity mode.
+
+Collection imports may additionally be annotated by the optional AI enrichment step
+(modules/enrichment.py) when the project runs on automation=auto. That step can only
+add commentary to rows this file already created — see the gate documented there.
 """
 import ipaddress
 import json
@@ -23,6 +33,8 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from ..db import get_db
 from ..deps import audit, get_project_scoped, require
 from ..models import ApiSpec, Endpoint, TestCase, TestResult, TestStep, User
+from .collections import COLLECTION_FORMATS, SUPPORTED_FORMATS_HINT, convert, detect_format
+from .enrichment import enrich
 from .generation import try_autopilot_generation
 
 router = APIRouter()
@@ -32,6 +44,11 @@ FETCH_TIMEOUT_S = 10.0
 MAX_REDIRECTS = 3
 HTTP_METHODS = ("get", "post", "put", "patch", "delete", "head", "options")
 CONSTRAINT_KEYS = ("format", "minimum", "maximum", "minLength", "maxLength", "pattern", "enum")
+
+# Discovery-mode fidelity (SRS §L2). A declared contract beats observed traffic,
+# which beats a crawled DOM, which beats a hand-curated request collection. The
+# ranking decides who wins when two modes describe the same method+path.
+FIDELITY = {"spec": 3, "traffic": 2, "dom": 1, "postman": 0}
 
 
 # --- SSRF-guarded URL fetch ----------------------------------------------------------
@@ -129,10 +146,17 @@ def _parse_spec_bytes(raw: bytes) -> object:
 
 
 def _validate_structure(spec: object) -> str:
-    """Return 'openapi3' | 'swagger2', or raise 422 with a specific errors list."""
+    """Return 'openapi3' | 'swagger2', or raise 422 with a specific errors list.
+
+    Only reached once collection detection has already declined the document, so
+    every rejection names the formats that WOULD have been accepted — a 422 that
+    just says "invalid" leaves the owner guessing why their real Postman export
+    was refused.
+    """
     errors: list[str] = []
     if not isinstance(spec, dict):
         errors.append("Specification root must be a mapping/object.")
+        errors.append(SUPPORTED_FORMATS_HINT)
         raise HTTPException(422, detail={
             "code": "invalid_spec", "message": "Not a valid API specification.",
             "errors": errors})
@@ -149,6 +173,7 @@ def _validate_structure(spec: object) -> str:
     elif not paths:
         errors.append("'paths' object is empty — nothing to import.")
     if errors:
+        errors.append(SUPPORTED_FORMATS_HINT)
         raise HTTPException(422, detail={
             "code": "invalid_spec", "message": "Not a valid API specification.",
             "errors": errors})
@@ -310,6 +335,10 @@ def _endpoint_dict(e: Endpoint) -> dict:
         # capture observed it — shown on the coverage map (FR-024) once the
         # non-spec modes land (FR-021/022/023).
         "source": e.source, "observed_count": e.observed_count,
+        # Optional AI annotations (nullable). Commentary only — every one was
+        # matched back to this exact method+path before being stored.
+        "ai_description": e.ai_description, "ai_group": e.ai_group,
+        "ai_criticality": e.ai_criticality,
     }
 
 
@@ -348,8 +377,17 @@ async def import_api_spec(project_id: str, request: Request,
         source = url
 
     spec = _parse_spec_bytes(raw)
-    fmt = _validate_structure(spec)
-    operations, warnings = _flatten(spec, fmt)
+    # ONE route, five formats: collection formats are converted deterministically
+    # into the same inventory _flatten produces; anything else takes the original
+    # OpenAPI/Swagger path, unchanged.
+    fmt = detect_format(spec)
+    if fmt in COLLECTION_FORMATS:
+        operations, warnings, title, incoming_source = convert(spec, fmt)
+    else:
+        fmt = _validate_structure(spec)
+        operations, warnings = _flatten(spec, fmt)
+        title = str((spec.get("info") or {}).get("title") or "")
+        incoming_source = "spec"
 
     # swagger2 host/basePath are recorded as spec source metadata
     if fmt == "swagger2":
@@ -357,7 +395,7 @@ async def import_api_spec(project_id: str, request: Request,
         if notes:
             source = f"{source} [{'; '.join(notes)}]"
     source = source[:500]
-    title = str((spec.get("info") or {}).get("title") or "")[:300]
+    title = title[:300]
 
     old_rows = db.query(Endpoint).filter(
         Endpoint.project_id == project_id,
@@ -365,12 +403,27 @@ async def import_api_spec(project_id: str, request: Request,
     old_by_key = {_op_key(e.method, e.path): e for e in old_rows}
     new_by_key = {_op_key(op["method"], op["path"]): op for op in operations}
 
+    # FIDELITY GATE (SRS §L2). An incoming operation is written only when its mode
+    # ranks at least as high as the mode that produced the existing row — so a
+    # Postman import can never downgrade an endpoint already known from a spec,
+    # while a later spec import overwrites collection-derived rows. Rows this
+    # import does not cover are deleted only when they came from the SAME mode:
+    # importing a spec must not delete endpoints discovered from a collection.
+    incoming_rank = FIDELITY.get(incoming_source, 0)
+    writable = {
+        k for k in new_by_key
+        if k not in old_by_key
+        or incoming_rank >= FIDELITY.get(old_by_key[k].source or "spec", 0)
+    }
+    superseded = [k for k in old_by_key if k not in new_by_key
+                  and (old_by_key[k].source or "spec") == incoming_source]
+
     diff = {
         "added": sorted(k for k in new_by_key if k not in old_by_key),
-        "removed": sorted(k for k in old_by_key if k not in new_by_key),
+        "removed": sorted(superseded),
         "changed": sorted(
             k for k, op in new_by_key.items()
-            if k in old_by_key and _signature(
+            if k in old_by_key and k in writable and _signature(
                 op["parameters"], op["request_schema"],
                 op["response_schemas"], op["security"],
             ) != _signature(
@@ -395,16 +448,22 @@ async def import_api_spec(project_id: str, request: Request,
         db.add(spec_row)
     db.flush()
 
-    # REPLACE the inventory: detach grounding links, drop old rows, insert fresh ones
-    old_ids = [e.id for e in old_rows]
+    # REWRITE the inventory: detach grounding links, drop the rows this import
+    # replaces or supersedes, insert fresh ones. Rows held by a higher-fidelity
+    # mode, and rows of another mode this document simply does not mention, are
+    # left exactly as they are.
+    old_ids = [old_by_key[k].id for k in set(superseded) | (writable & set(old_by_key))]
     if old_ids:
         db.query(TestStep).filter(TestStep.endpoint_id.in_(old_ids)).update(
             {TestStep.endpoint_id: None}, synchronize_session=False)
         db.query(Endpoint).filter(Endpoint.id.in_(old_ids)).delete(synchronize_session=False)
 
+    rows_by_key: dict[tuple[str, str], Endpoint] = {}
     for key, op in new_by_key.items():
+        if key not in writable:
+            continue  # a higher-fidelity mode already owns this method+path
         prior = old_by_key.get(key)
-        db.add(Endpoint(
+        row = Endpoint(
             organisation_id=user.organisation_id, api_spec_id=spec_row.id,
             project_id=project_id, method=op["method"], path=op["path"],
             operation_id=op["operation_id"], summary=op["summary"],
@@ -412,12 +471,44 @@ async def import_api_spec(project_id: str, request: Request,
             response_schemas=op["response_schemas"], security=op["security"],
             tags=op["tags"],
             excluded=prior.excluded if prior else False,  # FR-DSC-05 survives re-import
-        ))
+            source=op.get("source", "spec"),
+            observed_count=op.get("observed_count", 0),
+            # annotations survive a re-import the same way `excluded` does
+            ai_description=prior.ai_description if prior else None,
+            ai_group=prior.ai_group if prior else None,
+            ai_criticality=prior.ai_criticality if prior else None,
+        )
+        db.add(row)
+        rows_by_key[(op["method"].upper(), op["path"])] = row
+
+    # AI ENRICHMENT (contract item 3) — collection imports only, automation=auto
+    # only, and strictly after the deterministic inventory exists. The model sees
+    # the derived inventory, never the uploaded file; every annotation it returns
+    # is matched back to a method+path above or discarded. A failure here costs
+    # annotations, never the import.
+    enriched = enrichment_discarded = 0
+    if fmt in COLLECTION_FORMATS and project.automation == "auto":
+        annotations, enrichment_discarded = enrich(
+            [op for k, op in new_by_key.items() if k in writable])
+        for key, annotation in annotations.items():
+            row = rows_by_key.get(key)
+            if row is None:
+                enrichment_discarded += 1
+                continue
+            row.ai_description = annotation["ai_description"]
+            row.ai_group = annotation["ai_group"] or None
+            row.ai_criticality = annotation["ai_criticality"]
+            enriched += 1
 
     audit(db, user.organisation_id, user.id, "spec.imported", "api_spec", spec_row.id,
           {"source": source, "format": fmt, "version": spec_row.version,
-           "endpoints": len(new_by_key), "warnings": len(warnings)})
+           "endpoints": len(new_by_key), "warnings": len(warnings),
+           "enriched": enriched, "enrichment_discarded": enrichment_discarded})
     db.commit()
+
+    total = db.query(Endpoint).filter(
+        Endpoint.project_id == project_id,
+        Endpoint.organisation_id == user.organisation_id).count()
 
     # Autopilot (contract 4b): a successful spec import may complete the
     # "endpoints + confirmed requirements" precondition — try the generation
@@ -428,9 +519,18 @@ async def import_api_spec(project_id: str, request: Request,
     return {
         "spec_id": spec_row.id,
         "version": spec_row.version,
+        # endpoints_count keeps its original meaning: operations found in THIS
+        # document. `total` is the project inventory after the fidelity rules ran.
         "endpoints_count": len(new_by_key),
         "warnings": warnings,
         "diff": diff,
+        "format": fmt,
+        "added": len(diff["added"]),
+        "updated": len(writable & set(old_by_key)),
+        "removed": len(diff["removed"]),
+        "total": total,
+        "enriched": enriched,
+        "enrichment_discarded": enrichment_discarded,
     }
 
 

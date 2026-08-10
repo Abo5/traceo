@@ -4,6 +4,7 @@
  */
 import type { Role } from '../constants/roles';
 import type {
+  AiCriticality,
   EdgeCategory,
   InsightStatus,
   JobKind,
@@ -12,6 +13,7 @@ import type {
   RequirementState,
   ResultOutcome,
   RunState,
+  SpecFormat,
   TestCaseState,
 } from '../constants/states';
 
@@ -149,8 +151,30 @@ export interface ImportSpecResult {
   spec_id: string;
   version: number;
   endpoints_count: number;
-  warnings: string[];
+  warnings: unknown[];
   diff: { added: string[]; removed: string[]; changed: string[] };
+
+  // --- collection import (Postman / HAR / Insomnia) ---------------------------
+  // The SAME endpoint gained a deterministic format detector; every key below
+  // is additive — the four above keep their names and meanings.
+
+  /** What the detector decided the uploaded document is. */
+  format: SpecFormat;
+  /** Flat counters mirroring `diff` (`updated` is `diff.changed`) + the inventory size. */
+  added: number;
+  updated: number;
+  removed: number;
+  total: number;
+  /**
+   * AI enrichment counters (contract §3). Enrichment is optional and gated on
+   * the project's `automation: "auto"`; a project on "manual" — and any run
+   * where the model failed or returned nothing usable — reports 0/0 and the
+   * import still succeeds. `enrichment_discarded` counts items the validation
+   * gate refused (an unknown method+path, a renamed param, anything not in the
+   * deterministic inventory); those are NEVER persisted.
+   */
+  enriched: number;
+  enrichment_discarded: number;
 }
 
 export interface Endpoint {
@@ -167,12 +191,25 @@ export interface Endpoint {
   security: unknown[];
   tags: string[];
   excluded: boolean;
+  /** Fidelity ladder — `spec | traffic | dom | postman` (constants/states.ts). */
   source: string;
   observed_count: number;
   // FR-024 coverage fields merged in by GET /projects/{id}/endpoints
   test_count: number;
   covered_params_pct: number;
   last_outcome: ResultOutcome | null;
+
+  // --- AI enrichment (nullable, contract §3) ----------------------------------
+  // Written only by the gated enrichment step, and only ever as ANNOTATIONS:
+  // enrichment may not create, rename or delete an endpoint, nor touch a path,
+  // a param or a field name. Null on every endpoint that was never enriched.
+
+  /** One-line plain-English description. Plain text — never markup, never a locator. */
+  ai_description: string | null;
+  /** Resource group name the model proposed for this endpoint. */
+  ai_group: string | null;
+  /** high | medium | low — see AI_CRITICALITIES. */
+  ai_criticality: AiCriticality | null;
 }
 
 // --- generation (modules/generation.py) ---------------------------------------

@@ -1,12 +1,23 @@
-// Package discovery — OpenAPI/Swagger Discovery Engine (TRD §4.2) — fully
-// deterministic, NO LLM.
+// Package discovery — API Discovery Engine (TRD §4.2). The conversion of an
+// uploaded document into the endpoint inventory is fully deterministic, NO LLM;
+// the optional AI enrichment layer (collections.Enrich) only ever adds
+// descriptive ai_* metadata behind a hard validation gate.
 //
 // Imports an OpenAPI 3.x or Swagger 2.0 specification (multipart file or URL),
 // resolves internal $refs cycle-safely, and flattens every operation into an Endpoint
 // inventory row. Broken/unresolvable operations are recorded as warnings and skipped,
 // never fatal (FR-DSC-04). URL fetches are SSRF-guarded. Re-import bumps the spec
-// version and REPLACES the endpoint inventory, returning an added/removed/changed
+// version and updates the endpoint inventory, returning an added/removed/changed
 // diff. Port of backend/app/modules/discovery.py.
+//
+// The same route also accepts API COLLECTIONS — Postman v2.0/v2.1, HAR 1.2 and
+// Insomnia v4 exports — converted by the collections package (fixed contract
+// "API collection import + AI enrichment"). Detection is deterministic and the
+// OpenAPI/Swagger behaviour is unchanged. Re-imports obey the fidelity
+// precedence spec > traffic > dom > postman: a lower-fidelity import never
+// overwrites a higher-fidelity endpoint, and an import only ever removes
+// endpoints that came from its OWN source, so an OpenAPI import can win over
+// collection-derived data without deleting it.
 package discovery
 
 import (
@@ -28,7 +39,19 @@ import (
 	"traceo/internal/httpx"
 	"traceo/internal/models"
 	"traceo/internal/modules/autopilot"
+	"traceo/internal/modules/collections"
 )
+
+// sourceRank is the discovery fidelity precedence (SRS §L2): spec > traffic >
+// dom > postman. A lower-ranked import never overwrites a higher-ranked row.
+var sourceRank = map[string]int{"spec": 3, "traffic": 2, "dom": 1, "postman": 0}
+
+func rankOf(source string) int {
+	if r, present := sourceRank[source]; present {
+		return r
+	}
+	return 0
+}
 
 const (
 	maxSpecBytes = 5 * 1024 * 1024
@@ -225,13 +248,17 @@ func parseSpecBytes(raw []byte) (any, error) {
 	return normalizeYAML(out), nil
 }
 
-// validateStructure returns "openapi3" | "swagger2", or a 422 specError with errors.
+// validateStructure returns "openapi3" | "swagger2", or a 422 specError with
+// errors. Every invalid_spec error list ends with the note naming the formats
+// that ARE accepted (OpenAPI/Swagger plus the collection formats), so the
+// message is actionable — contract item 1.
 func validateStructure(spec any) (string, map[string]any, error) {
 	root, isMap := spec.(map[string]any)
 	if !isMap {
 		return "", nil, &specError{Code: "invalid_spec",
 			Message: "Not a valid API specification.",
-			Errors:  []string{"Specification root must be a mapping/object."}}
+			Errors: []string{"Specification root must be a mapping/object.",
+				collections.SupportedFormatsNote}}
 	}
 	var errs []string
 	format := ""
@@ -250,7 +277,8 @@ func validateStructure(spec any) (string, map[string]any, error) {
 	}
 	if len(errs) > 0 {
 		return "", nil, &specError{Code: "invalid_spec",
-			Message: "Not a valid API specification.", Errors: errs}
+			Message: "Not a valid API specification.",
+			Errors:  append(errs, collections.SupportedFormatsNote)}
 	}
 	return format, root, nil
 }
@@ -455,6 +483,42 @@ type operation struct {
 	ResponseSchemas map[string]any
 	Security        []any
 	Tags            []any
+	// ObservedCount is non-zero only for captured traffic (HAR): the number of
+	// requests that produced this row.
+	ObservedCount int
+}
+
+// operationsFromInventory adapts the deterministic collection inventory onto the
+// exact operation shape the OpenAPI importer produces. Every value here comes
+// from the converted inventory — nothing is invented, and nothing the converter
+// derived (the request name as operationId, the folder names as tags, the auth
+// block as security) is dropped on the way to the Endpoint row.
+func operationsFromInventory(inventory []collections.Operation) []operation {
+	out := make([]operation, 0, len(inventory))
+	for _, op := range inventory {
+		params := make([]any, 0, len(op.Parameters))
+		for _, p := range op.Parameters {
+			params = append(params, map[string]any(p))
+		}
+		responses := map[string]any{}
+		for status, schema := range op.ResponseSchemas {
+			responses[status] = schema
+		}
+		security := make([]any, 0, len(op.Security))
+		security = append(security, op.Security...)
+		tags := make([]any, 0, len(op.Tags))
+		for _, tag := range op.Tags {
+			tags = append(tags, tag)
+		}
+		out = append(out, operation{
+			Method: op.Method, Path: op.Path, OperationID: op.OperationID,
+			Summary:    op.Summary,
+			Parameters: params, RequestSchema: op.RequestSchema,
+			ResponseSchemas: responses, Security: security, Tags: tags,
+			ObservedCount: op.ObservedCount,
+		})
+	}
+	return out
 }
 
 // flatten turns every operation into an endpoint dict. A broken operation is appended
@@ -619,6 +683,9 @@ func endpointDict(e *models.Endpoint) gin.H {
 		// capture observed it — shown on the coverage map (FR-024) once the
 		// non-spec modes land (FR-021/022/023).
 		"source": e.Source, "observed_count": e.ObservedCount,
+		// Validated AI enrichment — nullable, descriptive only.
+		"ai_description": e.AIDescription, "ai_group": e.AIGroup,
+		"ai_criticality": e.AICriticality,
 	}
 }
 
@@ -626,7 +693,8 @@ func endpointDict(e *models.Endpoint) gin.H {
 
 func importAPISpec(c *gin.Context) {
 	projectID := c.Param("project_id")
-	if _, ok := httpx.ProjectScoped(c, projectID); !ok {
+	project, ok := httpx.ProjectScoped(c, projectID)
+	if !ok {
 		return
 	}
 	u := httpx.User(c)
@@ -681,12 +749,44 @@ func importAPISpec(c *gin.Context) {
 		writeSpecError(c, err)
 		return
 	}
-	format, root, err := validateStructure(spec)
-	if err != nil {
-		writeSpecError(c, err)
-		return
+
+	// Format detection (contract item 1): a collection format wins when its
+	// marker is present; otherwise the OpenAPI/Swagger path runs unchanged.
+	var (
+		format     string
+		root       map[string]any
+		operations []operation
+		warnings   []gin.H
+		inventory  []collections.Operation
+	)
+	epSource := "spec"
+	if detected := collections.Detect(spec); detected != "" {
+		format = detected
+		root, _ = spec.(map[string]any)
+		epSource = collections.SourceFor(format)
+		var collWarnings []collections.Warning
+		inventory, collWarnings = collections.Convert(format, root)
+		warnings = make([]gin.H, 0, len(collWarnings))
+		for _, w := range collWarnings {
+			warnings = append(warnings, gin.H{
+				"path": w.Path, "method": w.Method, "error": w.Error})
+		}
+		if len(inventory) == 0 {
+			errWith(c, http.StatusUnprocessableEntity, "invalid_spec",
+				"Not a valid API specification.",
+				[]string{"The collection contains no importable requests.",
+					collections.SupportedFormatsNote})
+			return
+		}
+		operations = operationsFromInventory(inventory)
+	} else {
+		format, root, err = validateStructure(spec)
+		if err != nil {
+			writeSpecError(c, err)
+			return
+		}
+		operations, warnings = flatten(root, format)
 	}
-	operations, warnings := flatten(root, format)
 
 	// swagger2 host/basePath are recorded as spec source metadata
 	if format == "swagger2" {
@@ -704,8 +804,12 @@ func importAPISpec(c *gin.Context) {
 		source = string(r[:500])
 	}
 	title := ""
-	if info, isMap := root["info"].(map[string]any); isMap {
-		title = stringOr(info["title"], "")
+	if epSource == "spec" {
+		if info, isMap := root["info"].(map[string]any); isMap {
+			title = stringOr(info["title"], "")
+		}
+	} else {
+		title = collections.Title(format, root)
 	}
 	if r := []rune(title); len(r) > 300 {
 		title = string(r[:300])
@@ -727,35 +831,6 @@ func importAPISpec(c *gin.Context) {
 		newByKey[k] = op
 	}
 
-	added := []string{}
-	removed := []string{}
-	changed := []string{}
-	for k := range newByKey {
-		if _, present := oldByKey[k]; !present {
-			added = append(added, k)
-		}
-	}
-	for k := range oldByKey {
-		if _, present := newByKey[k]; !present {
-			removed = append(removed, k)
-		}
-	}
-	for k, op := range newByKey {
-		old, present := oldByKey[k]
-		if !present {
-			continue
-		}
-		newSig := signature(op.Parameters, op.RequestSchema, op.ResponseSchemas, op.Security)
-		oldSig := signature(old.Parameters, mapOrNil(old.RequestSchema), old.ResponseSchemas, old.Security)
-		if newSig != oldSig {
-			changed = append(changed, k)
-		}
-	}
-	sort.Strings(added)
-	sort.Strings(removed)
-	sort.Strings(changed)
-	diff := gin.H{"added": added, "removed": removed, "changed": changed}
-
 	var specRow models.ApiSpec
 	found := db.DB.Where("project_id = ? AND organisation_id = ?", projectID, u.OrganisationID).
 		Order("version DESC").First(&specRow).Error == nil
@@ -773,55 +848,174 @@ func importAPISpec(c *gin.Context) {
 		db.DB.Create(&specRow)
 	}
 
-	// REPLACE the inventory: detach grounding links, drop old rows, insert fresh ones
-	if len(oldRows) > 0 {
-		oldIDs := make([]string, 0, len(oldRows))
-		for _, e := range oldRows {
-			oldIDs = append(oldIDs, e.ID)
-		}
-		db.DB.Model(&models.TestStep{}).Where("endpoint_id IN ?", oldIDs).
-			Update("endpoint_id", nil)
-		db.DB.Where("id IN ?", oldIDs).Delete(&models.Endpoint{})
-	}
-
+	// Upsert the inventory under the fidelity precedence (SRS §L2):
+	//   - an endpoint this import declares is written when the importing source
+	//     ranks >= the row's current source; a lower-fidelity import leaves the
+	//     higher-fidelity row untouched (spec beats postman);
+	//   - an endpoint this import does NOT declare is removed only when it came
+	//     from the SAME source — an OpenAPI import never deletes collection- or
+	//     traffic-derived endpoints;
+	//   - rows are updated in place, so ids, the excluded flag (FR-DSC-05) and
+	//     the validated ai_* enrichment survive a re-import.
+	added := []string{}
+	removed := []string{}
+	changed := []string{}
+	// `updated` counts the pre-existing rows THIS import re-wrote (whether or not
+	// their signature moved); `changed` is the subset whose signature actually
+	// moved and is what the diff reports. Rows a higher-fidelity source owns are
+	// skipped and count as neither.
+	updated := 0
 	for _, k := range newOrder {
 		op := newByKey[k]
-		excluded := false
-		if prior, present := oldByKey[k]; present {
-			excluded = prior.Excluded // FR-DSC-05 survives re-import
-		}
 		var reqSchema models.JSONMap
 		if op.RequestSchema != nil {
 			reqSchema = models.JSONMap(op.RequestSchema)
 		}
-		db.DB.Create(&models.Endpoint{
-			OrganisationID: u.OrganisationID, ApiSpecID: specRow.ID,
-			ProjectID: projectID, Method: op.Method, Path: op.Path,
-			OperationID: op.OperationID, Summary: op.Summary,
-			Parameters:      models.JSONList(op.Parameters),
-			RequestSchema:   reqSchema,
-			ResponseSchemas: models.JSONMap(op.ResponseSchemas),
-			Security:        models.JSONList(op.Security),
-			Tags:            models.JSONList(op.Tags),
-			Excluded:        excluded,
-		})
+		prior, present := oldByKey[k]
+		if !present {
+			db.DB.Create(&models.Endpoint{
+				OrganisationID: u.OrganisationID, ApiSpecID: specRow.ID,
+				ProjectID: projectID, Method: op.Method, Path: op.Path,
+				OperationID: op.OperationID, Summary: op.Summary,
+				Parameters:      models.JSONList(op.Parameters),
+				RequestSchema:   reqSchema,
+				ResponseSchemas: models.JSONMap(op.ResponseSchemas),
+				Security:        models.JSONList(op.Security),
+				Tags:            models.JSONList(op.Tags),
+				Excluded:        false,
+				Source:          epSource,
+				ObservedCount:   op.ObservedCount,
+			})
+			added = append(added, k)
+			continue
+		}
+		if rankOf(epSource) < rankOf(prior.Source) {
+			continue // lower fidelity never overwrites higher fidelity
+		}
+		updated++
+		newSig := signature(op.Parameters, op.RequestSchema, op.ResponseSchemas, op.Security)
+		oldSig := signature(prior.Parameters, mapOrNil(prior.RequestSchema),
+			prior.ResponseSchemas, prior.Security)
+		prior.ApiSpecID = specRow.ID
+		prior.OperationID = op.OperationID
+		prior.Summary = op.Summary
+		prior.Parameters = models.JSONList(op.Parameters)
+		prior.RequestSchema = reqSchema
+		prior.ResponseSchemas = models.JSONMap(op.ResponseSchemas)
+		prior.Security = models.JSONList(op.Security)
+		prior.Tags = models.JSONList(op.Tags)
+		prior.Source = epSource
+		if op.ObservedCount > 0 {
+			// Traffic imports state the observation count; re-importing the same
+			// capture is idempotent. A spec/collection import (count 0) leaves a
+			// previously observed count alone.
+			prior.ObservedCount = op.ObservedCount
+		}
+		db.DB.Save(prior)
+		if newSig != oldSig {
+			changed = append(changed, k)
+		}
+	}
+	staleIDs := []string{}
+	for k, prior := range oldByKey {
+		if _, present := newByKey[k]; present {
+			continue
+		}
+		if prior.Source != epSource {
+			continue // another discovery mode owns this row — never delete it
+		}
+		staleIDs = append(staleIDs, prior.ID)
+		removed = append(removed, k)
+	}
+	if len(staleIDs) > 0 {
+		db.DB.Model(&models.TestStep{}).Where("endpoint_id IN ?", staleIDs).
+			Update("endpoint_id", nil)
+		db.DB.Where("id IN ?", staleIDs).Delete(&models.Endpoint{})
+	}
+	sort.Strings(added)
+	sort.Strings(removed)
+	sort.Strings(changed)
+	diff := gin.H{"added": added, "removed": removed, "changed": changed}
+
+	// AI enrichment (contract item 3) — collection imports only, automation
+	// "auto" only, gated by collections.Enrich. It never fails the import.
+	enriched, enrichmentDiscarded := 0, 0
+	if len(inventory) > 0 && project.Automation == "auto" {
+		enriched, enrichmentDiscarded = applyEnrichment(projectID, u.OrganisationID, inventory)
 	}
 
 	httpx.Audit(u.OrganisationID, &u.ID, "spec.imported", "api_spec", specRow.ID,
 		models.JSONMap{"source": source, "format": format, "version": specRow.Version,
-			"endpoints": len(newByKey), "warnings": len(warnings)})
+			"endpoints": len(newByKey), "warnings": len(warnings),
+			"enriched": enriched, "enrichment_discarded": enrichmentDiscarded})
 
 	// Autopilot generation trigger (automation contract 4b) — auto mode only;
 	// enqueues asynchronously, the import response is unchanged.
 	autopilot.AfterSpecImport(projectID, u.OrganisationID, u.ID)
 
+	// `total` is the PROJECT inventory after the fidelity rules ran, which is not
+	// the same as this document's operation count: a spec import that supersedes
+	// part of a collection leaves the untouched collection rows in place.
+	var total int64
+	db.DB.Model(&models.Endpoint{}).
+		Where("project_id = ? AND organisation_id = ?", projectID, u.OrganisationID).
+		Count(&total)
+
 	c.JSON(http.StatusCreated, gin.H{
-		"spec_id":         specRow.ID,
-		"version":         specRow.Version,
+		"spec_id": specRow.ID,
+		"version": specRow.Version,
+		// endpoints_count keeps its original meaning: operations found in THIS
+		// document. `total` is the project inventory after the import.
 		"endpoints_count": len(newByKey),
 		"warnings":        warnings,
 		"diff":            diff,
+		// contract item 4 — detected format + import/enrichment counters
+		"format":               format,
+		"added":                len(added),
+		"updated":              updated,
+		"removed":              len(removed),
+		"total":                int(total),
+		"enriched":             enriched,
+		"enrichment_discarded": enrichmentDiscarded,
 	})
+}
+
+// applyEnrichment runs the validated enrichment layer over the DETERMINISTIC
+// inventory and writes the surviving items onto the matching endpoint rows.
+// Matching is by exact method+path, so an item the gate accepted can still only
+// ever land on an endpoint the deterministic import produced. Returns the
+// (enriched, discarded) counters for the job result.
+func applyEnrichment(projectID, orgID string, inventory []collections.Operation) (int, int) {
+	result := collections.Enrich(inventory)
+	if len(result.ByKey) == 0 {
+		return 0, result.Discarded
+	}
+	var rows []models.Endpoint
+	db.DB.Where("project_id = ? AND organisation_id = ?", projectID, orgID).Find(&rows)
+	applied := 0
+	for i := range rows {
+		row := &rows[i]
+		enrichment, present := result.ByKey[opKey(row.Method, row.Path)]
+		if !present {
+			continue
+		}
+		updates := map[string]any{}
+		if enrichment.Description != "" {
+			updates["ai_description"] = enrichment.Description
+		}
+		if enrichment.Group != "" {
+			updates["ai_group"] = enrichment.Group
+		}
+		if enrichment.Criticality != "" {
+			updates["ai_criticality"] = enrichment.Criticality
+		}
+		if len(updates) == 0 {
+			continue
+		}
+		db.DB.Model(&models.Endpoint{}).Where("id = ?", row.ID).Updates(updates)
+		applied++
+	}
+	return applied, result.Discarded
 }
 
 func mapOrNil(m models.JSONMap) any {

@@ -91,6 +91,8 @@ func (m *mockProvider) CompleteJSON(promptID, prompt string, _ map[string]any) (
 		data = m.extract(prompt)
 	case strings.HasPrefix(promptID, "map_requirement"):
 		data = m.mapReq(prompt)
+	case strings.HasPrefix(promptID, "enrich_endpoints"):
+		data = m.enrichEndpoints(prompt)
 	default:
 		data = map[string]any{}
 	}
@@ -212,6 +214,103 @@ func (m *mockProvider) mapReq(prompt string) map[string]any {
 		}
 	}
 	return map[string]any{"selected": selected, "confidence": conf}
+}
+
+// enrichEndpoints — deterministic collection-import enrichment (API collection
+// contract item 3). Marker: "INVENTORY:\n" + json({endpoints:[{method,path,...}]}).
+// It describes ONLY the endpoints it was given, copying method and path verbatim,
+// so the whole import flow runs offline and hermetically (NFR-D1). The rules are
+// pure functions of method+path:
+//
+//	description — "<verb> the <resource> resource via <METHOD> <path>."
+//	group       — the first literal (non-templated) path segment, spelling kept
+//	criticality — DELETE/PUT high, POST/PATCH medium, reads low
+//
+// These three rules are byte-identical to mock.MOCK_VERBS / MOCK_CRITICALITY and
+// _enrich() in the Python backend: the same file must produce the same
+// annotations on both engines (contract item 5).
+//
+// Existing mock behaviours are untouched; this is a new promptID branch only.
+func (m *mockProvider) enrichEndpoints(prompt string) map[string]any {
+	i := strings.Index(prompt, "INVENTORY:\n")
+	if i < 0 {
+		return map[string]any{"endpoints": []any{}}
+	}
+	var payload struct {
+		Endpoints []struct {
+			Method string `json:"method"`
+			Path   string `json:"path"`
+		} `json:"endpoints"`
+	}
+	raw := strings.TrimSpace(cutUntrusted(prompt[i+len("INVENTORY:\n"):]))
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return map[string]any{"endpoints": []any{}}
+	}
+	out := make([]any, 0, len(payload.Endpoints))
+	for _, ep := range payload.Endpoints {
+		method := strings.ToUpper(strings.TrimSpace(ep.Method))
+		path := strings.TrimSpace(ep.Path)
+		if method == "" || path == "" {
+			continue
+		}
+		out = append(out, map[string]any{
+			"method": method, "path": path,
+			"description": mockDescription(method, path),
+			"group":       mockGroup(path),
+			"criticality": mockCriticality(method),
+		})
+	}
+	return map[string]any{"endpoints": out}
+}
+
+var mockVerbs = map[string]string{
+	"GET": "Read", "POST": "Create", "PUT": "Replace", "PATCH": "Update",
+	"DELETE": "Delete", "HEAD": "Check", "OPTIONS": "Describe",
+}
+
+// literalSegments returns the path segments that are not templated ("{id}").
+// Segments keep their original spelling: "freeBusy" is the resource's name, and
+// lowercasing it would make the Go and Python mocks disagree.
+func literalSegments(path string) []string {
+	out := []string{}
+	for _, seg := range strings.Split(path, "/") {
+		if seg == "" || strings.HasPrefix(seg, "{") {
+			continue
+		}
+		out = append(out, seg)
+	}
+	return out
+}
+
+func mockDescription(method, path string) string {
+	verb := mockVerbs[method]
+	if verb == "" {
+		verb = "Call"
+	}
+	resource := "root"
+	if segs := literalSegments(path); len(segs) > 0 {
+		resource = segs[len(segs)-1]
+	}
+	return verb + " the " + resource + " resource via " + method + " " + path + "."
+}
+
+func mockGroup(path string) string {
+	if segs := literalSegments(path); len(segs) > 0 {
+		return segs[0]
+	}
+	return "root"
+}
+
+// mockCriticality mirrors mock.MOCK_CRITICALITY in the Python backend exactly:
+// the two methods that destroy or wholly replace a resource are "high".
+func mockCriticality(method string) string {
+	switch method {
+	case "DELETE", "PUT":
+		return "high"
+	case "POST", "PATCH":
+		return "medium"
+	}
+	return "low"
 }
 
 // ---------- Anthropic (structured output over plain HTTP; one retry) ----------

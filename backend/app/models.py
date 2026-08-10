@@ -131,6 +131,14 @@ class Endpoint(TimestampMixin, Base):
     # How many times traffic capture observed this endpoint (FR-021 AC-3); stays 0
     # for endpoints that were declared rather than observed.
     observed_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Optional AI annotations produced AFTER the deterministic import (see
+    # modules/enrichment.py). They are commentary only: every value was matched
+    # back to a deterministically-discovered method+path before being stored, and
+    # nothing here may ever influence method, path, parameters or schemas. NULL
+    # whenever enrichment did not run, failed, or was discarded by the gate.
+    ai_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_group: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    ai_criticality: Mapped[str | None] = mapped_column(String(10), nullable=True)  # high|medium|low
 
 
 # Legal TestCase.technique values. "localisation" is the FR-034 Unicode

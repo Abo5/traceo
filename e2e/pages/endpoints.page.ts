@@ -1,14 +1,20 @@
 /**
  * /projects/[id]/endpoints — frontend/app/projects/[id]/endpoints/page.tsx.
- * Spec import is synchronous (POST /projects/{id}/api-specs — no job): the
- * page refreshes its inventory right after the call, so completion is observed
- * on the inventory rows, not on a job surface. The inventory table is composed
+ * Import is synchronous (POST /projects/{id}/api-specs — no job): the page
+ * refreshes its inventory right after the call, so completion is observed on
+ * the inventory rows, not on a job surface. The inventory table is composed
  * from the shared DataTable component (§4). Locators private, data-testid-first
  * (§5, §7); no assertions here.
+ *
+ * The same import card takes an OpenAPI/Swagger spec AND a Postman collection,
+ * a HAR capture or an Insomnia export — the server detects the format and
+ * echoes it, so the page gained a format badge, the two enrichment counters and
+ * the three nullable AI columns. All of them are read-only surfaces here.
  */
 import type { Locator, Page } from '@playwright/test';
 import { DataTable } from '../components/data-table.component';
 import { routes } from '../constants/routes';
+import type { SpecFormat } from '../constants/states';
 
 export class EndpointsPage {
   constructor(private readonly page: Page) {}
@@ -46,9 +52,67 @@ export class EndpointsPage {
     return this.page.getByTestId('endpoints-import-card');
   }
 
+  /** Every inventory row currently rendered. */
+  get rows(): Locator {
+    return this.table.rowsByTestId('endpoints-row');
+  }
+
   /** Inventory row whose text contains `text` (METHOD + path — entity data). */
   rowFor(text: string): Locator {
     return this.table.rowByText(text);
+  }
+
+  /** The detected-format badge of the last import (any format). */
+  get formatBadge(): Locator {
+    return this.page.getByTestId('endpoints-import-format-badge');
+  }
+
+  /**
+   * The format badge, carrying the given detected format.
+   *
+   * The badge PRINTS a human label ("Postman Collection v2") and carries the
+   * vocabulary value on `data-format` (mirrored on `data-state`). The assertion
+   * therefore reads the attribute, never the label — copy is product wording
+   * and changes freely, a format id does not (§5, §6).
+   */
+  formatBadgeFor(format: SpecFormat): Locator {
+    return this.page.locator(
+      `[data-testid="endpoints-import-format-badge"][data-format="${format}"]`,
+    );
+  }
+
+  /** AI enrichment counters of the last import — rendered only when reported. */
+  get enrichedBadge(): Locator {
+    return this.page.getByTestId('endpoints-import-enriched-badge');
+  }
+
+  get enrichmentDiscardedBadge(): Locator {
+    return this.page.getByTestId('endpoints-import-enrichment-discarded-badge');
+  }
+
+  // --- refusal surface (422 invalid_spec) --------------------------------------
+
+  get importError(): Locator {
+    return this.page.getByTestId('endpoints-import-error');
+  }
+
+  /** The `errors` list of the refusal — the part that names the supported formats. */
+  get importErrorItems(): Locator {
+    return this.page.getByTestId('endpoints-import-error-item');
+  }
+
+  // --- AI enrichment columns (nullable — rendered only where present) ----------
+
+  get aiGroupCells(): Locator {
+    return this.page.getByTestId('endpoints-row-ai-group');
+  }
+
+  get aiCriticalityCells(): Locator {
+    return this.page.getByTestId('endpoints-row-ai-criticality');
+  }
+
+  get aiDescriptionCells(): Locator {
+    return this.page.getByTestId('endpoints-row-ai-description');
   }
 
   // --- actions ----------------------------------------------------------------
@@ -58,16 +122,19 @@ export class EndpointsPage {
   }
 
   /**
-   * Import an OpenAPI/Swagger spec from a local file: switch to the file tab
-   * and feed the hidden file input directly (the visible button opens the OS
-   * chooser — not automatable). Callers observe completion on the inventory.
+   * Import an API document from a local file: switch to the file tab and feed
+   * the hidden file input directly (the visible button opens the OS chooser —
+   * not automatable). Callers observe completion on the inventory.
+   *
+   * Format-agnostic: an OpenAPI spec, a Postman collection, a HAR capture and
+   * an Insomnia export all travel through this one control.
    */
   async importSpecFromFile(filePath: string): Promise<void> {
     await this.fileTabPill.click();
     await this.fileInput.setInputFiles(filePath);
   }
 
-  /** Import a spec by URL (the synchronous URL flavour of the same endpoint). */
+  /** Import by URL (the synchronous URL flavour of the same endpoint). */
   async importSpecFromUrl(url: string): Promise<void> {
     await this.urlTabPill.click();
     await this.urlInput.fill(url);

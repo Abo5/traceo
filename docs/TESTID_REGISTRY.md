@@ -224,17 +224,24 @@ Note: the components in `frontend/components/ui.tsx` forward a `testId` prop to 
 |---|---|---|
 | `endpoints-page-root` | container | Endpoints page root |
 | `endpoints-page-header` | PageHeader | Page title + actions |
-| `endpoints-import-card` | Card | Spec import section |
+| `endpoints-import-card` | Card | API document import section |
+| `endpoints-import-accepts-hint` | text | Which formats the control accepts |
 | `endpoints-import-url-pill` | Pill | Import mode: from URL |
 | `endpoints-import-file-pill` | Pill | Import mode: from file |
 | `endpoints-import-url-input` | Input | Spec URL |
 | `endpoints-import-submit-button` | Button | Import from URL (synchronous — no job) |
-| `endpoints-import-file-input` | file input | Spec file (json/yaml) |
-| `endpoints-import-file-button` | Button | Pick a spec file |
+| `endpoints-import-file-input` | file input | API document — OpenAPI/Swagger, Postman collection, HAR or Insomnia export |
+| `endpoints-import-file-button` | Button | Pick a file to import |
+| `endpoints-import-error` | container | Import refusal (e.g. `422 invalid_spec`) |
+| `endpoints-import-error-list` | list | The refusal's `errors` list |
+| `endpoints-import-error-item` | item (repeated) | One reason — names a format that *would* be accepted |
+| `endpoints-import-format-badge` | Badge | Detected import format — `data-format` (see below) |
 | `endpoints-import-added-badge` | Badge | Diff: endpoints added |
 | `endpoints-import-updated-badge` | Badge | Diff: endpoints changed |
 | `endpoints-import-removed-badge` | Badge | Diff: endpoints removed |
 | `endpoints-import-total-badge` | Badge | Total endpoints after import |
+| `endpoints-import-enriched-badge` | Badge | AI enrichment: endpoints annotated |
+| `endpoints-import-enrichment-discarded-badge` | Badge | AI enrichment: items the validation gate refused |
 | `endpoints-inventory-card` | Card | Endpoint inventory section |
 | `endpoints-inventory-retry-button` | Button | Reload after a load error |
 | `endpoints-empty-state` | Empty | No endpoints discovered |
@@ -242,6 +249,14 @@ Note: the components in `frontend/components/ui.tsx` forward a `testId` prop to 
 | `endpoints-row` | row (repeated) | One endpoint — identified by METHOD + path |
 | `endpoints-row-outcome-dot` | StatusDot | Last result outcome indicator |
 | `endpoints-row-include-toggle` | toggle | Include/exclude from generation (PATCH {excluded}) |
+| `endpoints-row-ai-description` | cell | `ai_description` — one-line plain-English description (nullable) |
+| `endpoints-row-ai-group` | cell | `ai_group` — resource group name (nullable) |
+| `endpoints-row-ai-criticality` | wrapper | `ai_criticality` — carries `data-state="high\|medium\|low"` (nullable) |
+| `endpoints-row-ai-criticality-badge` | Badge | The rendered criticality badge inside that wrapper |
+
+**Import-format badge.** `endpoints-import-format-badge` shows the `format` key of the import response — a closed vocabulary shared by both backends: `openapi3 | swagger2 | postman2 | har | insomnia4`. The badge PRINTS a human label ("Postman Collection v2") and carries the vocabulary value on **`data-format`** (mirrored on `data-state`), so it is asserted on the attribute and never on the label — the `data-state` convention of this document applied to a non-state vocabulary. `e2e/pages/endpoints.page.ts` (`formatBadgeFor`) reads `data-format` only, which leaves the wording free to change.
+
+**AI-enrichment cells.** The three `endpoints-row-ai-*` ids are rendered **only where the corresponding column is non-null** — enrichment is optional (gated on the project's `automation: "auto"`) and an import always succeeds with zero enrichment. Absence of these ids is therefore a legitimate state, not a defect, and specs assert the count against the API rather than assuming a fixed number of them. `ai_description` and `ai_group` are stored and rendered as **plain text**: enrichment may never create, rename or delete an endpoint, nor alter a path, a parameter or a field name.
 
 ## /projects/[id]/generate — `frontend/app/projects/[id]/generate/page.tsx`
 

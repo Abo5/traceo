@@ -181,11 +181,20 @@ export function Progress({
   pct,
   tone,
   testId,
+  label,
 }: {
   pct: number;
   tone?: string;
   /** Rendered as data-testid on the root .progress div (role=progressbar). */
   testId?: string;
+  /**
+   * Accessible name. A role="progressbar" with no name is an axe violation
+   * (aria-progressbar-name) and, more to the point, a screen reader announces
+   * "progress bar, 40%" with no idea what is 40% done. Callers in a repeated
+   * context (a table row) should pass what the bar measures AND which row it
+   * belongs to; the generic fallback keeps a bar from ever being nameless.
+   */
+  label?: string;
 }) {
   const clamped = Math.max(0, Math.min(100, Number.isFinite(pct) ? pct : 0));
   const bg = tone
@@ -195,9 +204,11 @@ export function Progress({
     <div
       className="progress"
       role="progressbar"
+      aria-label={label ?? "Progress"}
       aria-valuenow={clamped}
       aria-valuemin={0}
       aria-valuemax={100}
+      aria-valuetext={`${clamped}%`}
       data-testid={testId}
     >
       <div className="progress-fill" style={{ width: `${clamped}%`, background: bg }} />

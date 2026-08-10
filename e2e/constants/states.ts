@@ -70,6 +70,32 @@ export type EdgeCategory = (typeof EDGE_CATEGORIES)[number];
 export const INSIGHT_STATUSES = ['covered', 'gap', 'n_a'] as const;
 export type InsightStatus = (typeof INSIGHT_STATUSES)[number];
 
+/**
+ * Detected import format of `POST /projects/{id}/api-specs` — the deterministic
+ * format detector's closed vocabulary, echoed on the import response as
+ * `format` and rendered by the endpoints page. `openapi3`/`swagger2` predate
+ * the collection importer; the three others were added with it.
+ */
+export const SPEC_FORMATS = ['openapi3', 'swagger2', 'postman2', 'har', 'insomnia4'] as const;
+export type SpecFormat = (typeof SPEC_FORMATS)[number];
+
+/**
+ * Endpoint.source — the fidelity ladder of the inventory, highest first
+ * (`spec > traffic > dom > postman`): a later, higher-fidelity import wins over
+ * collection-derived data for the same method+path and never deletes it.
+ * Postman/Insomnia collections land as `postman`, HAR captures as `traffic`.
+ */
+export const ENDPOINT_SOURCES = ['spec', 'traffic', 'dom', 'postman'] as const;
+export type EndpointSource = (typeof ENDPOINT_SOURCES)[number];
+
+/**
+ * Endpoint.ai_criticality — the ONLY enumerated field the optional AI
+ * enrichment layer may write. Anything outside this list must have been
+ * discarded by the validation gate before it reached the row.
+ */
+export const AI_CRITICALITIES = ['high', 'medium', 'low'] as const;
+export type AiCriticality = (typeof AI_CRITICALITIES)[number];
+
 /** TestResult.outcome */
 export const RESULT_OUTCOMES = ['passed', 'failed', 'errored'] as const;
 export type ResultOutcome = (typeof RESULT_OUTCOMES)[number];

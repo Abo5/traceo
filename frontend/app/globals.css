@@ -51,6 +51,15 @@
   --info: #4d9dff;
   --info-subtle: rgba(77, 157, 255, 0.16);
 
+  /* Text-on-subtle variants. The semantic colours above are tuned for fills,
+     dots and borders; as 11px text on their own 16%-opacity background they
+     land just under WCAG AA (4.5:1) — #ff5c72 reads 4.27:1 and #4d9dff 4.44:1.
+     These lightened pairs clear 5:1 and are used ONLY for text. */
+  --error-text: #ff7c8e;
+  --info-text: #6fb0ff;
+  /* Violet marks AI-suggested content. #9b6bff is 3.85:1 on its own tint. */
+  --c-violet-text: #c3a3ff;
+
   /* gradients */
   --grad-hero: linear-gradient(135deg, #ff8a22 0%, #f85ec2 52%, #9b6bff 100%);
   --grad-warm: linear-gradient(135deg, #ff8a22, #ff5c72);
@@ -523,13 +532,13 @@ button {
 
 .badge-error {
   background: var(--error-subtle);
-  color: var(--error);
+  color: var(--error-text);
   border-color: rgba(255, 92, 114, 0.3);
 }
 
 .badge-info {
   background: var(--info-subtle);
-  color: var(--info);
+  color: var(--info-text);
   border-color: rgba(77, 157, 255, 0.3);
 }
 

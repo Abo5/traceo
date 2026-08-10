@@ -304,7 +304,7 @@ Sources, in order of preference for *this* project:
    POST /v1/test-cases/bulk                      → approve what needs approving
    POST /v1/projects/{id}/runs       (202)       → against the demo SUT :9000
    ```
-2. **Static seeds.** The requirements and OpenAPI samples live in `e2e/test-data/` alongside their counterparts `demo/sample_requirements_en.md` and `demo/sample_openapi.yaml` — reference data, never mutated by a test.
+2. **Static seeds.** The requirements and OpenAPI samples live in `e2e/test-data/` alongside their counterparts `demo/sample_requirements_en.md` and `demo/sample_openapi.yaml` — reference data, never mutated by a test. A third seed joined them for the collection importer: `calendar-api.postman_collection.json`, a **real** 300KB Postman v2.1 collection (37 requests, `:param` segments, `{{baseUrl}}`/`{{calendarId}}` variables, 35 distinct query params, 19 raw bodies, no auth block). It is deliberately *not* a hand-written minimal fixture — the defect it exists to prevent was a real upload being refused, and a synthetic collection would not have reproduced it (see the collection-import addendum). A fourth, tiny seed accompanies it: `not-an-api-document.json`, valid JSON that is none of the five supported formats — the input that isolates the detector's `invalid_spec` refusal from the earlier `parse_error` one.
 3. **Dynamic (faker).** Only for field values that need uniqueness/validity, composed with creation over the API.
 4. **Deterministic LLM.** `TRACEO_LLM_PROVIDER=mock` always in E2E — generation is deterministic and network-free. (Warning from `backend/API_CONTRACT.md`: MockProvider's inferences depend on specific prompt markers — changing the contract requires updating the samples.)
 5. **No DB seeding and no mocking of external services.** There is nothing to mock: Jira/Xray are file exports, and webhooks are tested against a local receiver.
@@ -838,3 +838,58 @@ The sixth engine differs from the generation engine in two ways that the whole c
 Arrangement is API-side as usual (§9): the `project` fixture with `automation:"manual"`, then upload and confirm the requirements document and import the OpenAPI sample — the same reference seeds the pipeline fixtures use, so the inventory is real, not synthetic. No mock-specific seam is needed: the engine never calls a model.
 
 **A note on the `exotic_input` category:** its builders probe Unicode handling. They used to send Arabic/RTL payloads; with the English-only pivot they send a general non-ASCII mix instead — emoji, CJK, accented Latin, zero-width characters and NFC-vs-NFD pairs — and the classifier's evidence rule became "any non-ASCII code point" rather than "Arabic script". Unicode coverage is unchanged; the specs assert through the taxonomy ids and the grounding oracle, so they are unaffected by which code points the builders choose.
+
+---
+
+## Addendum — API collection import (Postman / HAR / Insomnia) and its grounding oracle
+
+The discovery engine used to accept OpenAPI 3.x and Swagger 2.0 only; a real Postman collection was answered with `422 invalid_spec`. The importer now **detects the format deterministically** on the same endpoint (`POST /v1/projects/{id}/api-specs`) and converts Postman v2.x, HAR 1.2 and Insomnia v4 into the one internal endpoint inventory, with an optional, gated AI enrichment layer on top. This is what that added to the E2E layer.
+
+### Lane composition — what changed
+
+**One new spec file, no new lane and no new tag.** `e2e/tests/collections.spec.ts` is tagged `@critical @regression`, matching `insight.spec.ts` and `autopilot.spec.ts`: it is a critical-path capability, and it is heavy (a 300KB upload, a 37-endpoint conversion, a generation job and a UI import), so the existing `--grep-invert "@regression"` keeps it out of the PR lane and the ungrepped main/nightly run picks it up. The negative case inside it additionally carries `@negative`, exactly as the insight spec's refusal case does. **The lane greps in `.github/workflows/ci.yml` are unchanged** — the tag choice, not a workflow edit, is what places the spec.
+
+The one lane that *did* change is **`@a11y`**: `tests/a11y.spec.ts` gained a scan of the endpoints page **with an imported inventory**. The section loop scans every project page empty, which is the only state an isolated project gives them — but the inventory table, the format badge and the AI-enrichment columns do not exist in the empty state, so they were unreachable by the gate. The new scan reuses the **existing `project:endpoints` baseline key** rather than introducing a second one: it is the same page, the baseline entry is empty, and one shared key means neither state can accrue new debt silently. `a11y-baseline.json` is unchanged.
+
+### The oracle problem, and how it is solved
+
+Every other grounding assertion in this suite uses the project's **own discovered inventory** as the oracle. That is exactly what cannot be done here: the inventory *is* the thing under test. Asserting the import against the import is circular.
+
+So `e2e/helpers/postman-collection.ts` re-derives the inventory **from the fixture, in the test process**, by walking the collection's item tree — mirroring only the conversion rules the assertions depend on (`:param` → `{param}`, `{{var}}` resolution, base-URL stripping, `url.query`, raw-JSON top-level fields, `method+path` deduplication). The oracle is therefore the *user's document*, and the adversarial assertion is a plain **set diff in both directions**: nothing imported that the file does not declare (no fabrication), nothing declared that the import dropped (no silent loss). Controls prove the oracle is falsifiable — a fabricated key must not match, and a real path with the wrong method must not match.
+
+Two deliberate asymmetries in that helper, both documented in it:
+
+- **`serverRelative(path, basePath)`.** The collection's base URL is `https://www.googleapis.com/calendar/v3` — an origin *plus a path*. Whether `/calendar/v3` belongs to the server or to the path is a spec-level judgement (the OpenAPI importer keeps `paths` verbatim and records the server separately), so the normaliser accepts both renderings and **nothing else**: it removes that one known prefix when present and touches no other character. It is not a fuzzy matcher — no templated segment is stripped, no case folded — so a fabricated path can never normalise into a real one.
+- **Disabled query params are kept in the oracle.** The oracle's job is to *bound what the importer may produce*, so it must be a superset of what the file declares. Assertions about params the importer must **keep** name those params explicitly instead of comparing whole sets.
+
+The fixture's own numbers are asserted first, in a separate test: swap the file and that test fails loudly instead of the suite silently weakening. It also pins the one number the brief and the file disagree on — 19 requests carry a `raw` body, but four of those bodies are the literal JSON `null`, so only 15 have fields an inferred schema can be built from.
+
+### What `collections.spec.ts` proves
+
+| What is proven | How |
+|---|---|
+| Detection is deterministic, on the existing endpoint | `result.format == "postman2"`, and `format` is a member of `SPEC_FORMATS` — the same closed vocabulary both backends serve |
+| Conversion is faithful | 37 requests ⇒ 37 endpoints; flat counters (`added`/`updated`/`removed`/`total`) agree with the legacy `diff` lists; every row's `source` is `postman` |
+| Path templating | Four known `:param` paths asserted by name, then a blanket guard over every path: no `:`, no unresolved `{{`, no `://`, always rooted |
+| Params come from the right place | A query-heavy request keeps `timeMin`/`timeMax`/`singleEvents`/… ; **every** recorded query param is one the file declares (the converter may drop, never add); `calendarId` is a **path** param, not folded into the query |
+| Body inference invents nothing | `POST /freeBusy` yields a schema whose top-level fields are exactly the body's own — asserted in **both** directions |
+| **The adversarial grounding assertion** | Set diff of imported vs. declared `METHOD /path`, both ways, plus falsifiability controls |
+| The gate still holds downstream | Cases generated from the collection-derived inventory are fetched in detail and every step's `METHOD /path` must be in it; `endpoint_id` must belong to the project. Non-vacuity is explicit: if no case reached a step, the run must have **discarded** something — a silent no-op fails |
+| Enrichment is annotation-only | **A controlled experiment.** The same file is imported into a `manual` project (deterministic control) and an `auto` project (enriched subject); the two inventories must be **identical by method+path**, and the query params and body fields of sampled endpoints must be unchanged. The control carries no annotations at all, which is what makes the comparison mean something |
+| Enrichment counters are a real oracle | Because the mock provider is deterministic and mandated in E2E (§8), these are equalities, not shrugs: the auto project reports `enriched == 37` and `enrichment_discarded == 0`, the manual project reports `0`/`0`, and the counter must equal the number of rows that actually carry an annotation. What is *stored* is separately constrained — `ai_criticality ∈ {high, medium, low}`, `ai_description` non-empty plain text with no markup |
+| Fidelity precedence `spec > traffic > dom > postman` | Import the collection, then the OpenAPI sample (disjoint paths by design): spec-sourced rows appear, all 37 collection-sourced rows survive, and the inventory is exactly the union — nothing merged away, nothing duplicated |
+| Well-formed, actionable refusal | `test-data/not-an-api-document.json` ⇒ `422 invalid_spec` via `expectApiError` (on `code`, not text), and its `errors` list must **name** the supported formats. The fixture is valid JSON on purpose: a malformed file is refused earlier as `parse_error`, a different contract, so only a parseable non-document isolates the detector's own refusal |
+| The UI carries it | qa_lead first uploads the unsupported document and sees the refusal *with its errors list* on screen, then imports the collection — same control, no format picker. The format badge is asserted on `data-format`, the table holds 37 rows, and rows are addressed by templated path (entity data, never copy) |
+| The AI columns are data-driven | The UI test runs on an **`auto`** project — the columns cannot be observed on a page that was never given anything to render. Their counts are asserted against the API's own null/non-null tallies rather than a hard-coded number, and criticality is read from `data-state`, never from the printed word |
+
+### Layer changes
+
+- **`api/types.ts`** — `ImportSpecResult` gained `format`, the flat counters `added`/`updated`/`removed`/`total`, and `enriched`/`enrichment_discarded`; the four original keys keep their names and meanings. `Endpoint` gained the three nullable annotations `ai_description`, `ai_group`, `ai_criticality`.
+- **`constants/states.ts`** — three vocabularies copied verbatim, as usual: `SPEC_FORMATS`, `ENDPOINT_SOURCES` (the fidelity ladder, highest first) and `AI_CRITICALITIES`.
+- **`api/discovery.repository.ts`** — no new method: one document endpoint, one repository call. It gained pure read helpers instead (`endpointKey`, `inventoryKeys`, `queryParamNames`, `requestBodyFields`, `enrichedEndpoints`), following the `createdCount` precedent of `insight.repository.ts` — tolerance and shape-reading live in the repository, not scattered across assertions.
+- **`api/errors.ts` + `api/http.ts`** — `ApiError` now preserves the response's `detail` object verbatim (`details`, plus an `errors: string[]` accessor). This is what lets the negative case assert that the refusal is *actionable* — that it names the supported formats — while still asserting `code` first, as §11 requires. Existing negative specs are unaffected: the new constructor argument is optional.
+- **`pages/endpoints.page.ts`** — read-only surfaces for the format badge, the two enrichment counters and the three AI columns. `formatBadgeFor(format)` accepts the value either as `data-format` or as the badge's own text; the reasoning is in `docs/TESTID_REGISTRY.md`.
+
+### Why this spec is heavy on purpose
+
+The suite's other specs use small, curated seeds. This one uses a **real 300KB export from a real API** because the defect it prevents was precisely "works on the fixture, fails on the user's file": deep folder nesting, `:param` segments, variables in the host, 126 disabled query entries, saved response examples, and four bodies that are the literal string `null`. A minimal collection reproduces none of that. The cost is a slow test, which is why it lives in the `@regression` lane and not in the PR fast lane.

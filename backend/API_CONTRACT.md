@@ -84,7 +84,32 @@ from ..llm import get_provider               # get_provider().complete_json(prom
   request_schema, response_schemas keyed by status, security, tags. Unresolvable operation -> record in
   response `warnings`, skip, don't fail import (FR-DSC-04). Structural validation errors -> 422 with details.
   SSRF guard on URL fetch: block private/link-local/metadata IPs, https/http only, max 5MB, 10s timeout.
+  SAME route also accepts collection formats, detected deterministically from the parsed document
+  (modules/collections.py) and converted — no LLM — into the identical inventory:
+    * postman2  — info.schema contains "getpostman.com/json/collection/v2"        -> source "postman"
+    * har       — top-level "log" object with "entries"                           -> source "traffic"
+    * insomnia4 — {"_type":"export", "resources":[...]}                           -> source "postman"
+  Conversion rules: ":param"/"{{var}}" segments -> "{param}"; HAR/Insomnia concrete ids (all-digits,
+  UUID, 24-hex ObjectId) -> "{id}"/"{id2}"; leading base-url variable or origin stripped (paths stay
+  server-relative); query params from url.query/queryString with typed examples in constraints.example;
+  headers captured as location "header" (transport headers dropped); JSON bodies -> inferred JSON Schema
+  (types from values, recursed, nothing invented), non-JSON bodies -> {"x-media-type", field names};
+  observed status codes -> response_schemas; identical method+path deduplicated with params/fields merged.
+  Unsupported document -> 422 invalid_spec whose `errors` names every supported format.
+  Re-import obeys the fidelity order spec > traffic > dom > postman: an incoming operation is written only
+  when its mode ranks >= the existing row's, and rows this document does not mention are deleted only when
+  they came from the SAME mode — a spec import never deletes collection-discovered endpoints.
+  Response: {spec_id, version, endpoints_count, warnings, diff{added,removed,changed},
+             format, added, updated, removed, total, enriched, enrichment_discarded}.
+- AI ENRICHMENT (modules/enrichment.py) — collection imports only, and only when project.automation="auto".
+  Runs inside the same import, AFTER the deterministic inventory exists. The model receives only the derived
+  inventory (method, path, param names, body field names — never raw file text) and returns
+  {description, group, criticality}. GATE: each item must match an inventory row by EXACT method+path with a
+  criticality of high|medium|low and non-empty text, else it is DISCARDED and counted. Enrichment can never
+  create, rename or delete an endpoint or alter a path/param/field. A model failure leaves the import
+  successful with zero enrichment.
 - GET /projects/{id}/endpoints ; PATCH /endpoints/{eid} {excluded: bool}
+  Endpoint payload additionally carries nullable ai_description, ai_group, ai_criticality.
 
 ### modules/generation.py  (Mapper §4.3 + Generator §4.4 + Grounding Validator §4.5)
 - POST /projects/{id}/generate {requirement_ids?: [..] (default: all confirmed), depth: "smoke"|"standard"|"exhaustive"} -> 202 {job_id}

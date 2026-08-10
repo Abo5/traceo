@@ -1,7 +1,7 @@
 # Traceo (TADQEEQ)
 
 **AI test design & traceability platform.**
-Traceo turns a requirements document into an executable, requirement-linked API test suite — grounded in an endpoint inventory discovered from an OpenAPI spec, gated by human review, and backed by a live traceability matrix that exports as contractual and audit evidence.
+Traceo turns a requirements document into an executable, requirement-linked API test suite — grounded in an endpoint inventory discovered from an OpenAPI spec, a Postman collection, a HAR capture or an Insomnia export, gated by human review, and backed by a live traceability matrix that exports as contractual and audit evidence.
 **The model proposes, the system verifies** — a hard grounding gate guarantees zero fabricated identifiers (BO-07).
 
 The product ships in **English only**, left to right. There is no runtime language mechanism: no dictionaries, no language switcher, no per-project language.
@@ -17,6 +17,26 @@ flowchart LR
 ```
 
 **Six engines:** ingestion, discovery, generation (+ grounding gate), execution, traceability — and the **QA Insight Agent**, which proposes edge cases across nine canonical categories (boundary surprises, exotic input, control characters, idempotency, state corruption, permission edges, timing/DST, resource exhaustion, downstream failures). The insight engine is **100% deterministic, makes zero LLM calls and runs fully offline**, and every case it emits passes the same grounding gate before it is persisted: every path, method and field is derived from the discovered endpoint inventory, never invented (BO-07). It is opt-in through its own endpoints (`GET /v1/projects/{id}/insights`, `POST /v1/projects/{id}/insights/generate`) and changes no existing flow.
+
+## Supported API import formats
+
+The endpoint inventory is discovered by uploading an API document — a file or a URL — to a single endpoint, `POST /v1/projects/{id}/api-specs`. The format is **detected deterministically** from the document itself; there is no per-format route and no format picker in the UI, so importing a Postman collection is the same action as importing an OpenAPI spec.
+
+| Format | Detected by | `format` | `Endpoint.source` |
+|---|---|---|---|
+| OpenAPI 3.x | `openapi: 3.x` | `openapi3` | `spec` |
+| Swagger 2.0 | `swagger: "2.0"` | `swagger2` | `spec` |
+| Postman Collection v2.0 / v2.1 | `info.schema` contains `getpostman.com/json/collection/v2` | `postman2` | `postman` |
+| HAR 1.2 | top-level `log` object with `entries` | `har` | `traffic` |
+| Insomnia v4 export | `"_type": "export"` with `resources` | `insomnia4` | `postman` |
+
+A document matching none of them is refused with `422 {code: "invalid_spec"}`, and the `errors` list names the formats that *would* be accepted.
+
+**Conversion is deterministic — no model is involved.** Postman `:param` segments and concrete ids in captures become `{param}`; `{{variable}}` references resolve from collection/environment variables; the base URL is stripped so paths are server-relative; query parameters come from `url.query` / `queryString`; a request body's JSON example yields an inferred JSON Schema whose fields are the body's own (nothing invented, non-JSON bodies record media type and field names only); observed response status codes are recorded; identical `method + path` requests are merged.
+
+Re-imports are governed by a **fidelity ladder — `spec > traffic > dom > postman`**: a later, higher-fidelity import wins for the endpoints it describes and never deletes the ones it does not.
+
+**Optional AI enrichment.** On a project whose `automation` is `auto`, a successful import additionally asks the model for a one-line description, a resource group and a criticality hint (`high | medium | low`) per endpoint — and nothing else. Every returned item is matched against the deterministic inventory by exact `method + path`; anything referencing an unknown endpoint is discarded and counted (`enriched` / `enrichment_discarded` on the response). **Enrichment may never create, rename or delete an endpoint, nor alter a path, a parameter or a field name** — it is annotation-only, which is what makes it safe to let a model near the inventory at all. If the model fails or returns nothing usable, the import still succeeds with zero enrichment. Under the default deterministic mock provider the whole flow runs offline.
 
 ## Prerequisites
 
@@ -111,7 +131,8 @@ traceo/
 ├── frontend/               # Next.js 15 (App Router) + TypeScript — English, LTR
 │   └── FRONTEND_CONTRACT.md
 ├── e2e/                    # Playwright suite (specs, page objects, API repositories, fixtures)
-│   └── test-data/          # reference seeds: sample_requirements_en.md, sample_openapi.yaml
+│   └── test-data/          # reference seeds: sample_requirements_en.md, sample_openapi.yaml,
+│                           #   calendar-api.postman_collection.json (a real 300KB v2.1 collection)
 ├── demo/
 │   ├── sut/                # Orders Platform — demo SUT with deliberate defects to discover
 │   └── seed_demo.py        # end-to-end demo provisioning

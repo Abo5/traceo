@@ -75,8 +75,11 @@ Timestamps: RFC3339 UTC. IDs: uuid v4 strings. JSON tags snake_case on every res
 - **ingestion**: documents upload+list, requirements list/patch/create/delete/confirm_all;
   parsing: PDF (ledongthuc/pdf), DOCX (zip+xml w:t), MD/TXT; digit normalization,
   segmentation, per-segment llm extract, re-upload diff + mark stale
-- **discovery**: api-specs import (file/url, openapi3+swagger2, $ref resolve, SSRF guard),
-  endpoints list (incl. v2 test_count/covered_params_pct/last_outcome), PATCH excluded
+- **discovery**: api-specs import (file/url, openapi3+swagger2, $ref resolve, SSRF guard,
+  **plus the collection formats — see the addendum below**), endpoints list (incl. v2
+  test_count/covered_params_pct/last_outcome and the nullable ai_* enrichment), PATCH excluded
+- **collections** (no routes — called by discovery): deterministic Postman v2/HAR/Insomnia
+  detection + conversion, and the gated AI enrichment layer
 - **generation**: generate job — mapper (lexical prefilter + llm pick from closed list),
   deterministic techniques (positive, EP invalid, BVA, negatives incl. oversized+injection,
   decision tables, localisation with a non-ASCII round-trip), GroundingValidate(case, inventory)
@@ -196,6 +199,102 @@ Everything else is unchanged: no existing endpoint changes shape, manual flows a
 autopilot (`automation auto|manual`) are untouched — the engine is opt-in via its own two
 routes (its jobs use their own kind, so the autopilot's `generate` guard is unaffected).
 
+## API collection import + AI enrichment addendum (fixed contract — parity with the Python backend is mandatory)
+
+**No new routes.** Everything lands on the endpoint that already takes OpenAPI:
+`POST /v1/projects/{id}/api-specs` (multipart `file` OR `{"url": ...}`, same 5MB cap,
+same SSRF guard). Package `internal/modules/collections` owns detection, conversion and
+enrichment; `discovery` wires it in. **OpenAPI 3.x / Swagger 2.0 behaviour is unchanged.**
+
+**1. Format detection** (deterministic, on the parsed document, before OpenAPI validation):
+
+| format id   | detected by                                                        | `Endpoint.source` |
+|-------------|--------------------------------------------------------------------|-------------------|
+| `openapi3`  | `openapi: 3.x` (existing)                                           | `spec`            |
+| `swagger2`  | `swagger: "2.0"` (existing)                                         | `spec`            |
+| `postman2`  | `info.schema` contains `getpostman.com/json/collection/v2` (v2.0+v2.1) | `postman`      |
+| `har`       | top-level `log` object carrying `entries`                            | `traffic`         |
+| `insomnia4` | `"_type":"export"` plus `resources`                                  | `postman`         |
+
+The `Endpoint.source` enum is NOT extended — Insomnia reuses `postman` per the contract's
+preference. When nothing matches, the existing `422 invalid_spec` is kept and its `errors`
+list ends with `collections.SupportedFormatsNote`, which names every accepted format.
+A collection that yields zero requests is also `422 invalid_spec`.
+
+**2. Deterministic conversion (NO LLM — the grounding source of truth).** Every format
+produces the SAME inventory shape the OpenAPI importer emits
+(`{name, location, type, required, constraints}` parameters, an inferred request schema,
+response schemas keyed by status code):
+- **paths**: Postman `:param` and `{{var}}` segments become `{param}`; a leading base-url
+  variable (`{{baseUrl}}`, `{{ _.baseUrl }}`) or an absolute origin is stripped so paths are
+  server-relative; trailing slashes and duplicate slashes are normalized away.
+- **HAR/Insomnia concrete ids** are templated with a documented, narrow heuristic
+  (`collections.concreteIDName`): a segment that is all digits, a canonical UUID, or a 24+
+  character hex token becomes `{id}`, then `{id2}`, `{id3}`, … within the same path.
+- **variables** are resolved from collection variables / `url.variable` / Insomnia
+  environments and recorded as `constraints.example`; they are never baked into the path.
+- **query params** come from `url.query` (Postman), `queryString` (HAR), `parameters`
+  (Insomnia) or the raw query string, with `constraints.example` and a scalar type inferred
+  from that example (`true/false` → boolean, integers → integer, other numerics → number,
+  else string). `disabled` entries are skipped. **Headers are captured as `location:
+  "header"` params, never as query params**; credential-bearing header values
+  (authorization, cookie, x-api-key, proxy-authorization) are captured by NAME only.
+- **request body**: raw/JSON examples produce an inferred JSON Schema — types from values,
+  objects and arrays recursed, NOTHING invented (no `required`, no formats, no extra
+  fields). Non-JSON bodies (formdata, urlencoded, file, graphql) record the media type
+  under `x-media-type` plus the field names only.
+- **responses**: HAR response statuses and Postman saved-response `code`s are recorded as
+  observed status codes, with a schema inferred from the example body when it is JSON.
+- **dedupe**: identical method+path merge — params union on (name, location), request
+  schemas merge property-wise, response schemas merge per status, `observed_count` sums
+  (HAR only; collections leave it 0).
+- collections declare no `operation_id`, `security` or `tags`, so those stay empty.
+
+**3. Fidelity precedence `spec > traffic > dom > postman` governs re-imports** (upsert, not
+replace): a row is written only when the importing source ranks >= the row's current source,
+and an import removes only rows that came from its OWN source. So a later OpenAPI import
+wins over collection-derived data for the same endpoint and never deletes the rest; a later
+collection import never downgrades a spec-sourced row. Rows are updated in place, so ids,
+the `excluded` flag (FR-DSC-05), grounding links and the ai_* enrichment survive re-imports.
+`observed_count` is STATED by a traffic import (summed within one file, not accumulated
+across imports), so re-importing the same document is a no-op in every format.
+
+**4. AI enrichment (optional, gated — "the model proposes, the system verifies").**
+After a SUCCESSFUL collection import, and only when `project.automation == "auto"` (the
+existing flag — no new one), the DETERMINISTIC inventory (methods, paths, param names,
+inferred body field names — **never raw file text**) goes to `llm.Get()` with promptID
+`enrich_endpoints`, batched 50 endpoints per call, framed with the untrusted-data
+delimiters. The model is asked ONLY for a one-line plain-English description, a resource
+group name, and a criticality hint (`high|medium|low`).
+**The gate (`collections.ValidateEnrichment`, exported so it can be tested adversarially)
+is inviolable:** every item is matched to the inventory by EXACT method+path; unknown
+method/path, a renamed path, a referenced parameter/field outside the endpoint's closed
+list, a duplicate item, or nothing usable ⇒ DISCARDED and counted. Descriptions and groups
+are stored as sanitized PLAIN TEXT (control characters and angle brackets stripped,
+whitespace collapsed, clipped to 300/60 runes); an illegal criticality is dropped.
+Enrichment may NEVER create, rename or delete an endpoint, nor alter a path, param or field
+— it only writes the three ai_* columns. A provider error, empty output or garbage means
+the import still SUCCEEDS with zero enrichment. Since the import is synchronous in both
+backends, the counters travel in the import response (and the `spec.imported` audit detail).
+
+**5. Schema.** `Endpoint` gains three NULLABLE columns via the AutoMigrate convention (no
+backfill): `ai_description` (text), `ai_group` (short string), `ai_criticality`
+(`high|medium|low`). They ship in every endpoint payload as `ai_description`, `ai_group`,
+`ai_criticality` (null when absent).
+
+**6. Response shape.** `POST /v1/projects/{id}/api-specs` keeps every existing key with its
+existing meaning (`spec_id`, `version`, `endpoints_count`, `warnings`, `diff{added,
+removed, changed}` — lists) and ADDS: `format` (one of the five ids), the counters `added`,
+`updated`, `removed`, `total` (integers — created rows, rows whose signature changed, rows
+deleted, inventory size) and `enriched` / `enrichment_discarded`.
+
+**7. Deterministic mock.** `mockProvider.enrichEndpoints` keys on the marker
+`"INVENTORY:\n"` and describes ONLY the endpoints it was handed, copying method and path
+verbatim: description `"<verb> the <resource> resource at <path>."`, group = first concrete
+(non-templated, non-`v<N>`) path segment, criticality = DELETE `high` / other writes
+`medium` / reads `low`. Every pre-existing mock behaviour is byte-identical — this is a new
+promptID branch only.
+
 ## Quality gates
 backend-go/tests as Go tests (httptest against a fresh in-memory app+temp sqlite):
 grounding gate (adversarial fixtures — zero fabricated identifiers persisted), tenant
@@ -206,6 +305,12 @@ cases, manual-mode opt-out, double-trigger guard), insight
 (taxonomy strings + order, covered/gap/n_a semantics, legacy classifier, 422
 invalid_category, 202 job pattern, capability guards + tenant isolation, adversarial
 grounding over every persisted edge case, offline guarantee, mock-determinism under the
-untrusted-data framing, exotic probes non-ASCII yet Arabic-free).
+untrusted-data framing, exotic probes non-ASCII yet Arabic-free), collections
+(`tests/collections_test.go` — the REAL 300KB Postman v2.1 export in `tests/fixtures/`:
+37 endpoints, `:param` templating, `{{baseUrl}}` stripping, typed query examples, header
+params, inferred body schemas with no invented fields, observed status codes, idempotent
+re-import; HAR concrete-id templating + observed_count + credential-header redaction;
+Insomnia; the 422 that names the supported formats; the ADVERSARIAL enrichment gate;
+fidelity precedence both ways; OpenAPI regression; mock determinism; nullable ai_* columns).
 `gofmt -l .` silent; `go vet ./...` clean; `go build ./...` clean;
 `go test -race -count=1 ./...` green.

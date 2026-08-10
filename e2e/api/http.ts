@@ -107,6 +107,7 @@ export class TraceoHttp {
           typeof d.code === 'string' ? d.code : `http_${res.status()}`,
           typeof d.message === 'string' ? d.message : res.statusText(),
           res.status(),
+          d, // preserved verbatim — e.g. the import validator's `errors` list
         );
       }
       if (Array.isArray(detail)) {
