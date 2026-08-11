@@ -40,6 +40,7 @@ import (
 	"traceo/internal/models"
 	"traceo/internal/modules/autopilot"
 	"traceo/internal/modules/collections"
+	"traceo/internal/modules/projects"
 )
 
 // sourceRank is the discovery fidelity precedence (SRS §L2): spec > traffic >
@@ -949,6 +950,11 @@ func importAPISpec(c *gin.Context) {
 			"endpoints": len(newByKey), "warnings": len(warnings),
 			"enriched": enriched, "enrichment_discarded": enrichmentDiscarded})
 
+	// Derive a runnable environment (fixed contract) — the base URL is already in
+	// the document, so a project with NO environment at all gets one and the New
+	// run screen stops being unusable after a collection import.
+	environmentCreated := autocreateEnvironment(projectID, u, format, title, root)
+
 	// Autopilot generation trigger (automation contract 4b) — auto mode only;
 	// enqueues asynchronously, the import response is unchanged.
 	autopilot.AfterSpecImport(projectID, u.OrganisationID, u.ID)
@@ -977,7 +983,55 @@ func importAPISpec(c *gin.Context) {
 		"total":                int(total),
 		"enriched":             enriched,
 		"enrichment_discarded": enrichmentDiscarded,
+		// null unless THIS import filled a genuine void (contract item 4).
+		"environment_created": environmentCreated,
 	})
+}
+
+// autocreateEnvironment creates the derived environment when — and only when —
+// the project has ZERO environments and the document states a base URL. It never
+// touches an existing environment: this fills a void, it does not "fix" a
+// configuration the user already made. Returns the {id, name, base_url} payload
+// for the response, or nil when nothing was created.
+func autocreateEnvironment(projectID string, u *models.User, format, title string,
+	root map[string]any) any {
+	var existing int64
+	db.DB.Model(&models.Environment{}).
+		Where("project_id = ? AND organisation_id = ?", projectID, u.OrganisationID).
+		Count(&existing)
+	if existing > 0 {
+		return nil
+	}
+	draft := collections.DeriveEnvironment(format, root)
+	if draft.BaseURL == "" {
+		return nil // no base URL could be derived — a host is never invented
+	}
+	if r := []rune(draft.BaseURL); len(r) > 500 {
+		return nil // past the column limit a truncated URL would be wrong, not partial
+	}
+	env, err := projects.CreateEnvironment(u.OrganisationID, projectID,
+		collections.EnvironmentName(title), draft.BaseURL, "none",
+		draft.Variables, true, nil)
+	if err != nil {
+		return nil // the import itself never fails over a convenience feature
+	}
+	// Same detail the Python reference backend records, key for key: the base
+	// audit fields every environment write emits, plus what makes THIS entry
+	// answerable — which document format the URL came from, the URL itself, and
+	// the variable NAMES that travelled. Values are never recorded: the
+	// credential-looking ones arrive empty by design and the rest are the user's.
+	names := make([]string, 0, len(draft.Variables))
+	for name := range draft.Variables {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	httpx.Audit(u.OrganisationID, &u.ID, "environment.autocreated", "environment", env.ID,
+		models.JSONMap{
+			"name": env.Name, "auth_type": env.AuthType,
+			"auth_config_set": len(env.AuthConfigEncrypted) > 0,
+			"format":          format, "base_url": env.BaseURL, "variables": names,
+		})
+	return gin.H{"id": env.ID, "name": env.Name, "base_url": env.BaseURL}
 }
 
 // applyEnrichment runs the validated enrichment layer over the DETERMINISTIC

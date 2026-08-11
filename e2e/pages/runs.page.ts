@@ -3,6 +3,11 @@
  * Run state badges carry data-state="queued|running|completed|cancelled|aborted"
  * (literal Run.state values). The history table is composed from the shared
  * DataTable component (§4). Locators private, no assertions (§5, §7).
+ *
+ * With no environment in the project the launch card renders a hint and a link
+ * INSTEAD of the picker — an empty select offers nothing and explains nothing —
+ * so both surfaces are exposed read-only and a spec asserts the select's
+ * absence, never its emptiness.
  */
 import type { Locator, Page } from '@playwright/test';
 import { DataTable } from '../components/data-table.component';
@@ -44,6 +49,25 @@ export class RunsPage {
   /** The launch control — renders only with trigger_run (permission-visibility checks). */
   get launchControl(): Locator {
     return this.runButton;
+  }
+
+  /**
+   * The environment picker. Exposed read-only so a spec can assert its ABSENCE:
+   * with no environment in the project there is nothing to pick, and the page
+   * renders the hint below instead of an empty select.
+   */
+  get environmentSelect(): Locator {
+    return this.envSelect;
+  }
+
+  /** Shown in place of the picker when the project has no environment at all. */
+  get environmentEmptyHint(): Locator {
+    return this.page.getByTestId('runs-environment-empty-hint');
+  }
+
+  /** The link out of that hint to the project's environments page. */
+  get environmentEmptyLink(): Locator {
+    return this.page.getByTestId('runs-environment-empty-link');
   }
 
   /** Live run badge — data-state carries the literal Run.state. */

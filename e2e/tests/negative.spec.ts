@@ -12,8 +12,12 @@
  *   403 — existence must not leak across orgs (NFR-SEC-04, FR-USR-04).
  * - execution.py create_run: only `approved` cases are executable; a project
  *   whose cases are all draft answers 409 `no_approved_cases`.
+ * - identity.py dev_session: the credential-free session route is gated on
+ *   TRACEO_DEV_AUTOLOGIN and answers 404 `not_found` while the flag is off.
  */
 import { test, expect } from '../fixtures';
+import { TraceoHttp } from '../api/http';
+import { IdentityRepository } from '../api/identity.repository';
 import { config } from '../config/resolve';
 import { expectApiError } from '../helpers/expect-api-error';
 import { registerForeignOrg } from '../helpers/foreign-org';
@@ -127,5 +131,33 @@ test.describe('negative paths — API @negative @regression', () => {
       status: 409,
       code: 'no_approved_cases',
     });
+  });
+
+  /**
+   * Default-safe pin for the dev auto-login escape hatch.
+   *
+   * `POST /v1/auth/dev-session` hands out a full session with NO credentials
+   * when TRACEO_DEV_AUTOLOGIN=1. The backend this suite runs against is
+   * configured normally — the flag is off — so the route must not exist, and
+   * the refusal must be a 404 that reveals nothing about the feature (the same
+   * `not_found` any unknown route answers), never a 401/403 that would confirm
+   * the endpoint is there and merely locked.
+   *
+   * Asserted twice, anonymously and authenticated, because the gate is the
+   * FLAG, not the caller: the route takes no credentials, so a session must not
+   * make it appear. A backend booted with the flag on fails this test — which
+   * is the intent: a dev convenience must never ship as the default, and a
+   * production node refuses to boot with it at all (config.py
+   * assert_production_safe).
+   */
+  test('the dev auto-login route does not exist while the flag is off (404)', async ({
+    request, // Playwright's own context — no Traceo credentials attached
+    api,
+  }) => {
+    const anonymous = new IdentityRepository(new TraceoHttp(request, config.apiUrl));
+    await expectApiError(anonymous.devSession(), { status: 404, code: 'not_found' });
+
+    // A valid session does not unlock it either.
+    await expectApiError(api.identity.devSession(), { status: 404, code: 'not_found' });
   });
 });

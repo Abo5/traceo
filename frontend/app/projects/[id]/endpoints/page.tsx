@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ApiError, api } from "@/lib/api";
 import { useCan } from "@/lib/permissions";
@@ -158,6 +159,8 @@ export default function EndpointsPage() {
     format: "Format",
     enriched: "AI enriched",
     discarded: "Discarded",
+    envCreated: "Environment created",
+    envCreatedLink: "Environments",
     aiNote: "AI-suggested — not discovered from the spec",
     inventory: "Endpoint inventory",
     method: "Method",
@@ -265,6 +268,12 @@ export default function EndpointsPage() {
     result && typeof result.enriched === "number" ? result.enriched : null;
   const discardedCount: number | null =
     result && typeof result.enrichment_discarded === "number" ? result.enrichment_discarded : null;
+  // The import auto-creates an environment only when the project had none and a
+  // base URL was derivable from the document — otherwise the key is null.
+  const envCreated: { id?: string; name?: string; base_url?: string } | null =
+    result && result.environment_created && typeof result.environment_created === "object"
+      ? result.environment_created
+      : null;
 
   return (
     <div data-testid="endpoints-page-root" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -372,6 +381,30 @@ export default function EndpointsPage() {
                     {label} <M style={{ fontSize: 11 }}>{result[k]}</M>
                   </Badge>
                 ))}
+              </div>
+            )}
+            {envCreated && (
+              <div
+                data-testid="endpoints-import-environment-created"
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  fontSize: 12,
+                  color: "var(--text-secondary)",
+                }}
+              >
+                <Badge tone="success">{L.envCreated}</Badge>
+                <span style={{ color: "var(--text)", fontWeight: 600 }}>{envCreated.name}</span>
+                <M style={{ fontSize: 11, overflowWrap: "anywhere" }}>{envCreated.base_url}</M>
+                <Link
+                  href={`/projects/${id}/environments`}
+                  data-testid="endpoints-import-environment-created-link"
+                  style={{ color: "var(--accent)", fontSize: 12 }}
+                >
+                  {L.envCreatedLink} →
+                </Link>
               </div>
             )}
             {(enrichedCount !== null || discardedCount !== null) && (

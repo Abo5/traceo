@@ -26,6 +26,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -396,13 +397,22 @@ steps:
 			delete(headers, "Authorization")
 		}
 
-		params := map[string]string{}
+		paramValues := map[string]any{}
 		if !stripAuth {
 			for k, v := range w.auth.params {
-				params[k] = v
+				paramValues[k] = v
 			}
 		}
 		for k, v := range stepParams {
+			paramValues[k] = v
+		}
+
+		// Fill {name} placeholders in the path from the params/environment before
+		// the query string is built — bindPathParams removes whatever it consumed.
+		path = bindPathParams(path, paramValues, ctxVars)
+
+		params := make(map[string]string, len(paramValues))
+		for k, v := range paramValues {
 			params[k] = paramStr(v)
 		}
 
@@ -613,6 +623,58 @@ steps:
 	db.DB.Create(&res)
 	dbWriteMu.Unlock()
 	return outcome
+}
+
+// pathParamRe matches a SINGLE-brace {name} path placeholder. The double-brace
+// {{var}} interpolation is a different mechanism and runs first, so by the time
+// this is applied only genuine path templates are left.
+var pathParamRe = regexp.MustCompile(`\{([A-Za-z0-9_][A-Za-z0-9_.-]*)\}`)
+
+// bindPathParams fills {name} placeholders in the path and drops the keys they
+// consumed from params.
+//
+// Inventories store paths as templates (/images/{imageId}); the value lives in
+// the step's params. Sending the template literally requests a URL that cannot
+// exist, so every path-parameterised case would fail on a 404 no matter what the
+// system under test does — and the consumed key must leave the query string, or
+// the same value is also sent as ?imageId=...
+//
+// Precedence: step/auth params → run context (environment variables) → leave the
+// placeholder literal (an unknown name is more useful reported as a 404 against
+// the visible template than as a silently mangled URL).
+func bindPathParams(path string, params map[string]any, ctx map[string]any) string {
+	var consumed []string
+	bound := pathParamRe.ReplaceAllStringFunc(path, func(match string) string {
+		name := match[1 : len(match)-1]
+		if v, ok := params[name]; ok && v != nil {
+			consumed = append(consumed, name)
+			return percentEncode(pyStr(v))
+		}
+		if v, ok := ctx[name]; ok && v != nil {
+			return percentEncode(pyStr(v))
+		}
+		return match
+	})
+	for _, k := range consumed {
+		delete(params, k)
+	}
+	return bound
+}
+
+// percentEncode is urllib.parse.quote(value, safe="") — every byte outside the
+// unreserved set is escaped, so a value containing "/" cannot inject a path
+// segment.
+func percentEncode(s string) string {
+	const unreserved = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-~"
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; strings.IndexByte(unreserved, c) >= 0 {
+			b.WriteByte(c)
+		} else {
+			b.WriteString(fmt.Sprintf("%%%02X", c))
+		}
+	}
+	return b.String()
 }
 
 func asMapOrEmpty(v any) map[string]any {

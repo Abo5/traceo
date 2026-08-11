@@ -4,6 +4,8 @@
 // Endpoints (mounted under /v1):
 //   - POST   /auth/register   create Organisation + admin User, return token immediately
 //   - POST   /auth/login      audited ('auth.login'); failures are generic 401s
+//   - POST   /auth/dev-session  development-only credential-free session; 404 unless
+//     TRACEO_DEV_AUTOLOGIN=1 (audited 'auth.dev_session')
 //   - GET    /me / PATCH /me  own profile
 //   - GET    /members         (view)
 //   - POST   /members/invite  (manage_members)
@@ -21,6 +23,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"traceo/internal/config"
 	"traceo/internal/db"
 	"traceo/internal/httpx"
 	"traceo/internal/models"
@@ -114,6 +117,7 @@ func emailTaken(email string) bool {
 func Register(r *gin.RouterGroup) {
 	r.POST("/auth/register", register)
 	r.POST("/auth/login", login)
+	r.POST("/auth/dev-session", devSession)
 
 	r.GET("/me", httpx.Auth(), getMe)
 	r.PATCH("/me", httpx.Auth(), updateMe)
@@ -209,6 +213,31 @@ func login(c *gin.Context) {
 		return
 	}
 	httpx.Audit(user.OrganisationID, &user.ID, "auth.login", "user", user.ID,
+		models.JSONMap{"email": email})
+	token, _ := security.CreateToken(user.ID, user.OrganisationID, user.Role)
+	c.JSON(http.StatusOK, gin.H{"token": token,
+		"user": userPayloadWithOrg(&user, orgName(user.OrganisationID))})
+}
+
+// devSession hands out a session without credentials — development only.
+//
+// Enabled by TRACEO_DEV_AUTOLOGIN=1; the production guard in config refuses to
+// boot with it set, so this can never be reachable on a production node. While
+// the flag is off the route is indistinguishable from a missing one (404), so a
+// misconfigured deployment leaks nothing about the feature's existence.
+func devSession(c *gin.Context) {
+	if !config.C.DevAutologin {
+		httpx.Err(c, http.StatusNotFound, "not_found", "Not found")
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(config.C.DevAutologinEmail))
+	var user models.User
+	if err := db.DB.First(&user, "email = ?", email).Error; err != nil {
+		httpx.Err(c, http.StatusServiceUnavailable, "dev_session_unavailable",
+			"TRACEO_DEV_AUTOLOGIN is on but no user matches "+email)
+		return
+	}
+	httpx.Audit(user.OrganisationID, &user.ID, "auth.dev_session", "user", user.ID,
 		models.JSONMap{"email": email})
 	token, _ := security.CreateToken(user.ID, user.OrganisationID, user.Role)
 	c.JSON(http.StatusOK, gin.H{"token": token,

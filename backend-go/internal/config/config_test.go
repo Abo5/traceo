@@ -50,6 +50,19 @@ func TestProductionRejectsDemoSeed(t *testing.T) {
 	}
 }
 
+func TestProductionRejectsDevAutologin(t *testing.T) {
+	s := base()
+	s.DevAutologin = true
+	err := ProductionSafetyError(s)
+	if err == nil {
+		t.Fatal("production booted with TRACEO_DEV_AUTOLOGIN on — /auth/dev-session " +
+			"hands a full session to any caller")
+	}
+	if !strings.Contains(err.Error(), "TRACEO_DEV_AUTOLOGIN") {
+		t.Errorf("error should name the variable to fix, got: %v", err)
+	}
+}
+
 func TestBothProblemsAreReportedTogether(t *testing.T) {
 	// An operator fixing one problem at a time would otherwise need two
 	// failed deploys to learn about both.

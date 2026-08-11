@@ -763,3 +763,279 @@ def convert(doc: dict, fmt: str) -> tuple[list[dict], list[dict], str, str]:
         raise ValueError(f"no converter for format '{fmt}'")
     inv, title = converter(doc if isinstance(doc, dict) else {})
     return inv.operations(), inv.warnings, title, inv.source
+
+
+# ------------------------------------------------------- environment derivation
+#
+# WHY THIS LIVES HERE
+# -------------------
+# "I only added a Postman collection for the API connection" — and the New run
+# screen then showed an empty Environment picker, so nothing could be executed.
+# The base URL is *in the uploaded document*; asking the owner to retype it is
+# the product failing. The derivation is part of the conversion, so it lives
+# beside the converters — including the OpenAPI/Swagger case, which the route in
+# discovery.py calls into rather than duplicating.
+#
+# THE INVARIANT that governs every rule below:
+#
+#     base_url + <stored endpoint path> == the original URL, exactly.
+#
+# The converters store endpoint paths server-relative, stripping the leading
+# base element (a scheme://host, or a variable named like a base URL). Whatever
+# was stripped — INCLUDING a path prefix such as /calendar/v3 — is what the
+# derived base_url must carry back. Conversely, nothing that was NOT stripped
+# may appear in base_url: HAR/raw-URL requests keep their /v1 prefix in the
+# path, so their base_url is the bare origin. That is why the "common prefix"
+# is never computed by string comparison; it is read back off the element the
+# converter actually removed.
+#
+# Everything here is a pure, deterministic function of the document: no network,
+# no clock, no LLM. If no base URL can be read out of the file, NOTHING is
+# derived — a host is never invented, and a value without a scheme is not a
+# usable base URL, so it is declined rather than decorated with "https://".
+
+ENV_NAME_MAX = 100          # environments.name column limit
+ENV_BASE_URL_MAX = 500      # environments.base_url column limit
+ENV_NAME_SUFFIX = " (imported)"
+ENV_NAME_FALLBACK = "Imported environment"
+
+# Variable names that mean "this is the base URL", case-insensitive, exact match.
+# Deliberately narrower than _BASE_URL_NAMES (which decides what to STRIP from a
+# path): picking a base URL out of a variable map is a guess, and a wrong guess
+# writes a wrong environment, so only the four unambiguous names qualify.
+BASE_URL_VAR_NAMES = ("baseurl", "base_url", "url", "host")
+
+# A variable whose NAME contains any of these is a credential. Its key is
+# carried so the user knows it must be filled; its value is never copied,
+# returned, or logged.
+CREDENTIAL_NAME_TOKENS = ("token", "secret", "key", "password", "auth", "bearer", "apikey")
+
+
+def is_credential_name(name: object) -> bool:
+    """Case-insensitive substring test — 'X-Api-Key', 'authToken', 'CLIENT_SECRET'."""
+    low = str(name or "").lower()
+    return any(token in low for token in CREDENTIAL_NAME_TOKENS)
+
+
+def imported_environment_name(title: str) -> str:
+    """'<document title> (imported)', trimmed to the column limit.
+
+    The suffix is what tells the owner where the environment came from, so the
+    TITLE is what gets truncated — never the suffix. An empty title falls back
+    to a fixed English name rather than producing a bare '(imported)'.
+    """
+    base = str(title or "").strip()
+    if not base:
+        return ENV_NAME_FALLBACK
+    return base[:ENV_NAME_MAX - len(ENV_NAME_SUFFIX)].strip() + ENV_NAME_SUFFIX
+
+
+def _normalize_base(text: object) -> str:
+    """A base URL is only usable if it carries a scheme. Trailing '/' is dropped
+    so base_url + '/path' never doubles the separator. Anything else -> ''."""
+    value = str(text or "").strip()
+    if "://" not in value:
+        return ""
+    return value.rstrip("/")
+
+
+def _most_frequent(candidates: list[str]) -> str:
+    """Most frequent value; ties broken lexicographically so two backends (and
+    two runs) always pick the same one."""
+    if not candidates:
+        return ""
+    counts: dict[str, int] = {}
+    for c in candidates:
+        counts[c] = counts.get(c, 0) + 1
+    return sorted(counts, key=lambda c: (-counts[c], c))[0]
+
+
+def _named_base_url(variables: dict) -> tuple[str, str | None]:
+    """(base_url, variable name) from a variable named like a base URL.
+
+    Document order decides: the FIRST variable whose name matches wins, so the
+    result depends only on the file, not on our list ordering.
+    """
+    for name, value in variables.items():
+        if str(name).strip().lower() in BASE_URL_VAR_NAMES:
+            base = _normalize_base(_resolve_vars(str(value or ""), variables))
+            if base:
+                return base, str(name)
+    return "", None
+
+
+def _base_from_url_text(text: str, variables: dict) -> tuple[str, str | None]:
+    """The base element a converter would strip off this URL, as (base, var name).
+
+    Mirrors _split_url_string exactly: a leading base-URL variable is the base
+    (value and all — that is how /calendar/v3 survives), otherwise the
+    scheme://host of an absolute URL. A relative URL contributes nothing.
+    """
+    value = str(text or "").strip()
+    lead = _VAR_RE.match(value)
+    if lead:
+        name = _var_name(lead.group(0))
+        resolved = _resolve_vars(str(variables.get(name, "")), variables) if name else ""
+        if _is_base_url(name, resolved):
+            return _normalize_base(resolved), name
+        return "", None
+    if "://" in value:
+        parts = urlsplit(_resolve_vars(value, variables))
+        if parts.scheme and parts.netloc:
+            return f"{parts.scheme}://{parts.netloc}", None
+    return "", None
+
+
+def _observed_base_url(url_texts: list[str], variables: dict) -> tuple[str, str | None]:
+    """Fallback derivation: the most frequent base element across request URLs."""
+    candidates: list[str] = []
+    var_by_base: dict[str, str] = {}
+    for text in url_texts:
+        base, name = _base_from_url_text(text, variables)
+        if not base:
+            continue
+        candidates.append(base)
+        if name and base not in var_by_base:
+            var_by_base[base] = name
+    winner = _most_frequent(candidates)
+    return winner, var_by_base.get(winner)
+
+
+def suggested_variables(variables: dict, base_url: str, base_var: str | None) -> dict:
+    """Item 2: every variable EXCEPT the base-URL one, credentials emptied.
+
+    The base-URL variable is excluded both by name and by value — a collection
+    that spells it twice must not leave a copy of the host sitting in the
+    variables map.
+    """
+    out: dict[str, str] = {}
+    for name, value in variables.items():
+        key = str(name)
+        if base_var is not None and key == base_var:
+            continue
+        text = "" if value is None else str(value)
+        if base_url and text.strip().rstrip("/") == base_url:
+            continue
+        out[key] = "" if is_credential_name(key) else text
+    return out
+
+
+def _result(base_url: str, variables: dict, base_var: str | None) -> dict | None:
+    if not base_url:
+        return None
+    return {"base_url": base_url[:ENV_BASE_URL_MAX],
+            "variables": suggested_variables(variables, base_url, base_var)}
+
+
+def _postman_url_text(url: object) -> str:
+    """The raw URL text of a Postman request — `raw` when present, otherwise
+    rebuilt from protocol/host/port so a raw-less export still contributes."""
+    if isinstance(url, str):
+        return url.strip()
+    if not isinstance(url, dict):
+        return ""
+    raw = url.get("raw")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    host = url.get("host")
+    if isinstance(host, list):
+        host_text = ".".join(str(h).strip() for h in host if str(h).strip())
+    else:
+        host_text = str(host or "").strip()
+    if not host_text:
+        return ""
+    port = str(url.get("port") or "").strip()
+    if port:
+        host_text = f"{host_text}:{port}"
+    protocol = str(url.get("protocol") or "").strip()
+    return f"{protocol}://{host_text}" if protocol else host_text
+
+
+def derive_postman_environment(doc: dict) -> dict | None:
+    variables = _postman_variables(doc)
+    base, base_var = _named_base_url(variables)
+    if not base:
+        texts = []
+        for _folders, item in _postman_walk(doc.get("item")):
+            request = item.get("request")
+            if isinstance(request, str):
+                request = {"url": request}
+            if isinstance(request, dict):
+                texts.append(_postman_url_text(request.get("url")))
+        base, base_var = _observed_base_url(texts, variables)
+    return _result(base, variables, base_var)
+
+
+def derive_har_environment(doc: dict) -> dict | None:
+    """A capture has no variables — only the origin its entries were sent to."""
+    log = doc.get("log") if isinstance(doc.get("log"), dict) else {}
+    texts = []
+    for entry in log.get("entries") or []:
+        if isinstance(entry, dict) and isinstance(entry.get("request"), dict):
+            texts.append(str(entry["request"].get("url") or ""))
+    base, _var = _observed_base_url(texts, {})
+    return _result(base, {}, None)
+
+
+def derive_insomnia_environment(doc: dict) -> dict | None:
+    resources = [r for r in doc.get("resources") or [] if isinstance(r, dict)]
+    variables = _insomnia_variables(resources)  # base environment first, first wins
+    base, base_var = _named_base_url(variables)
+    if not base:
+        texts = [str(r.get("url") or "") for r in resources if r.get("_type") == "request"]
+        base, base_var = _observed_base_url(texts, variables)
+    return _result(base, variables, base_var)
+
+
+def derive_openapi_environment(spec: dict, fmt: str) -> dict | None:
+    """OpenAPI 3 `servers[0].url`, or Swagger 2 schemes+host+basePath.
+
+    Both already exclude the path prefix from `paths`, so the prefix belongs in
+    base_url — which is exactly what the invariant asks for. A relative
+    servers[0].url ("/v1") has no host and is declined; a Swagger 2 document
+    without `host` is declined too. `schemes` is honoured (https preferred when
+    offered) and defaults to https only when the document states nothing.
+    Server-variable defaults are substituted so no "{region}" reaches the field.
+    """
+    if fmt == "swagger2":
+        host = str(spec.get("host") or "").strip()
+        if not host:
+            return None
+        schemes = [str(s).strip().lower() for s in spec.get("schemes") or []
+                   if isinstance(s, str) and str(s).strip()]
+        scheme = "https" if "https" in schemes else (schemes[0] if schemes else "https")
+        base_path = str(spec.get("basePath") or "").strip()
+        if base_path == "/":
+            base_path = ""
+        return _result(_normalize_base(f"{scheme}://{host}{base_path}"), {}, None)
+
+    servers = spec.get("servers")
+    server = servers[0] if isinstance(servers, list) and servers else None
+    if not isinstance(server, dict):
+        return None
+    url = str(server.get("url") or "").strip()
+    for name, definition in (server.get("variables") or {}).items():
+        if isinstance(definition, dict) and definition.get("default") is not None:
+            url = url.replace("{" + str(name) + "}", str(definition["default"]))
+    return _result(_normalize_base(url), {}, None)
+
+
+_DERIVERS = {"postman2": derive_postman_environment, "har": derive_har_environment,
+             "insomnia4": derive_insomnia_environment}
+
+
+def derive_environment(doc: object, fmt: str) -> dict | None:
+    """{"base_url": str, "variables": dict} for any supported format, or None.
+
+    None means "this document does not state where the API lives" — the caller
+    must then create nothing rather than guess.
+    """
+    if not isinstance(doc, dict):
+        return None
+    try:
+        if fmt in ("openapi3", "swagger2"):
+            return derive_openapi_environment(doc, fmt)
+        deriver = _DERIVERS.get(fmt)
+        return deriver(doc) if deriver else None
+    except Exception:  # noqa: BLE001 — a convenience must never sink the import
+        return None

@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getToken, getUser, setToken, setUser } from "@/lib/api";
+import { API, getToken, getUser, setToken, setUser } from "@/lib/api";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -24,6 +24,31 @@ export default function Providers({ children }: { children: React.ReactNode }) {
       window.removeEventListener("storage", read);
     };
   }, []);
+
+  // Development auto-login: when the backend runs with TRACEO_DEV_AUTOLOGIN=1 it
+  // hands out a session without credentials, so the login screen never appears.
+  // On any other backend the endpoint 404s and normal login is untouched.
+  useEffect(() => {
+    if (getToken()) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API}/auth/dev-session`, { method: "POST" });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        setToken(data.token);
+        setUser(data.user);
+        if (window.location.pathname === "/login" || window.location.pathname === "/") {
+          router.replace("/projects");
+        }
+      } catch {
+        /* offline or endpoint absent — fall through to the login screen */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   function logout() {
     setToken(null);

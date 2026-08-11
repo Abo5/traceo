@@ -34,6 +34,12 @@ type Settings struct {
 	EvidenceMax int
 	CORSOrigins []string
 	SeedDemo    bool
+
+	// Development convenience: hand out a session for the seeded demo user
+	// without a login form. Off by default and refused in production (see
+	// ProductionSafetyError).
+	DevAutologin      bool
+	DevAutologinEmail string
 }
 
 var C Settings
@@ -84,6 +90,9 @@ func Load() {
 		EvidenceMax: envInt("TRACEO_EVIDENCE_MAX_BYTES", 16384),
 		CORSOrigins: []string{"http://localhost:3000", "http://127.0.0.1:3000"},
 		SeedDemo:    env("TRACEO_SEED_DEMO", "1") == "1",
+
+		DevAutologin:      os.Getenv("TRACEO_DEV_AUTOLOGIN") == "1",
+		DevAutologinEmail: env("TRACEO_DEV_AUTOLOGIN_EMAIL", "demo@traceo.sa"),
 	}
 	_ = os.MkdirAll(C.StorageDir, 0o755)
 	if err := ProductionSafetyError(C); err != nil {
@@ -113,6 +122,10 @@ func ProductionSafetyError(s Settings) error {
 	if s.SeedDemo {
 		problems = append(problems, "TRACEO_SEED_DEMO must be 0 in production "+
 			"— the seeded demo accounts use a password published in the documentation")
+	}
+	if s.DevAutologin {
+		problems = append(problems, "TRACEO_DEV_AUTOLOGIN must be 0 in production "+
+			"— it hands a full session to any caller without credentials")
 	}
 	if len(problems) == 0 {
 		return nil

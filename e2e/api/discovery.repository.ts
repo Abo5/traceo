@@ -13,7 +13,12 @@
  *   Anything else stays 422 {code: "invalid_spec"} with an `errors` list that
  *   names the formats actually supported.
  *   Parsed SYNCHRONOUSLY -> 201 {spec_id, version, endpoints_count, warnings, diff,
- *   format, added, updated, removed, total, enriched, enrichment_discarded}
+ *   format, added, updated, removed, total, enriched, enrichment_discarded,
+ *   environment_created}
+ *   `environment_created` is null | {id, name, base_url}: the runnable
+ *   environment derived from the document when the project had none. Reading the
+ *   created row back is `projects.listEnvironments` (ProjectsRepository) — there
+ *   is no new route.
  * - GET  /projects/{id}/endpoints -> Endpoint[] (+ FR-024 coverage fields
  *   + nullable ai_description / ai_group / ai_criticality)
  * - PATCH /endpoints/{eid} {excluded: bool}
@@ -93,6 +98,25 @@ export function requestBodyFields(endpoint: Endpoint): string[] {
   const properties = (schema as { properties?: unknown }).properties;
   if (!properties || typeof properties !== 'object') return [];
   return Object.keys(properties as Record<string, unknown>);
+}
+
+/**
+ * The absolute URL an endpoint resolves to under a base URL — plain
+ * concatenation, on purpose.
+ *
+ * The derived base URL keeps whatever path prefix the importer stripped from
+ * the endpoint paths, so `base_url + path` must reproduce the document's own
+ * URL character for character. Anything smarter here (trimming slashes, joining
+ * segments, normalising case) would repair a base URL the product got wrong and
+ * hide exactly the defect this reconstruction is meant to catch.
+ */
+export function resolvedUrl(baseUrl: string, endpointPath: string): string {
+  return `${baseUrl}${endpointPath}`;
+}
+
+/** Every endpoint of an inventory resolved under a base URL (see `resolvedUrl`). */
+export function resolvedUrls(baseUrl: string, endpoints: Endpoint[]): string[] {
+  return endpoints.map((e) => resolvedUrl(baseUrl, e.path));
 }
 
 /** Endpoints carrying at least one enrichment annotation. */

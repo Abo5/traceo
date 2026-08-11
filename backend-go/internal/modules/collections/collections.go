@@ -108,6 +108,20 @@ func SourceFor(format string) string {
 }
 
 // Title extracts a human title for the ApiSpec row (best effort, never fatal).
+//
+// It must return byte-for-byte what the Python reference backend returns for the
+// same document: the title is now user-visible twice over — as the ApiSpec row's
+// title and, via EnvironmentName, as the name of an auto-created environment —
+// so a divergence here is a parity divergence in the api-specs response itself.
+//
+// Per format, the title is the name the DOCUMENT states for itself:
+//   - Postman: info.name.
+//   - HAR: the capturing tool, log.creator.name. The creator's version is
+//     deliberately NOT appended — it names a tool build, not the document, and
+//     "Chrome DevTools 1.0 (imported)" is a worse environment name than
+//     "Chrome DevTools (imported)".
+//   - Insomnia: the workspace resource's name. __export_source is the exporting
+//     application's identifier ("insomnia.desktop.app:v8.0.0"), not a title.
 func Title(format string, root map[string]any) string {
 	switch format {
 	case FormatPostman2:
@@ -117,16 +131,16 @@ func Title(format string, root map[string]any) string {
 	case FormatHAR:
 		if log, ok := root["log"].(map[string]any); ok {
 			if creator, ok := log["creator"].(map[string]any); ok {
-				name := str(creator["name"])
-				if version := str(creator["version"]); name != "" && version != "" {
-					return name + " " + version
-				}
-				return name
+				return str(creator["name"])
 			}
 		}
 	case FormatInsomnia4:
-		if s := str(root["__export_source"]); s != "" {
-			return s
+		resources, _ := root["resources"].([]any)
+		for _, raw := range resources {
+			r, ok := raw.(map[string]any)
+			if ok && str(r["_type"]) == "workspace" {
+				return str(r["name"])
+			}
 		}
 	}
 	return ""

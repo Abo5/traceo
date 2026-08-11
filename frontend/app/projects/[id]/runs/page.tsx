@@ -68,6 +68,7 @@ export default function RunsPage() {
     subsetHint: "Leave empty to run all approved cases",
     apply: "Apply",
     clear: "Clear",
+    selectAll: "Select all",
     run: "Run",
     launching: "Launching…",
     live: "Live run",
@@ -87,7 +88,8 @@ export default function RunsPage() {
     initiator: "Initiator",
     noRuns: "No runs yet",
     noRunsHint: "Run approved cases to start tracing",
-    noEnvs: "No environments — create one on the Environments page first",
+    noEnvs: "No environments in this project yet — a run needs one to know where to send requests.",
+    noEnvsLink: "Create an environment",
     noApproved: "No approved cases — approve cases on the Review page",
     loadError: "Failed to load data",
     retry: "Retry",
@@ -250,16 +252,37 @@ export default function RunsPage() {
                 <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{L.step1}</div>
                 <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end" }}>
                   <div style={{ minWidth: 240 }}>
-                    <Field label={L.env}>
-                      <Select testId="runs-launch-env-select" value={envId} onChange={(e: any) => setEnvId(e.target.value)}>
-                        <option value="">{L.pickEnv}</option>
-                        {envs.map((e) => (
-                          <option key={e.id} value={e.id}>
-                            {e.name}
-                          </option>
-                        ))}
-                      </Select>
-                    </Field>
+                    {envs.length === 0 ? (
+                      // An empty <select> offers nothing to pick and reads as a
+                      // broken control; say what is missing and where to fix it.
+                      <div
+                        data-testid="runs-environment-empty-hint"
+                        style={{ display: "flex", flexDirection: "column", gap: 6, maxWidth: 420 }}
+                      >
+                        <span className="field-label">{L.env}</span>
+                        <span style={{ fontSize: 13, color: "var(--warning)", lineHeight: 1.6 }}>
+                          {L.noEnvs}
+                        </span>
+                        <Link
+                          href={`/projects/${id}/environments`}
+                          data-testid="runs-environment-empty-link"
+                          style={{ color: "var(--accent)", fontSize: 13 }}
+                        >
+                          {L.noEnvsLink} →
+                        </Link>
+                      </div>
+                    ) : (
+                      <Field label={L.env}>
+                        <Select testId="runs-launch-env-select" value={envId} onChange={(e: any) => setEnvId(e.target.value)}>
+                          <option value="">{L.pickEnv}</option>
+                          {envs.map((e) => (
+                            <option key={e.id} value={e.id}>
+                              {e.name}
+                            </option>
+                          ))}
+                        </Select>
+                      </Field>
+                    )}
                   </div>
                   {envId && (
                     <div style={{ paddingBottom: 12 }}>
@@ -337,7 +360,13 @@ export default function RunsPage() {
             <div style={{ display: "flex", justifyContent: "flex-end", borderTop: "1px solid var(--border)", paddingTop: 14 }}>
               <Button
                 testId="runs-launch-run-button"
-                disabled={launching || !envId || approved.length === 0 || (!!live && !liveTerminal)}
+                disabled={
+                  launching ||
+                  envs.length === 0 ||
+                  !envId ||
+                  approved.length === 0 ||
+                  (!!live && !liveTerminal)
+                }
                 onClick={launch}
               >
                 {launching ? L.launching : `${L.run} ▶`}
@@ -345,7 +374,7 @@ export default function RunsPage() {
             </div>
             )}
 
-            {envs.length === 0 && <div style={{ fontSize: 13, color: "var(--warning)" }}>{L.noEnvs}</div>}
+            {/* The missing-environment case is stated by the picker itself (step 01). */}
             {approved.length === 0 && <div style={{ fontSize: 13, color: "var(--warning)" }}>{L.noApproved}</div>}
             {launchError && <div style={{ fontSize: 13, color: "var(--error)" }}>{launchError}</div>}
 
@@ -497,7 +526,17 @@ export default function RunsPage() {
               <div style={{ padding: 16, fontSize: 13, color: "var(--text-secondary)" }}>—</div>
             )}
           </div>
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
+            <span style={{ marginRight: "auto", fontSize: 12, color: "var(--text-secondary)" }} data-testid="runs-subset-count">
+              {subset.size} / {subsetFiltered.length}
+            </span>
+            <Button
+              variant="secondary"
+              testId="runs-subset-select-all-button"
+              onClick={() => setSubset((prev) => new Set([...prev, ...subsetFiltered.map((c: any) => c.id)]))}
+            >
+              {L.selectAll}
+            </Button>
             <Button variant="ghost" testId="runs-subset-clear-button" onClick={() => setSubset(new Set())}>
               {L.clear}
             </Button>

@@ -33,6 +33,15 @@
  *   6. FIDELITY PRECEDENCE (spec > traffic > dom > postman): a later OpenAPI
  *      import wins for its own endpoints and does not delete the
  *      collection-derived ones.
+ *   7. THE IMPORT LEAVES A RUNNABLE PROJECT BEHIND. The base URL is in the
+ *      document, so a project that had NO environment gets one derived from it
+ *      — otherwise "I only added a Postman collection" ends at an empty
+ *      environment picker and nothing can be executed. The assertion is again a
+ *      reconstruction against the fixture: `base_url + endpoint.path` must
+ *      reproduce the URL the collection declares, character for character. An
+ *      environment that already exists is never touched, and a variable whose
+ *      NAME looks like a credential arrives as an empty key — its example value
+ *      never travels.
  *
  * The mock LLM keeps the whole flow offline and hermetic (NFR-D1), so the
  * enrichment counters are deterministic rather than best-effort.
@@ -43,14 +52,24 @@ import {
   paramNamesAt,
   queryParamNames,
   requestBodyFields,
+  resolvedUrl,
+  resolvedUrls,
 } from '../api/discovery.repository';
+import { environmentById, environmentVariables } from '../api/projects.repository';
 import type { Endpoint, ImportSpecResult, TestCase } from '../api/types';
+import { routes } from '../constants/routes';
 import { AI_CRITICALITIES, SPEC_FORMATS, type AiCriticality } from '../constants/states';
 import { test, expect } from '../fixtures';
 import { expectApiError } from '../helpers/expect-api-error';
-import { readPostmanCollection, serverRelative } from '../helpers/postman-collection';
+import {
+  looksLikeCredential,
+  readPostmanCollection,
+  serverRelative,
+  suggestedVariables,
+} from '../helpers/postman-collection';
 import { sampleFile, samplePath } from '../helpers/test-data';
 import { EndpointsPage } from '../pages/endpoints.page';
+import { RunsPage } from '../pages/runs.page';
 import { projectFactory } from '../test-data/project.factory';
 
 /** The real collection under test — 300KB, 37 requests, no auth block. */
@@ -69,6 +88,14 @@ const REQUIREMENTS_DOC = 'sample_requirements_en.md';
  * different contract; this fixture isolates `invalid_spec`.
  */
 const UNSUPPORTED_DOC = 'not-an-api-document.json';
+/**
+ * A tiny SYNTHETIC v2.1 collection whose variables include credential-looking
+ * names (`authToken`, `apiKey`, `client_secret`, `webhookPassword`) with fake
+ * example values. The real calendar collection declares no such variable, and
+ * `e2e/test-data/` is reference data that is never mutated (§8) — so the
+ * credential rule gets its own fixture instead of the real file being doctored.
+ */
+const MINI_COLLECTION = 'billing-api.postman_collection.json';
 
 /** Import + a generation job over a 37-endpoint inventory. */
 const IMPORT_TEST_TIMEOUT_MS = 240_000;
@@ -84,6 +111,17 @@ const UI_IMPORT_TIMEOUT_MS = 60_000;
  * parse so a swapped fixture fails loudly instead of silently weakening.
  */
 const collection = readPostmanCollection(COLLECTION);
+/** The same oracle, over the synthetic credential-carrying collection. */
+const mini = readPostmanCollection(MINI_COLLECTION);
+
+/** `Environment.name` is String(100) in backend/app/models.py — the trim target. */
+const ENVIRONMENT_NAME_LIMIT = 100;
+/** The ASCII part of the collection's title, asserted to survive into the name. */
+const COLLECTION_TITLE_WORDS = 'Calendar API';
+/** The fallback name, used ONLY when a document carries no title at all. */
+const FALLBACK_ENVIRONMENT_NAME = 'Imported environment';
+/** Credential-looking variables of the synthetic collection (contract §2). */
+const MINI_CREDENTIAL_KEYS = ['authToken', 'apiKey', 'client_secret', 'webhookPassword'];
 
 /** Paths whose templating is asserted by name — the ":param" → "{param}" rule. */
 const TEMPLATED_KEYS = [
@@ -155,6 +193,75 @@ test.describe('postman collection fixture @critical @regression', () => {
     for (const key of [...TEMPLATED_KEYS, QUERY_HEAVY_KEY, BODY_KEY]) {
       expect(collection.keys, `${key} is absent from the fixture`).toContain(key);
     }
+  });
+
+  test('the collection carries the base URL and the variables an environment is derived from', () => {
+    // The whole motivation: the base URL is IN the document. If the fixture ever
+    // loses it, every derivation assertion below would pass vacuously.
+    expect(collection.baseUrlKey, 'the fixture no longer declares a base-url variable').toBe(
+      'baseUrl',
+    );
+    expect(collection.baseUrl).toBe('https://www.googleapis.com/calendar/v3');
+    expect(collection.title, 'the fixture title no longer names the API').toContain(
+      COLLECTION_TITLE_WORDS,
+    );
+
+    // The one non-base variable the derived environment must carry across.
+    expect(collection.variables.calendarId).toBe('testCalendarID');
+    expect(suggestedVariables(collection), 'the base-url variable leaked into the suggestions').toEqual(
+      { calendarId: 'testCalendarID' },
+    );
+    // …and it is NOT credential-looking, so it travels with its value.
+    expect(looksLikeCredential('calendarId')).toBe(false);
+
+    // Reconstruction oracle: one absolute URL per distinct PATH — GET and
+    // DELETE of the same resource share a URL, so there are fewer URLs than
+    // method+path keys, and the reconstruction below compares SETS.
+    expect(collection.absoluteUrls.length, 'the fixture no longer holds 23 distinct URLs').toBe(23);
+    expect(collection.absoluteUrls.length).toBeLessThan(collection.keys.length);
+    expect(collection.absoluteUrls).toContain(
+      'https://www.googleapis.com/calendar/v3/calendars/{calendarId}/acl/{ruleId}',
+    );
+    for (const url of collection.absoluteUrls) {
+      expect(url.startsWith(collection.baseUrl), `${url} is not under the declared base URL`).toBe(
+        true,
+      );
+    }
+  });
+
+  test('the synthetic collection stages the credential rule the real one cannot', () => {
+    expect(mini.schema, 'the synthetic fixture is not a Postman v2.x collection').toContain(
+      'getpostman.com/json/collection/v2',
+    );
+    expect(mini.title, 'the synthetic fixture lost its title').toBe('Billing API');
+    expect(mini.baseUrlKey).toBe('baseUrl');
+    expect(mini.baseUrl).toBe('https://billing.example.com/api/v2');
+    expect(mini.keys).toEqual([
+      'GET /tenants/{tenantId}/invoices',
+      'POST /tenants/{tenantId}/invoices',
+    ]);
+    // Both requests address one URL — the two methods share it.
+    expect(mini.absoluteUrls).toEqual([
+      'https://billing.example.com/api/v2/tenants/{tenantId}/invoices',
+    ]);
+
+    // Plain variables carry their values; credential-looking ones are emptied —
+    // and the fake values exist so the spec can prove they went nowhere.
+    for (const key of MINI_CREDENTIAL_KEYS) {
+      expect(looksLikeCredential(key), `${key} is not recognised as credential-looking`).toBe(true);
+      expect(mini.variables[key], `${key} has no value to leak`).toBeTruthy();
+    }
+    expect(suggestedVariables(mini)).toEqual({
+      tenantId: 'tenant-42',
+      pageSize: '50',
+      authToken: '',
+      apiKey: '',
+      client_secret: '',
+      webhookPassword: '',
+    });
+    // Control: the rule is a substring match, not an allow-list of exact names.
+    expect(looksLikeCredential('tenantId')).toBe(false);
+    expect(looksLikeCredential('pageSize')).toBe(false);
   });
 });
 
@@ -468,6 +575,13 @@ test.describe('postman collection import @critical @regression', () => {
     const spec = await api.discovery.importSpec(project.id, sampleFile(OPENAPI_SPEC));
     expect(spec.format).toBe('openapi3');
     expect(spec.endpoints_count).toBeGreaterThan(0);
+    // The collection import already left an environment behind, so the second
+    // import fills no void and creates nothing.
+    expect(
+      spec.environment_created,
+      'a second import created another environment for the same project',
+    ).toBeNull();
+    expect((await api.projects.listEnvironments(project.id)).length).toBe(1);
 
     const after = await api.discovery.listEndpoints(project.id);
     const afterKeys = [...new Set(importedKeys(after))].sort();
@@ -508,6 +622,220 @@ test.describe('postman collection import @critical @regression', () => {
     for (const format of ['openapi', 'postman']) {
       expect(errors, `the refusal never mentions ${format}`).toContain(format);
     }
+  });
+});
+
+// --- the environment the import derives from the document ------------------------
+
+/**
+ * "I only added a Postman collection for the API connection" — and the New run
+ * screen showed an empty environment picker. The base URL was in the document
+ * all along, so these tests hold the product to deriving it instead of asking
+ * the user to retype it, and to deriving NOTHING it cannot read off the file.
+ */
+test.describe('environment derived from an imported collection @critical @regression', () => {
+  test('a project with no environment gets exactly one, whose base URL reconstructs the document', async ({
+    api,
+    project,
+  }) => {
+    test.setTimeout(IMPORT_TEST_TIMEOUT_MS);
+
+    // The precondition is the whole licence for this behaviour: it fills a void.
+    expect(
+      await api.projects.listEnvironments(project.id),
+      'the fresh project already had an environment — the test cannot prove a void was filled',
+    ).toEqual([]);
+
+    const { result, endpoints } = await importCollection(api, project.id);
+    const created = result.environment_created;
+
+    await test.step('the import echoes the environment it created, and imports as before', async () => {
+      expect(result.format).toBe(COLLECTION_FORMAT);
+      expect(result.endpoints_count).toBe(collection.keys.length);
+      expect(
+        created,
+        'no environment was derived from a document that declares a base URL',
+      ).not.toBeNull();
+      expect(typeof created!.id, 'environment_created.id is not a string').toBe('string');
+      expect(created!.id.length).toBeGreaterThan(0);
+      expect(created!.base_url.length).toBeGreaterThan(0);
+    });
+
+    const environments = await api.projects.listEnvironments(project.id);
+    const environment = environmentById(environments, created!.id);
+
+    await test.step('exactly one environment exists, and it is the one the response names', async () => {
+      expect(environments.length, 'the import created more than one environment').toBe(1);
+      expect(environment, 'environment_created names an id the project does not have').toBeDefined();
+      expect(environment!.project_id).toBe(project.id);
+      expect(environment!.name).toBe(created!.name);
+      expect(environment!.base_url).toBe(created!.base_url);
+      // A derived environment is a safe, plain default: no auth is invented, and
+      // TLS verification stays on. Credentials are the user's to add.
+      expect(environment!.auth_type).toBe('none');
+      expect(environment!.tls_strict).toBe(true);
+      expect(environment!.auth_config_masked, 'the derived environment carries a secret').toBe(false);
+    });
+
+    await test.step('the name comes from the document, not from a placeholder', async () => {
+      expect(created!.name).toContain(COLLECTION_TITLE_WORDS);
+      expect(created!.name).toContain('(imported)');
+      expect(
+        created!.name,
+        'the document has a title, so the fallback name is wrong here',
+      ).not.toBe(FALLBACK_ENVIRONMENT_NAME);
+      expect(
+        created!.name.length,
+        `the name exceeds the ${ENVIRONMENT_NAME_LIMIT}-character column`,
+      ).toBeLessThanOrEqual(ENVIRONMENT_NAME_LIMIT);
+    });
+
+    // --- THE RECONSTRUCTION ASSERTION (the oracle is the file, again) ---------
+    // A base URL that cannot rebuild the document's URLs is worse than none: the
+    // run would fire requests at a host the user never named.
+    await test.step('base_url + endpoint path reproduces the URLs the collection declares', async () => {
+      const origin = new URL(collection.baseUrl).origin;
+      expect(created!.base_url.startsWith(origin), 'a host the document never names').toBe(true);
+      expect(created!.base_url, 'an unresolved {{variable}} survived into the base URL').not.toContain(
+        '{{',
+      );
+
+      // Control: the oracle can fail.
+      expect(collection.absoluteUrls).not.toContain(`${origin}/__traceo_fabricated__`);
+
+      // One named endpoint, spelled out — the failure message points at a URL a
+      // human can look up in the file.
+      const named = TEMPLATED_KEYS[0];
+      const endpoint = endpointByKey(endpoints, named);
+      expect(endpoint, `${named} did not survive the import`).toBeDefined();
+      expect(
+        resolvedUrl(created!.base_url, endpoint!.path),
+        `${named} does not reconstruct to the URL the collection declares`,
+      ).toBe(collection.requests.find((r) => r.key === named)!.absoluteUrl);
+
+      // …and then the whole inventory: the reconstructed set IS the document's
+      // set. This holds whichever side of the split the importer put the base
+      // URL's own path prefix on (`/calendar/v3`), which is the point.
+      const reconstructed = [...new Set(resolvedUrls(created!.base_url, endpoints))].sort();
+      expect(reconstructed).toEqual([...collection.absoluteUrls].sort());
+    });
+
+    await test.step('the collection variables travel, minus the base-url one', async () => {
+      const variables = environmentVariables(environment!);
+      expect(variables.calendarId, 'calendarId did not travel into the environment').toBe(
+        collection.variables.calendarId,
+      );
+      expect(
+        Object.keys(variables),
+        'the base-url variable was duplicated into the variables map',
+      ).not.toContain(collection.baseUrlKey);
+      expect(variables).toEqual(suggestedVariables(collection));
+    });
+
+    await test.step('a second import of the same document creates nothing more', async () => {
+      const again = await api.discovery.importSpec(project.id, sampleFile(COLLECTION));
+      expect(again.endpoints_count).toBe(collection.keys.length);
+      expect(
+        again.environment_created,
+        're-importing created a second environment for the same project',
+      ).toBeNull();
+
+      const after = await api.projects.listEnvironments(project.id);
+      expect(after.length).toBe(1);
+      expect(after[0].id).toBe(created!.id);
+      expect(after[0].base_url).toBe(created!.base_url);
+    });
+  });
+
+  test('an environment the user already owns is never touched or overwritten', async ({ api }) => {
+    test.setTimeout(IMPORT_TEST_TIMEOUT_MS);
+
+    const lead = api.as('qa_lead');
+    const project = await lead.projects.create(projectFactory());
+    // Deliberately unlike the document: a different host, a different value for
+    // the very variable the collection declares. Nothing here may move.
+    const mine = await lead.projects.createEnvironment(project.id, {
+      name: 'staging (mine)',
+      base_url: 'https://staging.internal.example.test',
+      variables: { calendarId: 'mine-not-the-documents' },
+      tls_strict: false,
+    });
+
+    const { result } = await importCollection(api, project.id);
+    expect(result.endpoints_count, 'the import itself must be unaffected').toBe(
+      collection.keys.length,
+    );
+    expect(
+      result.environment_created,
+      'an environment was created for a project that already had one',
+    ).toBeNull();
+
+    const environments = await api.projects.listEnvironments(project.id);
+    expect(environments.length, 'the import added an environment alongside the existing one').toBe(1);
+
+    const after = environments[0];
+    expect(after.id).toBe(mine.id);
+    expect(after.name).toBe(mine.name);
+    expect(after.base_url, "the user's base URL was overwritten with the document's").toBe(
+      mine.base_url,
+    );
+    expect(after.base_url).not.toContain('googleapis');
+    expect(after.tls_strict, 'an unrelated setting of the existing environment moved').toBe(false);
+    expect(environmentVariables(after), "the user's variables were rewritten").toEqual({
+      calendarId: 'mine-not-the-documents',
+    });
+  });
+
+  test('credential-looking variables arrive as empty keys, with their values left behind', async ({
+    api,
+  }) => {
+    const lead = api.as('qa_lead');
+    const project = await lead.projects.create(projectFactory());
+
+    const result = await api.discovery.importSpec(project.id, sampleFile(MINI_COLLECTION));
+    expect(result.format).toBe(COLLECTION_FORMAT);
+    expect(result.endpoints_count).toBe(mini.keys.length);
+
+    const created = result.environment_created;
+    expect(created, 'the synthetic collection declares a base URL, so one must be derived').not.toBeNull();
+    // An ASCII title, so the naming rule is asserted as an equality here.
+    expect(created!.name).toBe(`${mini.title} (imported)`);
+
+    const environments = await api.projects.listEnvironments(project.id);
+    expect(environments.length).toBe(1);
+    const environment = environments[0];
+
+    await test.step('the base URL still reconstructs this document too', async () => {
+      const endpoints = await api.discovery.listEndpoints(project.id);
+      const reconstructed = [...new Set(resolvedUrls(created!.base_url, endpoints))].sort();
+      expect(reconstructed).toEqual([...mini.absoluteUrls].sort());
+    });
+
+    await test.step('plain variables carry values, credential-looking ones carry keys only', async () => {
+      const variables = environmentVariables(environment);
+      // Named explicitly first, so the set equality below cannot pass vacuously.
+      expect(variables.tenantId).toBe('tenant-42');
+      expect(variables.pageSize).toBe('50');
+      for (const key of MINI_CREDENTIAL_KEYS) {
+        expect(
+          Object.keys(variables),
+          `${key} was dropped instead of being carried as an empty key to fill`,
+        ).toContain(key);
+        expect(variables[key], `${key} carried its example value out of the document`).toBe('');
+      }
+      expect(variables).toEqual(suggestedVariables(mini));
+    });
+
+    await test.step('no credential value appears anywhere in what the API returned', async () => {
+      const serialised = JSON.stringify({ result, environment, environments });
+      for (const key of MINI_CREDENTIAL_KEYS) {
+        const value = mini.variables[key];
+        expect(value.length, `${key} has no value, so this check would be vacuous`).toBeGreaterThan(0);
+        expect(serialised, `the example value of ${key} was copied out of the document`).not.toContain(
+          value,
+        );
+      }
+    });
   });
 });
 
@@ -562,6 +890,25 @@ test.describe('collection import through the endpoints page @critical @regressio
       await expect(endpoints.rowFor('/freeBusy')).toBeVisible();
     });
 
+    await test.step('the derived environment is confirmed on screen, with a way to open it', async () => {
+      // The project had no environment before this upload, so the import filled
+      // that void and the page must say so — otherwise the user has no idea a
+      // run is now possible.
+      await expect(endpoints.importEnvironmentCreated).toBeVisible();
+
+      const environments = await api.projects.listEnvironments(project.id);
+      expect(environments.length, 'the UI import created no environment').toBe(1);
+      const environment = environments[0];
+
+      // Asserted against the API's own row — the line reports what exists.
+      await expect(endpoints.importEnvironmentCreated).toContainText(environment.name);
+      await expect(endpoints.importEnvironmentCreated).toContainText(environment.base_url);
+      await expect(endpoints.importEnvironmentCreatedLink).toHaveAttribute(
+        'href',
+        routes.environments(project.id),
+      );
+    });
+
     await test.step('the enrichment counters are reported next to the import result', async () => {
       await expect(endpoints.enrichedBadge).toBeVisible();
       await expect(endpoints.enrichmentDiscardedBadge).toBeVisible();
@@ -587,5 +934,33 @@ test.describe('collection import through the endpoints page @critical @regressio
         endpoints.aiCriticalityCells.filter({ hasText: first.ai_criticality! }).first(),
       ).toHaveAttribute('data-state', first.ai_criticality!);
     });
+  });
+});
+
+// --- the other end of the same story: a project that has no environment ----------
+
+test.describe('the runs page with no environment @critical @regression', () => {
+  test('a project with no environment says so instead of offering an empty picker', async ({
+    api,
+    asQaLead,
+  }) => {
+    // The defect this closes: with no environment the picker rendered as an
+    // empty <select> — a control that offers nothing and explains nothing.
+    // Nothing is imported here, so the project genuinely has no environment.
+    const project = await api.as('qa_lead').projects.create(projectFactory());
+    expect(await api.projects.listEnvironments(project.id)).toEqual([]);
+
+    const runs = new RunsPage(asQaLead);
+    await runs.goto(project.id);
+    await expect(runs.root).toBeVisible({ timeout: FIRST_VISIT_TIMEOUT_MS });
+
+    await expect(runs.environmentEmptyHint).toBeVisible();
+    // The empty select is not merely hidden behind the hint — it is not rendered.
+    await expect(runs.environmentSelect).toHaveCount(0);
+    // …and the hint is actionable: it points at the page that fixes it.
+    await expect(runs.environmentEmptyLink).toHaveAttribute(
+      'href',
+      routes.environments(project.id),
+    );
   });
 });

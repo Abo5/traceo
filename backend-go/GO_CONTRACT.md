@@ -69,7 +69,7 @@ Timestamps: RFC3339 UTC. IDs: uuid v4 strings. JSON tags snake_case on every res
   plus the untouched flow/grounding/autopilot gates).
 
 ## Module ownership (routes identical to the Python contracts — read them)
-- **identity**: /auth/register /auth/login /me /members* /audit
+- **identity**: /auth/register /auth/login /auth/dev-session /me /members* /audit
 - **projects**: /projects CRUD, /projects/{id}/dashboard (incl. v2 trend/regression_watch/
   gaps_detail/open_defects/median_duration_ms), environments CRUD + check
 - **ingestion**: documents upload+list, requirements list/patch/create/delete/confirm_all;
@@ -86,7 +86,8 @@ Timestamps: RFC3339 UTC. IDs: uuid v4 strings. JSON tags snake_case on every res
   exported — discards violations, counts them; duplicates skip
 - **review**: test-cases list/get/patch, approve/reject/bulk, manual create, links add/remove
 - **execution**: runs launch (auth once per env: api_key/basic/bearer/oauth2_cc), goroutine
-  pool concurrency, {{var}} interpolation + extractions chaining, assertion evaluator
+  pool concurrency, {{var}} interpolation + `{name}` path binding + extractions chaining,
+  assertion evaluator
   (status_code+expected_any, json_field ops eq/ne/gt/lt/contains/regex/exists/absent,
   response_time_ms, header, json_schema-lite), failed vs errored, evidence redacted+truncated,
   cancel, display_id; fires integrations.FireWebhooks on terminal state (lazy/no cycle)
@@ -295,6 +296,96 @@ verbatim: description `"<verb> the <resource> resource at <path>."`, group = fir
 `medium` / reads `low`. Every pre-existing mock behaviour is byte-identical — this is a new
 promptID branch only.
 
+## Derived environment addendum (fixed contract — parity with the Python backend is mandatory)
+
+An imported document already states its base URL, so the import derives a **runnable
+environment** instead of leaving the New run screen with an empty picker.
+`internal/modules/collections/environment.go` owns the derivation (deterministic, part of the
+existing conversion — **no LLM**); `discovery.autocreateEnvironment` wires it in.
+**No new routes.**
+
+**1. Base-URL derivation** — `collections.DeriveEnvironment(format, root) EnvironmentDraft`:
+
+| format                | base URL                                                                    |
+|-----------------------|-----------------------------------------------------------------------------|
+| `postman2`            | collection variable named `baseUrl`/`base_url`/`url`/`host` (case-insensitive, that PREFERENCE order, first usable match wins); else the most frequent origin across the request URLs |
+| `insomnia4`           | same names in the `environment` resources' `data`; else the most frequent origin |
+| `har`                 | the most frequent origin across `log.entries[].request.url`                   |
+| `openapi3`            | `servers[0].url`, with declared server-variable `default`s substituted        |
+| `swagger2`            | `schemes` (https preferred) + `host` + `basePath`                             |
+
+A candidate is USABLE only if it states `scheme://host` and holds no unresolved `{…}`
+placeholder; userinfo, query, fragment and the trailing slash are dropped. Most-frequent
+ties break on first appearance (Python `Counter.most_common` semantics).
+**If nothing can be derived, nothing is derived — a host is NEVER invented.**
+
+**The invariant: `base_url + endpoint path` reconstructs the original URL exactly.** Endpoint
+paths are stored server-relative with ONLY the origin (or the leading `{{baseUrl}}` token)
+stripped, so the derived base carries exactly what was stripped — including a path prefix
+such as `/calendar/v3` that lived inside the variable. That is also why the most-frequent
+fallback derives the ORIGIN only: nothing beyond `scheme://host` was removed from those
+paths, so appending a "common prefix" would double it.
+
+**2. Suggested variables.** Every OTHER collection/environment variable becomes the
+environment's `variables` map with its example value. A name containing `token`, `secret`,
+`key`, `password`, `auth`, `bearer` or `apikey` (case-insensitive substring,
+`collections.IsCredentialName`) is a CREDENTIAL: the key is carried with an **empty** value
+for the user to fill, and its value is never copied into the database, a response, or a log.
+
+**3. Auto-create on import.** After a SUCCESSFUL api-specs import, when the project has
+**zero** environments AND a base URL was derived: create one via `projects.CreateEnvironment`
+(the single environment-creation path, shared with `POST /environments`) with
+`name = "<document title> (imported)"` clipped to the 100-char column limit, falling back to
+`"Imported environment"`; `base_url` = derived; `auth_type = "none"`; `variables` = item 2;
+`tls_strict = true`. An existing environment is NEVER touched or overwritten — this only ever
+fills a genuine void. Audit action **`environment.autocreated`** (`environment`/`env.ID`,
+detail `{"name", "auth_type", "auth_config_set", "format", "base_url", "variables"}` — the
+base detail every environment write records, plus the source format, the derived URL and the
+variable NAMES; a variable VALUE never reaches the audit trail). A failure here never fails
+the import.
+
+**Document title.** The title feeding `EnvironmentName` (and the ApiSpec row) is what the
+document calls itself, byte for byte as the Python backend derives it: Postman `info.name`;
+HAR `log.creator.name` (the creator's *version* is NOT appended — it names a tool build, not
+the document); Insomnia the **workspace** resource's `name` (`__export_source` identifies the
+exporting application, not the document, and must never become an environment name).
+
+**4. Response.** `POST /v1/projects/{id}/api-specs` gains exactly one key,
+`environment_created`: `null`, or `{id, name, base_url}` (those three keys only). Every
+pre-existing key keeps its name and meaning; the grounding gate and every other behaviour
+are untouched.
+
+## Path parameters and dev auto-login (fixed contract — parity with the Python backend)
+
+**Path-parameter binding** (`internal/modules/execution`, port of `_bind_path_params`).
+Inventories store paths as templates (`/calendars/{calendarId}/events`) and the value lives
+in the step's params, so sending the template literally requests a URL that cannot exist —
+every path-parameterised case would 404 whatever the system under test does. Once per step,
+AFTER `{{var}}` interpolation and AFTER the params map is assembled, every **single-brace**
+`{name}` placeholder (`\{([A-Za-z0-9_][A-Za-z0-9_.-]*)\}` — the `{{var}}` mechanism is
+separate and already ran) is resolved:
+
+1. the step/auth params, when the key is present and non-null — the key is then REMOVED from
+   the params map so the value is not also sent as a query parameter;
+2. otherwise the run context (environment variables), which consumes nothing;
+3. otherwise the placeholder is left literal.
+
+Values are percent-encoded as `urllib.parse.quote(v, safe="")` — nothing is safe, so a value
+containing `/` or a space cannot alter the path structure.
+
+**Dev auto-login.** `POST /v1/auth/dev-session` returns `{token, user}` exactly like
+`/auth/login` for the configured user, with no credentials. Guards:
+
+| | |
+|---|---|
+| `TRACEO_DEV_AUTOLOGIN` | `"1"` enables the route; anything else (default) → **404** `not_found`, indistinguishable from a route that does not exist |
+| `TRACEO_DEV_AUTOLOGIN_EMAIL` | user to hand out, default `demo@traceo.sa`; matched case-insensitively after trimming |
+| no such user | **503** `dev_session_unavailable`, message naming the address looked up |
+| `TRACEO_ENV=production` + flag on | `config.ProductionSafetyError` refuses to boot, alongside the dev-secret and demo-seed checks |
+
+Every success writes the audit action **`auth.dev_session`** (`user`/user id, detail
+`{"email"}`).
+
 ## Quality gates
 backend-go/tests as Go tests (httptest against a fresh in-memory app+temp sqlite):
 grounding gate (adversarial fixtures — zero fabricated identifiers persisted), tenant
@@ -311,6 +402,19 @@ untrusted-data framing, exotic probes non-ASCII yet Arabic-free), collections
 params, inferred body schemas with no invented fields, observed status codes, idempotent
 re-import; HAR concrete-id templating + observed_count + credential-header redaction;
 Insomnia; the 422 that names the supported formats; the ADVERSARIAL enrichment gate;
-fidelity precedence both ways; OpenAPI regression; mock determinism; nullable ai_* columns).
+fidelity precedence both ways; OpenAPI regression; mock determinism; nullable ai_* columns),
+derived environment (`tests/environment_import_test.go` — the same real Postman export
+yields `base_url = https://www.googleapis.com/calendar/v3` and `calendarId` as a suggested
+variable, `base_url + path` reconstruction, HAR most-frequent origin, Insomnia environment
+variable, OpenAPI `servers[0]` with a variable default, Swagger `schemes+host+basePath`, a
+spec without `servers` derives NOTHING, an existing environment is never touched, a
+re-import creates nothing, credential-named variables carried empty with their live values
+never disclosed, name precedence, userinfo stripping, name fallback + column limit),
+path binding (`tests/path_binding_test.go` — a real run against a local recorder asserts the
+request line on the wire: value from the step params with the consumed key gone from the
+query, value from an environment variable, an unfillable placeholder left literal, and a
+value containing a space and a slash percent-encoded), dev auto-login
+(`tests/dev_session_test.go` — 404 while off, token+user+`auth.dev_session` audit entry when
+on, 503 `dev_session_unavailable` when the configured user is missing, production refusal).
 `gofmt -l .` silent; `go vet ./...` clean; `go build ./...` clean;
 `go test -race -count=1 ./...` green.

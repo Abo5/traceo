@@ -28,6 +28,8 @@ Note: the components in `frontend/components/ui.tsx` forward a `testId` prop to 
 | `login-form-submit-button` | Button | Submit credentials |
 | `login-register-link` | Link | Go to /register |
 
+**Dev auto-login adds no testid — deliberately.** `frontend/components/providers.tsx` probes `POST /v1/auth/dev-session` once on mount when no token is stored; on a backend with `TRACEO_DEV_AUTOLOGIN=1` it stores the returned session and redirects to `/projects`, and on any other backend the endpoint answers `404` and the probe falls through silently. There is no rendered element, so there is nothing to register and nothing to select. The table above therefore stays the complete login surface for the suite: the E2E backend runs with the flag off (pinned by `negative.spec.ts` — "the dev auto-login route does not exist while the flag is off"), so `auth.spec.ts` and the login negatives observe the same page they always did.
+
 ## /register — `frontend/app/register/page.tsx`
 
 | data-testid | Element | Purpose |
@@ -242,6 +244,8 @@ Note: the components in `frontend/components/ui.tsx` forward a `testId` prop to 
 | `endpoints-import-total-badge` | Badge | Total endpoints after import |
 | `endpoints-import-enriched-badge` | Badge | AI enrichment: endpoints annotated |
 | `endpoints-import-enrichment-discarded-badge` | Badge | AI enrichment: items the validation gate refused |
+| `endpoints-import-environment-created` | line | Confirmation that the import derived a runnable environment — prints its name and base URL (rendered only when `environment_created` is non-null) |
+| `endpoints-import-environment-created-link` | Link | Go to the environments page to review or edit the derived environment |
 | `endpoints-inventory-card` | Card | Endpoint inventory section |
 | `endpoints-inventory-retry-button` | Button | Reload after a load error |
 | `endpoints-empty-state` | Empty | No endpoints discovered |
@@ -255,6 +259,8 @@ Note: the components in `frontend/components/ui.tsx` forward a `testId` prop to 
 | `endpoints-row-ai-criticality-badge` | Badge | The rendered criticality badge inside that wrapper |
 
 **Import-format badge.** `endpoints-import-format-badge` shows the `format` key of the import response — a closed vocabulary shared by both backends: `openapi3 | swagger2 | postman2 | har | insomnia4`. The badge PRINTS a human label ("Postman Collection v2") and carries the vocabulary value on **`data-format`** (mirrored on `data-state`), so it is asserted on the attribute and never on the label — the `data-state` convention of this document applied to a non-state vocabulary. `e2e/pages/endpoints.page.ts` (`formatBadgeFor`) reads `data-format` only, which leaves the wording free to change.
+
+**Derived-environment line.** A successful import echoes `environment_created` — `null` or `{id, name, base_url}`. It is non-null **only** when the project had zero environments at import time *and* a base URL could be derived from the document itself; an existing environment is never touched, and no host is ever invented. When it is non-null the page renders `endpoints-import-environment-created` with the created name and base URL, plus `endpoints-import-environment-created-link` to `/projects/{id}/environments`. Absence of both ids is therefore a legitimate state (the usual one on any re-import), not a defect — specs assert their presence only on a project that started with no environment.
 
 **AI-enrichment cells.** The three `endpoints-row-ai-*` ids are rendered **only where the corresponding column is non-null** — enrichment is optional (gated on the project's `automation: "auto"`) and an import always succeeds with zero enrichment. Absence of these ids is therefore a legitimate state, not a defect, and specs assert the count against the API rather than assuming a fixed number of them. `ai_description` and `ai_group` are stored and rendered as **plain text**: enrichment may never create, rename or delete an endpoint, nor alter a path, a parameter or a field name.
 
@@ -387,7 +393,9 @@ The **QA Insight Agent** screen — the sixth engine: fully deterministic, no la
 |---|---|---|
 | `runs-page-root` | container | Runs page root |
 | `runs-page-header` | PageHeader | Page title + actions |
-| `runs-launch-env-select` | Select | Target environment |
+| `runs-launch-env-select` | Select | Target environment — rendered **only** when the project has at least one environment |
+| `runs-environment-empty-hint` | text | Shown *instead of* the picker when the project has no environment at all: an empty `<select>` offers nothing and explains nothing |
+| `runs-environment-empty-link` | Link | Go to the environments page to create one |
 | `runs-launch-subset-button` | Button | Open the subset picker modal |
 | `runs-launch-run-button` | Button | Launch a run (202 {job_id, run_id}) |
 | `runs-live-panel` | panel | Live run panel (while a run is active) |
@@ -405,6 +413,8 @@ The **QA Insight Agent** screen — the sixth engine: fully deterministic, no la
 | `runs-subset-search-input` | Input | Filter cases in the picker |
 | `runs-subset-clear-button` | Button | Clear the subset |
 | `runs-subset-apply-button` | Button | Apply the subset |
+
+**Environment picker vs. empty hint.** `runs-launch-env-select` and `runs-environment-empty-hint` are mutually exclusive: with zero environments the select is **not rendered at all** (so a spec asserts `toHaveCount(0)` on it, not that it is empty), and the hint takes its place with a link to `/projects/{id}/environments`. The usual way a project stops being in that state is the import itself — importing an API document into a project with no environment derives one from the document (see the endpoints page above).
 
 ## /projects/[id]/runs/[runId] — `frontend/app/projects/[id]/runs/[runId]/page.tsx`
 

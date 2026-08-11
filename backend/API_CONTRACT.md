@@ -24,6 +24,9 @@ from ..llm import get_provider               # get_provider().complete_json(prom
 - Audit (FR-USR-06): call `audit(db, org_id, user.id, action, object_type, object_id, detail)` for:
   auth events, requirement edits, approvals/rejections, environment changes, run initiation.
 - Timestamps ISO 8601 UTC; ids are UUID strings; JSON field names snake_case.
+- Boot safety: `config.assert_production_safe(settings)` runs at import and raises `ConfigError` when
+  `TRACEO_ENV=production` is combined with the built-in dev signing key, `TRACEO_SEED_DEMO=1`, or
+  `TRACEO_DEV_AUTOLOGIN=1`. Any new development-only shortcut MUST be added to that check.
 
 ## LLM prompt contract (MockProvider heuristics depend on these exact markers)
 
@@ -45,6 +48,19 @@ from ..llm import get_provider               # get_provider().complete_json(prom
 ### modules/identity.py
 - POST /auth/register {org_name, name, email, password} -> {token, user} (creates org + admin)
 - POST /auth/login {email, password} -> {token, user{id,name,email,role,locale,organisation_id,org_name}}
+- POST /auth/dev-session (no body, no credentials) -> {token, user} — DEVELOPMENT ONLY.
+  Issues a session for `settings.DEV_AUTOLOGIN_EMAIL` (env `TRACEO_DEV_AUTOLOGIN_EMAIL`,
+  default `demo@traceo.sa`, matched trimmed + lower-cased) so a dev/demo node can skip the
+  login form. Gated by `settings.DEV_AUTOLOGIN` (env `TRACEO_DEV_AUTOLOGIN`, "1" to enable,
+  default OFF).
+  - flag off (the default) -> 404 `not_found` — the route must look nonexistent, never
+    "disabled"; the response says nothing about the feature.
+  - flag on, user found -> 200 with the SAME body shape as /auth/login, and an audit entry
+    `auth.dev_session` (object_type "user", detail `{email}`).
+  - flag on, no such user -> 503 `dev_session_unavailable` (the node is misconfigured, not
+    the caller's fault; e.g. TRACEO_SEED_DEMO=0 with the default email).
+  - TRACEO_ENV=production + the flag on -> `assert_production_safe` raises ConfigError and the
+    process refuses to boot, so the route can never be reachable in production.
 - GET  /me -> user profile; PATCH /me {name?, locale?}
 - GET  /members (view) / POST /members/invite {email,name,role,password} (manage_members)
 - PATCH /members/{id} {role} / DELETE /members/{id} (manage_members)
@@ -100,7 +116,28 @@ from ..llm import get_provider               # get_provider().complete_json(prom
   when its mode ranks >= the existing row's, and rows this document does not mention are deleted only when
   they came from the SAME mode — a spec import never deletes collection-discovered endpoints.
   Response: {spec_id, version, endpoints_count, warnings, diff{added,removed,changed},
-             format, added, updated, removed, total, enriched, enrichment_discarded}.
+             format, added, updated, removed, total, enriched, enrichment_discarded,
+             environment_created}.
+- ENVIRONMENT DERIVATION (modules/collections.py, deterministic, NO LLM). Every import derives
+  {base_url, variables} from the document itself, so importing a collection is enough to run:
+    * postman2  — first collection variable named baseUrl|base_url|url|host (case-insensitive, document
+                  order); else the most frequent base element across request URLs.
+    * har       — most frequent scheme://host across log.entries.
+    * insomnia4 — same variable names from the environment resources; else most frequent request origin.
+    * openapi3  — servers[0].url (server-variable defaults substituted); swagger2 — schemes+host+basePath
+                  (https preferred, defaulted only when `schemes` is absent).
+  INVARIANT: base_url + stored endpoint path reconstructs the original URL exactly — the base URL carries
+  whatever path prefix the converter stripped (e.g. {{baseUrl}}=https://www.googleapis.com/calendar/v3)
+  and nothing it did not. A value without a scheme, or a document with no URL, derives NOTHING — a host
+  is never invented. All other variables become the environment's variables with their example values,
+  EXCEPT names containing token|secret|key|password|auth|bearer|apikey (case-insensitive), whose keys are
+  carried with an EMPTY value — those values are never copied, returned or logged.
+  AUTO-CREATE: after a successful import, if the project has ZERO environments AND a base URL was derived,
+  one is created via the projects module's write path — name "<document title> (imported)" (title trimmed
+  to the 100-char column limit, "Imported environment" when the document has no title), auth_type "none",
+  tls_strict true — and returned as environment_created {id, name, base_url}; null otherwise. An existing
+  environment is NEVER touched or overwritten. Audit: "environment.autocreated" with
+  {name, auth_type, auth_config_set, format, base_url, variables[names only]}.
 - AI ENRICHMENT (modules/enrichment.py) — collection imports only, and only when project.automation="auto".
   Runs inside the same import, AFTER the deterministic inventory exists. The model receives only the derived
   inventory (method, path, param names, body field names — never raw file text) and returns
@@ -178,6 +215,21 @@ existing `generation.grounding_validate` before persistence (imported, never re-
   request(method,url,headers,body redacted via redact()), response(status,headers,body truncated to
   EVIDENCE_MAX_BYTES), elapsed_ms, assertion outcomes. Results immutable, test_case_version recorded.
   Partial results stream to DB as cases finish; run.counts updated at end.
+- **Path-parameter binding (`_bind_path_params`).** Inventories store paths as templates
+  (`/calendars/{calendarId}/events`), so single-brace `{name}` placeholders are substituted once per
+  step — AFTER `{{var}}` interpolation and AFTER the query params are assembled, immediately before
+  the request is sent. `{{var}}` interpolation is a separate, earlier pass and is unaffected.
+  Precedence per placeholder:
+  1. the step's `request.params[name]`, when present and non-null — and that key is REMOVED from the
+     query params, so the value is never sent twice;
+  2. otherwise the environment variable `name` from the run context (nothing is consumed);
+  3. otherwise the placeholder is left literal (the request will 404, and the evidence shows exactly
+     which variable was missing).
+  Values are stringified and percent-encoded with `safe=""`, so `/`, spaces and `?` stay inside a
+  single path segment (`primary cal/1` -> `primary%20cal%2F1`). The evidence URL is the URL actually
+  sent. Without this the engine issued
+  `GET /calendars/%7BcalendarId%7D/events?calendarId=example` and every path-parameterised case 404'd
+  regardless of the system under test.
 - GET /runs/{id} -> status + counts; GET /runs/{id}/results?outcome= -> per-case results with evidence
 - POST /runs/{id}/cancel (best-effort flag, FR-EXE-10)
 - GET /projects/{id}/runs — history
@@ -204,3 +256,12 @@ existing `generation.grounding_validate` before persistence (imported, never re-
   422s, the capability guards, the audit entry, and the hardened mock-prompt path. RELEASE GATE.
 - test_isolation.py — two orgs; every list/get endpoint returns 404/empty across tenants. RELEASE GATE.
 - test_flow.py — end-to-end: register -> project -> upload md doc -> confirm -> import spec -> generate -> approve -> run against a local test SUT (spin up in-process FastAPI test app) -> matrix has passing rows -> export xlsx.
+- test_config_guard.py — `assert_production_safe` refuses to boot a production node on the dev secret
+  key, demo seeding, or TRACEO_DEV_AUTOLOGIN, and reports all three problems in one message. RELEASE GATE.
+- test_path_params.py — `_bind_path_params` unit rules (params source + key removal, environment
+  fallback, precedence, null passthrough, unknown placeholder left literal, percent-encoding with
+  `safe=""`) plus an end-to-end run through a stubbed `httpx.MockTransport` asserting the URL actually
+  sent carries the substituted value and no duplicate query key. RELEASE GATE.
+- test_dev_session.py — POST /auth/dev-session: 404 when the flag is off (and leaks nothing), token +
+  login-identical user when on, 503 `dev_session_unavailable` when the configured user is missing, and
+  the `auth.dev_session` audit entry. RELEASE GATE.

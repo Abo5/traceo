@@ -20,6 +20,10 @@ _fd, _DB_PATH = tempfile.mkstemp(prefix="traceo_test_", suffix=".sqlite3")
 os.close(_fd)
 os.environ["TRACEO_DATABASE_URL"] = f"sqlite:///{_DB_PATH}"
 os.environ["TRACEO_SEED_DEMO"] = "0"
+# The dev auto-login flag is read once at import; pin it OFF so the suite is the
+# same whether or not the developer's shell exports TRACEO_DEV_AUTOLOGIN=1 for a
+# local demo stack. Tests that need it turn it on per-test via monkeypatch.
+os.environ["TRACEO_DEV_AUTOLOGIN"] = "0"
 os.environ.setdefault("TRACEO_LLM_PROVIDER", "mock")
 
 import pytest  # noqa: E402

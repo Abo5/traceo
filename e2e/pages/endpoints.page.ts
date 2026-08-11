@@ -10,6 +10,10 @@
  * a HAR capture or an Insomnia export — the server detects the format and
  * echoes it, so the page gained a format badge, the two enrichment counters and
  * the three nullable AI columns. All of them are read-only surfaces here.
+ *
+ * A successful import into a project that had NO environment also derives one
+ * from the document; the page confirms that with a line naming it, which is the
+ * last read-only surface below.
  */
 import type { Locator, Page } from '@playwright/test';
 import { DataTable } from '../components/data-table.component';
@@ -88,6 +92,23 @@ export class EndpointsPage {
 
   get enrichmentDiscardedBadge(): Locator {
     return this.page.getByTestId('endpoints-import-enrichment-discarded-badge');
+  }
+
+  // --- derived environment (rendered only when the import created one) ---------
+
+  /**
+   * The confirmation line for the environment the import derived from the
+   * document — its name and base URL. Absent whenever `environment_created` is
+   * null (the project already had an environment, or no base URL was derivable),
+   * which is a legitimate state rather than a defect.
+   */
+  get importEnvironmentCreated(): Locator {
+    return this.page.getByTestId('endpoints-import-environment-created');
+  }
+
+  /** The link out of that line to the project's environments page. */
+  get importEnvironmentCreatedLink(): Locator {
+    return this.page.getByTestId('endpoints-import-environment-created-link');
   }
 
   // --- refusal surface (422 invalid_spec) --------------------------------------

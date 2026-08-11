@@ -723,22 +723,44 @@ func createEnvironment(c *gin.Context) {
 	if body.TLSStrict != nil {
 		tlsStrict = *body.TLSStrict
 	}
-	env := models.Environment{
-		OrganisationID: u.OrganisationID, ProjectID: pid,
-		Name: strings.TrimSpace(body.Name), BaseURL: strings.TrimSpace(body.BaseURL),
-		AuthType: authType, Variables: variables, TLSStrict: tlsStrict,
-	}
-	if len(body.AuthConfig) > 0 {
-		env.AuthConfigEncrypted = security.Encrypt(body.AuthConfig)
-	}
-	if err := db.DB.Create(&env).Error; err != nil {
+	env, err := CreateEnvironment(u.OrganisationID, pid, body.Name, body.BaseURL,
+		authType, variables, tlsStrict, body.AuthConfig)
+	if err != nil {
 		httpx.Err(c, http.StatusInternalServerError, "internal_error", "Could not create environment")
 		return
 	}
 	httpx.Audit(u.OrganisationID, &u.ID, "environment.create", "environment", env.ID,
 		models.JSONMap{"name": env.Name, "auth_type": env.AuthType,
 			"auth_config_set": len(env.AuthConfigEncrypted) > 0})
-	c.JSON(http.StatusCreated, envPayload(&env))
+	c.JSON(http.StatusCreated, envPayload(env))
+}
+
+// CreateEnvironment persists one environment row. It is the SINGLE place an
+// Environment is created, so the auto-created environment an api-specs import
+// derives (fixed contract "derive a runnable environment from an imported
+// document") is byte-identical in shape to one created through the API: same
+// trimming, same defaults, same write-only encryption of auth_config.
+//
+// Field-length validation and the audit entry stay with the caller — the import
+// clips to the column limits instead of rejecting, and records its own action.
+func CreateEnvironment(orgID, projectID, name, baseURL, authType string,
+	variables map[string]any, tlsStrict bool, authConfig map[string]any) (*models.Environment, error) {
+	vars := models.JSONMap{}
+	if variables != nil {
+		vars = models.JSONMap(variables)
+	}
+	env := models.Environment{
+		OrganisationID: orgID, ProjectID: projectID,
+		Name: strings.TrimSpace(name), BaseURL: strings.TrimSpace(baseURL),
+		AuthType: authType, Variables: vars, TLSStrict: tlsStrict,
+	}
+	if len(authConfig) > 0 {
+		env.AuthConfigEncrypted = security.Encrypt(authConfig)
+	}
+	if err := db.DB.Create(&env).Error; err != nil {
+		return nil, err
+	}
+	return &env, nil
 }
 
 func getEnvironment(c *gin.Context) {

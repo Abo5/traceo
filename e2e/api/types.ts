@@ -96,6 +96,21 @@ export interface Environment {
   updated_at: string | null;
 }
 
+/**
+ * The environment an import DERIVED from the uploaded document, echoed on the
+ * api-specs response as `environment_created` (null when none was created).
+ *
+ * Deliberately narrow — {id, name, base_url} and nothing else: it is a
+ * confirmation line, not a second environments API. The full row is read back
+ * through `projects.listEnvironments`.
+ */
+export interface CreatedEnvironment {
+  id: string;
+  name: string;
+  /** Derived base URL — `base_url + endpoint.path` reconstructs the original URL. */
+  base_url: string;
+}
+
 export interface NewEnvironment {
   name: string;
   base_url: string;
@@ -175,6 +190,15 @@ export interface ImportSpecResult {
    */
   enriched: number;
   enrichment_discarded: number;
+  /**
+   * The environment derived from this document, or null.
+   *
+   * Non-null ONLY when the project had ZERO environments at import time AND a
+   * base URL could be derived deterministically from the document itself. An
+   * existing environment is never touched and never overwritten, and no host is
+   * ever invented — "no derivable base URL" reports null, it does not guess.
+   */
+  environment_created: CreatedEnvironment | null;
 }
 
 export interface Endpoint {
@@ -385,6 +409,47 @@ export interface Run {
   display_id?: number | string | null;
 }
 
+/**
+ * The request a step actually sent, as recorded (and redacted) by
+ * execution.py `req_evidence`.
+ *
+ * `url` is the ABSOLUTE URL of the sent request — the environment's base URL
+ * plus the step path after `{{var}}` interpolation AND `{name}` path binding,
+ * with the query string the server built. It is the only place a run states
+ * what it really requested, which makes it the oracle for path-parameter
+ * binding (helpers/path-params.ts).
+ */
+export interface EvidenceRequest {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  /** Serialised request body, truncated to EVIDENCE_MAX_BYTES; null when there was none. */
+  body: string | null;
+}
+
+export interface EvidenceResponse {
+  status: number;
+  /** A fixed allow-list of response headers, not the whole set. */
+  headers: Record<string, string>;
+  body: string | null;
+}
+
+/**
+ * One step's evidence. Appended in step order, so index `i` is `steps[i]` of
+ * the case — up to the halting step: execution stops at the first failed
+ * assertion or transport error (FR-EXE-11), so a case can record FEWER
+ * evidence entries than it has steps, never more and never reordered.
+ */
+export interface RunEvidence {
+  request: EvidenceRequest;
+  /** null when the transport failed before any response existed (outcome "errored"). */
+  response: EvidenceResponse | null;
+  elapsed_ms: number;
+  assertions: Array<Record<string, unknown>>;
+  /** Present only on a transport failure — the redacted diagnostic. */
+  error?: string;
+}
+
 export interface RunResult {
   id: string;
   test_case: { id: string; title: string; type: string; priority: string; state: TestCaseState };
@@ -392,6 +457,6 @@ export interface RunResult {
   outcome: ResultOutcome;
   duration_ms: number;
   failure_reason: Record<string, unknown> | null;
-  evidence: Array<Record<string, unknown>>;
+  evidence: RunEvidence[];
   created_at: string | null;
 }

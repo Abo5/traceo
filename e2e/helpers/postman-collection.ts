@@ -22,6 +22,13 @@
  *   the values — no invented fields);
  * - identical method+path requests deduplicate, merging their params and fields.
  *
+ * It is also the oracle for the environment an import DERIVES from the document:
+ * `baseUrl`/`baseUrlKey` are the base-url variable as the file declares it,
+ * `absoluteUrl` is the URL a request actually addresses, and
+ * `suggestedVariables()` re-derives the variables map the environment should
+ * carry — with credential-looking names emptied, so a secret in the document is
+ * never expected to travel anywhere.
+ *
  * Deliberate asymmetry: `queryParams` keeps Postman's `disabled` (unchecked)
  * entries. The oracle's job is to bound what the importer is ALLOWED to
  * produce, so it must be a superset of what the file declares — including a
@@ -40,6 +47,17 @@ export interface CollectionRequest {
   path: string;
   /** `METHOD /path` — the identity key the inventory is diffed on. */
   key: string;
+  /**
+   * The request's own URL with the base-url variable resolved and `:param`
+   * templated, query string excluded — e.g.
+   * `https://www.googleapis.com/calendar/v3/calendars/{calendarId}/acl`.
+   *
+   * This is the URL the DOCUMENT declares, re-derived from the file. It is the
+   * oracle for the derived environment: `base_url + endpoint.path` must
+   * reproduce it exactly, whichever side of the split the importer chose to put
+   * the base URL's own path prefix on.
+   */
+  absoluteUrl: string;
   /** Distinct `url.query` keys (disabled entries included — see header). */
   queryParams: string[];
   /** Top-level field names of raw JSON bodies, merged across duplicates. */
@@ -55,14 +73,24 @@ export interface CollectionRequest {
 export interface ParsedCollection {
   /** The collection's declared schema URL — what the format detector keys on. */
   schema: string;
+  /** `info.name` — the document title the derived environment is named after. */
+  title: string;
+  /** Name of the base-url variable, e.g. `baseUrl` ('' when the file declares none). */
+  baseUrlKey: string;
+  /** Value of that variable, e.g. `https://www.googleapis.com/calendar/v3` (may be ''). */
+  baseUrl: string;
   /** Path component of the base-url variable, e.g. `/calendar/v3` (may be ''). */
   basePath: string;
+  /** Every collection variable as declared, in file order (values verbatim). */
+  variables: Record<string, string>;
   /** Deduplicated method+path inventory, sorted by key. */
   requests: CollectionRequest[];
   /** Number of leaf requests BEFORE deduplication. */
   requestCount: number;
   /** Every `METHOD /path` key, sorted — the oracle set. */
   keys: string[];
+  /** Every declared absolute URL, sorted — the oracle set for URL reconstruction. */
+  absoluteUrls: string[];
 }
 
 interface RawItem {
@@ -90,7 +118,27 @@ interface RawVariable {
   value?: unknown;
 }
 
-const BASE_URL_KEYS = ['baseurl', 'base_url', 'url', 'host', 'server'];
+/**
+ * Names a base URL may be declared under, lowercased — the derivation
+ * vocabulary, first match in file order wins. Mirrors the import contract; keep
+ * the two in step or the oracle stops describing the product.
+ */
+const BASE_URL_KEYS = ['baseurl', 'base_url', 'url', 'host'];
+
+/**
+ * Variable names that look like a credential — a case-insensitive SUBSTRING
+ * match, so `authToken`, `X-API-KEY` and `client_secret` all qualify. Such
+ * variables are carried into a derived environment as KEYS WITH AN EMPTY VALUE:
+ * the user fills them in, and the example value in the document is never copied
+ * and never logged.
+ */
+const CREDENTIAL_HINTS = ['token', 'secret', 'key', 'password', 'auth', 'bearer', 'apikey'];
+
+/** True when a variable name looks like a credential (see CREDENTIAL_HINTS). */
+export function looksLikeCredential(name: string): boolean {
+  const lower = name.toLowerCase();
+  return CREDENTIAL_HINTS.some((hint) => lower.includes(hint));
+}
 
 /** Collection variables as a flat map (last definition wins, as Postman does). */
 function variableMap(variables: RawVariable[] | undefined): Map<string, string> {
@@ -103,22 +151,41 @@ function variableMap(variables: RawVariable[] | undefined): Map<string, string> 
   return map;
 }
 
+/** The base-url variable — its name and value, or ['', ''] when there is none. */
+function baseUrlEntry(vars: Map<string, string>): [string, string] {
+  for (const [key, value] of vars) {
+    if (BASE_URL_KEYS.includes(key.toLowerCase())) return [key, value];
+  }
+  return ['', ''];
+}
+
 /**
  * Path component of the collection's base URL, when the base URL is a plain
  * absolute origin+path (e.g. `https://www.googleapis.com/calendar/v3` →
  * `/calendar/v3`). Returns '' when there is no such variable.
  */
-function basePathOf(vars: Map<string, string>): string {
-  for (const [key, value] of vars) {
-    if (!BASE_URL_KEYS.includes(key.toLowerCase())) continue;
-    try {
-      const { pathname } = new URL(value);
-      return pathname === '/' ? '' : pathname.replace(/\/$/, '');
-    } catch {
-      return '';
-    }
+function basePathOf(baseUrl: string): string {
+  if (!baseUrl) return '';
+  try {
+    const { pathname } = new URL(baseUrl);
+    return pathname === '/' ? '' : pathname.replace(/\/$/, '');
+  } catch {
+    return '';
   }
-  return '';
+}
+
+/**
+ * The variables a derived environment should carry, per the import contract:
+ * every collection variable EXCEPT the base-url one, with credential-looking
+ * names emptied. Values of emptied keys are not returned anywhere.
+ */
+export function suggestedVariables(collection: ParsedCollection): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(collection.variables)) {
+    if (key === collection.baseUrlKey) continue;
+    out[key] = looksLikeCredential(key) ? '' : value;
+  }
+  return out;
 }
 
 /** `:param` → `{param}`; `{{var}}` → its literal value, or `{var}` if unresolved. */
@@ -167,13 +234,14 @@ function mergeInto(target: string[], values: string[]): void {
 /** Read + convert a collection fixture from `e2e/test-data/`. */
 export function readPostmanCollection(fileName: string): ParsedCollection {
   const raw = JSON.parse(fs.readFileSync(samplePath(fileName), 'utf8')) as {
-    info?: { schema?: string };
+    info?: { schema?: string; name?: string };
     variable?: RawVariable[];
     item?: RawItem[];
   };
 
   const vars = variableMap(raw.variable);
-  const basePath = basePathOf(vars);
+  const [baseUrlKey, baseUrl] = baseUrlEntry(vars);
+  const basePath = basePathOf(baseUrl);
   const byKey = new Map<string, CollectionRequest>();
   let requestCount = 0;
 
@@ -213,6 +281,10 @@ export function readPostmanCollection(fileName: string): ParsedCollection {
           method,
           path,
           key,
+          // The base URL as the file declares it, joined to the request's own
+          // path — one trailing slash is dropped so the join stays a URL and
+          // never grows a `//` segment the document does not contain.
+          absoluteUrl: `${baseUrl.replace(/\/$/, '')}${path}`,
           queryParams: [...new Set(queryParams)],
           bodyFields: [...bodyFields],
           hasRawBody,
@@ -227,10 +299,15 @@ export function readPostmanCollection(fileName: string): ParsedCollection {
   const requests = [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
   return {
     schema: String(raw.info?.schema ?? ''),
+    title: String(raw.info?.name ?? ''),
+    baseUrlKey,
+    baseUrl,
     basePath,
+    variables: Object.fromEntries(vars),
     requests,
     requestCount,
     keys: requests.map((r) => r.key),
+    absoluteUrls: [...new Set(requests.map((r) => r.absoluteUrl))].sort(),
   };
 }
 

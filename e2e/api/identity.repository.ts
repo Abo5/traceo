@@ -7,6 +7,10 @@
  * - POST /members/invite {email, name, role, password} -> 201 user payload
  *   (the inviter SETS the member's password — no activation flow; the invitee
  *   can log in immediately with it)
+ * - POST /auth/dev-session -> {token, user} — development convenience, gated on
+ *   TRACEO_DEV_AUTOLOGIN. OFF (the default, and the only configuration this
+ *   suite runs against) the route answers 404 `not_found`; a production node
+ *   refuses to boot with the flag on at all (config.py assert_production_safe).
  */
 import type { TraceoHttp } from './http';
 import type { AuthResponse, AuthUser, InviteBody, RegisterBody } from './types';
@@ -20,6 +24,15 @@ export class IdentityRepository {
 
   async login(email: string, password: string): Promise<AuthResponse> {
     return this.http.post<AuthResponse>('/auth/login', { email, password });
+  }
+
+  /**
+   * Credential-free session for local development. Takes no body and no
+   * credentials by design — which is exactly why the suite asserts it is
+   * ABSENT on a normally-configured backend.
+   */
+  async devSession(): Promise<AuthResponse> {
+    return this.http.post<AuthResponse>('/auth/dev-session');
   }
 
   async me(): Promise<AuthUser> {

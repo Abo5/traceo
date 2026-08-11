@@ -40,6 +40,11 @@ class Settings:
 
     SEED_DEMO = os.getenv("TRACEO_SEED_DEMO", "1") == "1"
 
+    # Development convenience: hand out a session for the seeded demo user without
+    # a login form. Off by default and refused in production (see below).
+    DEV_AUTOLOGIN = os.getenv("TRACEO_DEV_AUTOLOGIN", "0") == "1"
+    DEV_AUTOLOGIN_EMAIL = os.getenv("TRACEO_DEV_AUTOLOGIN_EMAIL", "demo@traceo.sa")
+
 def assert_production_safe(s: Settings) -> None:
     """Refuse to boot a production node that would silently be wide open.
 
@@ -61,6 +66,10 @@ def assert_production_safe(s: Settings) -> None:
         problems.append(
             "TRACEO_SEED_DEMO must be 0 in production — the seeded demo accounts use "
             "a password published in the documentation")
+    if s.DEV_AUTOLOGIN:
+        problems.append(
+            "TRACEO_DEV_AUTOLOGIN must be 0 in production — it hands a full session "
+            "to any caller without credentials")
     if problems:
         raise ConfigError(
             "refusing to start with TRACEO_ENV=production:\n  - " + "\n  - ".join(problems))

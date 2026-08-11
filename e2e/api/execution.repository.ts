@@ -12,7 +12,7 @@
 import type { JobPoller } from './job-poller';
 import type { TraceoHttp } from './http';
 import type { ResultOutcome } from '../constants/states';
-import type { Run, RunAccepted, RunResult } from './types';
+import type { Run, RunAccepted, RunEvidence, RunResult } from './types';
 
 export class RunsRepository {
   constructor(
@@ -58,4 +58,25 @@ export class RunsRepository {
   async cancel(runId: string): Promise<{ run_id: string; state: string; cancel_requested: boolean }> {
     return this.http.post(`/runs/${runId}/cancel`);
   }
+}
+
+// --- read helpers (no assertions — specs own those) -----------------------------
+
+/**
+ * The evidence a result recorded for a given step index, or undefined.
+ *
+ * Undefined is a legitimate answer, not a defect: a case halts at the first
+ * failed assertion or transport error, so steps after it record nothing
+ * (execution.py `_case_worker`). Index alignment holds because both the
+ * executor and the review serializer sort steps by `order`.
+ */
+export function evidenceForStep(result: RunResult, stepIndex: number): RunEvidence | undefined {
+  return (result.evidence ?? [])[stepIndex];
+}
+
+/** Every request URL a result recorded, in step order — the absolute URLs actually sent. */
+export function evidenceUrls(result: RunResult): string[] {
+  return (result.evidence ?? [])
+    .map((entry) => entry?.request?.url)
+    .filter((url): url is string => typeof url === 'string' && url.length > 0);
 }

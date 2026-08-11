@@ -10,6 +10,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -36,6 +37,34 @@ _cancel_flags: dict[str, bool] = {}
 _db_write_lock = threading.Lock()
 
 _VAR_RE = re.compile(r"\{\{\s*([A-Za-z0-9_][A-Za-z0-9_.\[\]-]*)\s*\}\}")
+# OpenAPI-style single-brace path placeholders: /images/{imageId}
+_PATH_PARAM_RE = re.compile(r"\{([A-Za-z0-9_][A-Za-z0-9_.-]*)\}")
+
+
+def _bind_path_params(path: str, params: dict, context: dict) -> str:
+    """Fill {name} placeholders in the path and drop the keys they consumed.
+
+    Inventories store paths as templates (/images/{imageId}); the value lives in
+    the step's params. Sending the template literally requests a URL that cannot
+    exist, so every path-parameterised case would fail on a 404 no matter what
+    the system under test does.
+    """
+    consumed: list[str] = []
+
+    def _sub(m: re.Match) -> str:
+        name = m.group(1)
+        if name in params and params[name] is not None:
+            consumed.append(name)
+            return quote(str(params[name]), safe="")
+        value = context.get(name) if isinstance(context, dict) else None
+        if value is not None:
+            return quote(str(value), safe="")
+        return m.group(0)
+
+    bound = _PATH_PARAM_RE.sub(_sub, path)
+    for key in consumed:
+        params.pop(key, None)
+    return bound
 _PATH_TOKEN_RE = re.compile(r"([^.\[\]]+)|\[(-?\d+)\]")
 
 # Non-secret config keys — everything else in an auth config is treated as secret.
@@ -359,6 +388,8 @@ def _case_worker(run_id: str, case: dict, client: httpx.Client,
             params: dict = {} if strip_auth else dict(auth_params)
             for k, v in (step_params or {}).items():
                 params[k] = v
+
+            path = _bind_path_params(path, params, context)
 
             body_kwargs: dict = {}
             body_repr: str | None = None

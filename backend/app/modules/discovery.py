@@ -32,10 +32,12 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from ..db import get_db
 from ..deps import audit, get_project_scoped, require
-from ..models import ApiSpec, Endpoint, TestCase, TestResult, TestStep, User
-from .collections import COLLECTION_FORMATS, SUPPORTED_FORMATS_HINT, convert, detect_format
+from ..models import ApiSpec, Endpoint, Environment, TestCase, TestResult, TestStep, User
+from .collections import (COLLECTION_FORMATS, SUPPORTED_FORMATS_HINT, convert,
+                          derive_environment, detect_format, imported_environment_name)
 from .enrichment import enrich
 from .generation import try_autopilot_generation
+from .projects import EnvironmentCreate, create_environment_record
 
 router = APIRouter()
 
@@ -342,6 +344,62 @@ def _endpoint_dict(e: Endpoint) -> dict:
     }
 
 
+# --- environment auto-creation (contract item 3) -------------------------------------------
+
+def _autocreate_environment(db: Session, user: User, project_id: str, spec: object,
+                            fmt: str, title: str) -> dict | None:
+    """Fill an EMPTY Environments list from the document that was just imported.
+
+    "I only added a Postman collection for the API connection" — and the New run
+    screen still had nothing to run against, because the base URL sitting in the
+    uploaded file was never turned into an environment. This closes that gap.
+
+    Three conditions, all required, none negotiable:
+      * the project currently has ZERO environments — this fills a void, it never
+        touches, overwrites or shadows an environment the owner already has;
+      * a base URL could be DERIVED from the document (collections.derive_environment,
+        deterministic, no LLM, no invented host);
+      * creation goes through the projects module's write path, so the derived
+        environment is validated and audited exactly like a hand-typed one.
+
+    Returns the {id, name, base_url} payload, or None when nothing was created.
+    The caller commits; a failure here is not worth failing an otherwise good
+    import over, so it degrades to None.
+    """
+    # Derivation and request-model validation are pure and may be swallowed.
+    # The database write below deliberately is NOT wrapped: a half-failed flush
+    # must surface, not poison the transaction the caller is about to commit.
+    try:
+        derived = derive_environment(spec, fmt)
+        body = EnvironmentCreate(
+            name=imported_environment_name(title),
+            base_url=derived["base_url"],
+            auth_type="none",  # the document proves a URL, it never proves a credential
+            variables=derived["variables"],
+            tls_strict=True,
+        ) if derived else None
+    except Exception:  # noqa: BLE001 — a convenience must never sink the import
+        return None
+    if body is None:
+        return None
+
+    existing = db.query(Environment.id).filter(
+        Environment.project_id == project_id,
+        Environment.organisation_id == user.organisation_id).first()
+    if existing is not None:
+        return None
+
+    env = create_environment_record(
+        db, org_id=user.organisation_id, user_id=user.id, project_id=project_id, body=body,
+        action="environment.autocreated",
+        # the source format is what makes this entry auditable; variable NAMES
+        # are recorded, values never are (credentials arrive empty by design).
+        extra_audit={"format": fmt, "base_url": body.base_url,
+                     "variables": sorted(body.variables)},
+    )
+    return {"id": env.id, "name": env.name, "base_url": env.base_url}
+
+
 # --- routes -------------------------------------------------------------------------------
 
 @router.post("/projects/{project_id}/api-specs", status_code=201)
@@ -504,6 +562,8 @@ async def import_api_spec(project_id: str, request: Request,
           {"source": source, "format": fmt, "version": spec_row.version,
            "endpoints": len(new_by_key), "warnings": len(warnings),
            "enriched": enriched, "enrichment_discarded": enrichment_discarded})
+
+    environment_created = _autocreate_environment(db, user, project_id, spec, fmt, title)
     db.commit()
 
     total = db.query(Endpoint).filter(
@@ -531,6 +591,8 @@ async def import_api_spec(project_id: str, request: Request,
         "total": total,
         "enriched": enriched,
         "enrichment_discarded": enrichment_discarded,
+        # null unless THIS import filled an empty Environments list (contract 4).
+        "environment_created": environment_created,
     }
 
 

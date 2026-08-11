@@ -411,13 +411,19 @@ def list_environments(project_id: str, user: User = Depends(require("view")),
     return [_env_payload(e) for e in envs]
 
 
-@router.post("/projects/{project_id}/environments", status_code=201)
-def create_environment(project_id: str, body: EnvironmentCreate,
-                       user: User = Depends(require("manage_environments")),
-                       db: Session = Depends(get_db)):
-    get_project_scoped(project_id, user, db)
+def create_environment_record(db: Session, *, org_id: str, user_id: str, project_id: str,
+                              body: EnvironmentCreate, action: str = "environment.create",
+                              extra_audit: dict | None = None) -> Environment:
+    """THE write path for a new environment — validation, secret encryption and
+    the audit entry in one place.
+
+    The route below and the import-time auto-creation (discovery.py) both go
+    through here, so a derived environment is validated exactly like a typed one
+    and can never drift from it. Callers commit; the row is flushed so `env.id`
+    is available for the audit entry and the response.
+    """
     _validate_auth_type(body.auth_type)
-    env = Environment(organisation_id=user.organisation_id, project_id=project_id,
+    env = Environment(organisation_id=org_id, project_id=project_id,
                       name=body.name.strip(), base_url=body.base_url.strip(),
                       auth_type=body.auth_type, variables=body.variables or {},
                       tls_strict=body.tls_strict)
@@ -425,9 +431,20 @@ def create_environment(project_id: str, body: EnvironmentCreate,
         env.auth_config_encrypted = encrypt_secret(body.auth_config)
     db.add(env)
     db.flush()
-    audit(db, user.organisation_id, user.id, "environment.create", "environment", env.id,
-          {"name": env.name, "auth_type": env.auth_type,
-           "auth_config_set": env.auth_config_encrypted is not None})
+    meta = {"name": env.name, "auth_type": env.auth_type,
+            "auth_config_set": env.auth_config_encrypted is not None}
+    meta.update(extra_audit or {})
+    audit(db, org_id, user_id, action, "environment", env.id, meta)
+    return env
+
+
+@router.post("/projects/{project_id}/environments", status_code=201)
+def create_environment(project_id: str, body: EnvironmentCreate,
+                       user: User = Depends(require("manage_environments")),
+                       db: Session = Depends(get_db)):
+    get_project_scoped(project_id, user, db)
+    env = create_environment_record(db, org_id=user.organisation_id, user_id=user.id,
+                                   project_id=project_id, body=body)
     db.commit()
     return _env_payload(env)
 

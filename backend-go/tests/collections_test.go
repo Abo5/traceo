@@ -517,7 +517,9 @@ func TestHARImportTemplatesConcreteIdsAsTraffic(t *testing.T) {
 const insomniaFixture = `{"_type":"export","__export_format":4,
  "__export_source":"insomnia.desktop.app:v8.0.0",
  "resources":[
-  {"_id":"env_1","_type":"environment","data":{"baseUrl":"https://api.example.com"}},
+  {"_id":"wrk_1","_type":"workspace","name":"Billing"},
+  {"_id":"env_1","_type":"environment","parentId":"wrk_1",
+   "data":{"baseUrl":"https://api.example.com"}},
   {"_id":"fld_1","_type":"request_group","name":"Users"},
   {"_id":"req_1","_type":"request","name":"Get user","method":"GET",
    "url":"{{ _.baseUrl }}/v2/users/:userId",
