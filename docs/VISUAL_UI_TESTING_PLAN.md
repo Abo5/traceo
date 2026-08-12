@@ -2,7 +2,7 @@
 
 > Design plan for a seventh Traceo engine: catching UI regressions by **decomposing screenshot colour**, deterministically, with no model in the loop.
 >
-> Status: proposal. Nothing here is implemented yet.
+> Status: V0 landed — `backend/app/modules/visual.py` (comparator, verified against the CIE's published CIEDE2000 vectors) and `backend/app/modules/design.py` (design conformance). §11 is the design-vs-implementation track; everything else is still proposal.
 
 ## Why colour, and why no AI
 
@@ -201,3 +201,68 @@ Stated plainly so nobody expects it later:
 - It cannot survive genuinely dynamic content without masks. A screen full of live data needs its masks declared, or it will be noise.
 - A **one-pixel layout shift** moves everything below it. Per-pixel comparison reports that honestly as a large diff; the cluster analysis and the histogram are what keep it interpretable instead of just alarming.
 - Cross-browser and cross-OS rendering differ enough that a baseline is only valid for the platform that produced it. Baselines are therefore keyed by platform, and comparing across platforms is refused rather than fudged.
+
+---
+
+## 11. Design vs implementation — "give it a Figma export and get 100%"
+
+The obvious build is: export the frame as PNG, screenshot the page at the same size, diff the pixels, report a match percentage. **That number can never reach 100%, and chasing it is the wrong goal.** The two images come out of different rasterizers — Figma's renderer and the browser's — and they disagree about subpixel coverage on every antialiased edge, about font hinting, and about gamma in gradients.
+
+The size of that disagreement is measured, not assumed. `tests/test_design.py::test_rasterizers_disagree_on_identical_intent` takes one black-on-white edge whose *design is identical* and renders it the way two engines would:
+
+| | differing pixels |
+|---|---|
+| exact comparison | **25%** |
+| perceptual, ΔE₀₀ ≤ 2 | 12.5% |
+
+A page is mostly edges. This is why every design-diff tool reports "94% match" on a pixel-perfect implementation: the score is dominated by rasterisation noise, and the 6% that would matter is indistinguishable from it. A tool whose false-positive floor is 6% cannot make a claim about the remaining 6%.
+
+### The move: compare what the design *specifies*, not what it *rendered*
+
+A design does not specify pixel coverage. It specifies **colours, boxes, and spacing** — and those survive rasterisation unchanged, because a flat fill is the same bytes in both engines. Extracting them from a lossless PNG is integer arithmetic, so it is exact and reproducible; comparing them is set and interval arithmetic, where "exact" is a claim with content.
+
+Four layers, each exact in its own domain, implemented in `backend/app/modules/design.py`:
+
+| Layer | Question | Exactness |
+|---|---|---|
+| **L1 Palette** | Is the design's `#FF6B00` actually in the build? In what proportion? | **Exact.** Every distinct colour and its pixel count; nothing quantised, clustered or sampled. `tolerance=0` demands the exact byte triple. |
+| **L2 Geometry** | Is the card at the same x/y with the same width/height? | **Exact at `box_tolerance=0`** — same pixel, same size. Recovered as connected components of flat colour, which antialiasing cannot move. |
+| **L3 Rhythm** | Do the gridlines and gaps match the design's spacing scale? | **Exact.** Edge-projection profiles give integer gridline positions; gaps are integer subtraction. |
+| **L4 Pixels** | Anything left over, inside flat regions only. | Exact, but only meaningful where no glyph is rendered. |
+
+The proof that this is the right cut is a test that fails one way and passes the other: soften a button's edges by one pixel, exactly as a different renderer would. The pixel comparison reports 32 changed pixels — a failure. The structural comparison reports `box_score == 1.0` and `colour_score == 1.0` — a match. Same input, and only one of the two answers is about the design.
+
+### Where the 100% actually lives
+
+- **100% of measurement.** Reproducible to the bit, offline, on any machine. Proven, not asserted: 34/34 of the CIE's published ΔE₀₀ vectors, and comparison output asserted byte-identical across repeated runs.
+- **100% of recall in exact mode.** Nothing can hide a change: a one-unit channel difference — ΔE₀₀ 0.64, below the threshold at which a human can see anything — still fails. Antialiasing suppression is *disabled* at tolerance 0 by construction, so no heuristic can swallow a real difference.
+- **Not 100%: "is this a defect".** That is a judgement about intent, and no method reaches it — a model would only be guessing with more confidence. The reviewer decides; the engine's job is to hand them an exact, located, explained difference.
+
+### Raising the ceiling further: use the Figma *file*, not only the image
+
+An image is a rendering of the design, and a rendering has already thrown information away. The Figma REST API and the Figma MCP server expose the design as **data**: per-node `x, y, width, height`, exact fill hexes, `fontFamily`, `fontSize`, `fontWeight`, `letterSpacing`, `lineHeight`, corner radii, effects. The browser exposes the same facts through `getBoundingClientRect()` and `getComputedStyle()`.
+
+Comparing those is **number to number**, so typography — the one thing the image track cannot verify, because glyph rasterisation is exactly where the two engines diverge — becomes exact too:
+
+```
+design.node("Primary button").fill        == getComputedStyle(el).backgroundColor
+design.node("Primary button").fontSize    == getComputedStyle(el).fontSize
+design.node("Primary button").height      == el.getBoundingClientRect().height
+```
+
+The mapping from design node to DOM element is the one thing that must be stated rather than inferred — a `data-design-node` attribute, or a name convention. That is a small, honest annotation cost, and it is the difference between "94% of pixels agree" and "every specified property of every named component is verified, and here is the list".
+
+### Recommended shape
+
+1. **Ship L1–L3 on images** (done: `design.py`). Works with nothing but two PNGs at the same viewport, which is what a designer can hand over today.
+2. **Add the token track** where the Figma file is available. It is strictly more accurate and covers typography; use it for named components and keep L1–L3 for everything else.
+3. **Never report a single "match %"**. Report four numbers with their thresholds, because one number invites the false precision this whole section exists to avoid.
+
+### Capture protocol (this is what makes L2 exact)
+
+Exactness at `box_tolerance=0` is only achievable if both sides are captured under the same conditions. These are requirements, not suggestions — `conform()` refuses mismatched geometry rather than resampling, because resampling invents the pixels every later number is derived from:
+
+- Export the Figma frame at **1×**, and screenshot at **deviceScaleFactor 1**, at the frame's exact width and height.
+- **Ship the design's fonts** with the app (WOFF2). A fallback font changes every text box's width, and then L2 is measuring font substitution, not layout.
+- Disable animation, wait for fonts and network idle, and mask live content by selector.
+- Compare like with like: one baseline per (design frame, viewport, platform). Baselines from different platforms are refused, not reconciled.
