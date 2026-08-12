@@ -751,7 +751,7 @@ func ExecuteRun(j *jobs.Job, runID string, caseIDs []string) (result any, err er
 
 	cfg := security.Decrypt(env.AuthConfigEncrypted)
 	secrets := collectSecrets(cfg)
-	auth, authErr := buildAuth(env.AuthType, cfg, env.TLSStrict)
+	auth, authErr := buildAuth(env.AuthType, cfg, models.TLSStrictOf(&env))
 	if authErr != nil {
 		// FR-EXE-04: single diagnostic, NO per-case failures
 		reason := security.Redact(authErr.Error(), secrets)
@@ -824,7 +824,7 @@ func ExecuteRun(j *jobs.Job, runID string, caseIDs []string) (result any, err er
 
 	total := len(cases)
 	w := &workerCtx{
-		runID: runID, client: newRunClient(env.TLSStrict), baseURL: env.BaseURL,
+		runID: runID, client: newRunClient(models.TLSStrictOf(&env)), baseURL: env.BaseURL,
 		auth: auth, envVars: envVars, endpointSchemas: endpointSchemas,
 		deadline: time.Now().Add(time.Duration(config.C.RunTimeoutS * float64(time.Second))),
 		secrets:  secrets,

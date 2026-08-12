@@ -114,7 +114,10 @@ type Environment struct {
 	AuthType            string  `gorm:"default:none" json:"auth_type"` // none|api_key|basic|bearer|oauth2_cc
 	AuthConfigEncrypted []byte  `json:"-"`
 	Variables           JSONMap `gorm:"type:text" json:"variables"`
-	TLSStrict           bool    `gorm:"default:true" json:"tls_strict"`
+	// Pointer, not bool: GORM treats a zero value as "unset" and writes the
+	// column default, so `tls_strict: false` from the client silently became
+	// true and TLS verification could never be turned off.
+	TLSStrict *bool `gorm:"default:true" json:"tls_strict"`
 }
 
 type SourceDocument struct {
@@ -334,4 +337,13 @@ func All() []any {
 		&RequirementTestCase{}, &Run{}, &TestResult{}, &AuditEntry{},
 		&ApiKey{}, &Schedule{}, &Webhook{},
 	}
+}
+
+// TLSStrictOf reports an environment's TLS verification setting, defaulting to
+// strict when the column was never written (nil).
+func TLSStrictOf(e *Environment) bool {
+	if e == nil || e.TLSStrict == nil {
+		return true
+	}
+	return *e.TLSStrict
 }

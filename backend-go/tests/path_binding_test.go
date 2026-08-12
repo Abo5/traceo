@@ -82,7 +82,7 @@ func TestPathParamsAreBoundBeforeTheRequestIsSent(t *testing.T) {
 	projectID := seedProject(t, orgID, "Path binding")
 
 	env := models.Environment{OrganisationID: orgID, ProjectID: projectID, Name: "staging",
-		BaseURL: rec.srv.URL, AuthType: "none", TLSStrict: true,
+		BaseURL: rec.srv.URL, AuthType: "none", TLSStrict: boolPtr(true),
 		// tenantId is only available as an environment variable — no step supplies it.
 		Variables: models.JSONMap{"tenantId": "acme-sa"}}
 	if err := db.DB.Create(&env).Error; err != nil {

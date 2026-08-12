@@ -752,7 +752,7 @@ func CreateEnvironment(orgID, projectID, name, baseURL, authType string,
 	env := models.Environment{
 		OrganisationID: orgID, ProjectID: projectID,
 		Name: strings.TrimSpace(name), BaseURL: strings.TrimSpace(baseURL),
-		AuthType: authType, Variables: vars, TLSStrict: tlsStrict,
+		AuthType: authType, Variables: vars, TLSStrict: &tlsStrict,
 	}
 	if len(authConfig) > 0 {
 		env.AuthConfigEncrypted = security.Encrypt(authConfig)
@@ -836,7 +836,7 @@ func updateEnvironment(c *gin.Context) {
 		changed = append(changed, "variables")
 	}
 	if body.TLSStrict != nil {
-		env.TLSStrict = *body.TLSStrict
+		env.TLSStrict = body.TLSStrict
 		changed = append(changed, "tls_strict")
 	}
 	if len(changed) > 0 {
@@ -895,7 +895,7 @@ func checkEnvironment(c *gin.Context) {
 	basicUser, basicPass := "", ""
 	hasBasic := false
 	authApplied := false
-	client := httpClient(env.TLSStrict)
+	client := httpClient(models.TLSStrictOf(env))
 
 	switch env.AuthType {
 	case "api_key":

@@ -294,7 +294,7 @@ func seedEnvironment(t *testing.T, orgID, projectID string) string {
 	t.Helper()
 	e := models.Environment{OrganisationID: orgID, ProjectID: projectID,
 		Name: "staging", BaseURL: "http://127.0.0.1:9", AuthType: "none",
-		Variables: models.JSONMap{}, TLSStrict: true}
+		Variables: models.JSONMap{}, TLSStrict: boolPtr(true)}
 	if err := db.DB.Create(&e).Error; err != nil {
 		t.Fatalf("seed environment: %v", err)
 	}
@@ -465,3 +465,5 @@ func confirmRequirement(t *testing.T, headers map[string]string, requirementID s
 func bodyContains(w *httptest.ResponseRecorder, s string) bool {
 	return strings.Contains(w.Body.String(), s)
 }
+
+func boolPtr(v bool) *bool { return &v }
