@@ -167,6 +167,19 @@ def value_for(schema: dict | None, depth: int = 0):
     """Valid representative value for a JSON-schema fragment / parameter constraints."""
     if not isinstance(schema, dict) or depth > 8:
         return "example"
+    # A stated example/default is the document's own answer to "what is a valid
+    # value here" — always better than a synthesised one, and for identifier-like
+    # parameters it is the difference between hitting the resource and a 404.
+    for key in ("example", "default"):
+        if schema.get(key) is not None:
+            return schema[key]
+    examples = schema.get("examples")
+    if isinstance(examples, list) and examples:
+        return examples[0]
+    if isinstance(examples, dict) and examples:
+        first = next(iter(examples.values()))
+        if isinstance(first, dict) and "value" in first:
+            return first["value"]
     enum = schema.get("enum")
     if isinstance(enum, list) and enum:
         return enum[0]

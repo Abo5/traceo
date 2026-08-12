@@ -45,7 +45,11 @@ MAX_SPEC_BYTES = 5 * 1024 * 1024
 FETCH_TIMEOUT_S = 10.0
 MAX_REDIRECTS = 3
 HTTP_METHODS = ("get", "post", "put", "patch", "delete", "head", "options")
-CONSTRAINT_KEYS = ("format", "minimum", "maximum", "minLength", "maxLength", "pattern", "enum")
+# "example"/"default" are not constraints, but they are the document's own
+# statement of a usable value — the generator prefers them over a synthesised
+# one, which is what makes a path parameter address a real resource.
+CONSTRAINT_KEYS = ("format", "minimum", "maximum", "minLength", "maxLength", "pattern", "enum",
+                   "example", "default")
 
 # Discovery-mode fidelity (SRS §L2). A declared contract beats observed traffic,
 # which beats a crawled DOM, which beats a hand-curated request collection. The
@@ -243,12 +247,20 @@ def _collect_params(raw_params: list, fmt: str) -> tuple[list, dict | None]:
             continue
         # openapi3 keeps the schema nested; swagger2 non-body params carry it inline
         schema_src = p.get("schema") if isinstance(p.get("schema"), dict) else p
+        constraints = _constraints_from(schema_src)
+        # OpenAPI 3 allows example/examples beside the schema, not only inside it.
+        if "example" not in constraints and p.get("example") is not None:
+            constraints["example"] = p["example"]
+        if "example" not in constraints and isinstance(p.get("examples"), dict) and p["examples"]:
+            first = next(iter(p["examples"].values()))
+            if isinstance(first, dict) and "value" in first:
+                constraints["example"] = first["value"]
         params.append({
             "name": p.get("name", ""),
             "location": location,  # path|query|header|cookie|formData
             "type": schema_src.get("type", ""),
             "required": bool(p.get("required", location == "path")),
-            "constraints": _constraints_from(schema_src),
+            "constraints": constraints,
         })
     return params, request_schema
 
