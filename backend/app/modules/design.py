@@ -553,3 +553,122 @@ def design_facts(img: Image, *,
                 {"axis": axis, "gaps": list(gaps)}))
 
     return facts
+
+
+# --- UI test cases ----------------------------------------------------------
+# The design is a test basis, not just a reference image. Every case below is
+# built from a fact the design actually states, carries that fact's id, and is
+# checkable against a running implementation. A case whose fact is not in the
+# inventory is not built — the grounding rule, applied to pixels instead of
+# endpoints.
+
+_UI_CHECKS = {
+    "surface_present": "the surface colour is present on the screen",
+    "surface_share": "the surface covers a comparable share of the screen",
+    "element_present": "an element of this colour and size exists",
+    "element_box": "the element occupies the same box",
+    "contrast_aa": "the ink meets WCAG AA on its surface",
+    "alignment": "the elements still share the edge",
+    "spacing": "the spacing rhythm is unchanged",
+    "palette_closed": "no surface colour outside the design appears",
+}
+
+
+def ui_cases(facts: list[Fact], *, screen: str = "screen",
+             box_tolerance: int = 2, share_tolerance: float = 0.02,
+             include_failing_contrast: bool = True) -> list[dict]:
+    """Deterministic UI test cases derived from design facts.
+
+    Shape matches the API generator's cases (title/description/type/priority/
+    technique/steps) so review, approval, traceability and the matrix treat
+    them like any other case. `steps[0].check` is what a conformance run
+    evaluates; `steps[0].fact` is the design statement it came from, which is
+    what makes the case auditable back to the design rather than to an opinion.
+
+    A contrast fact that already fails becomes a case too. It will fail on the
+    first run, and that is correct: the design itself is the defect, and a suite
+    that quietly omits it would be certifying an inaccessible screen.
+    """
+    cases: list[dict] = []
+
+    def mk(title: str, check: str, technique: str, ctype: str, fact: Fact,
+           expected: object, priority: str = "medium") -> dict:
+        return {
+            "title": title[:500],
+            "description": f"Derived from the design: {fact.statement}",
+            "preconditions": f"The {screen} is rendered at the design viewport",
+            "type": ctype,
+            "priority": priority,
+            "technique": technique,
+            "steps": [{
+                "order": 0,
+                "screen": screen,
+                "check": check,
+                "fact": fact.id,
+                "expected": expected,
+                "evidence": list(fact.evidence) if fact.evidence else None,
+                "assertions": [{"type": check, "expected": expected}],
+            }],
+            "design_fact_ids": [fact.id],
+        }
+
+    surfaces = [f for f in facts if f.kind == "surface"]
+    for f in surfaces:
+        colour = f.value["colour"]
+        cases.append(mk(
+            f"Design: surface {f.subject} is present",
+            "surface_present", "design", "positive", f, {"colour": list(colour)}))
+        cases.append(mk(
+            f"Design: surface {f.subject} covers ~{f.value['share']:.1%} of the screen",
+            "surface_share", "design", "positive", f,
+            {"colour": list(colour), "share": f.value["share"],
+             "tolerance": share_tolerance}))
+
+    if surfaces:
+        palette_fact = next((f for f in facts if f.kind == "palette"), None)
+        if palette_fact is not None:
+            cases.append(mk(
+                "Design: no surface colour outside the design palette appears",
+                "palette_closed", "design", "negative", palette_fact,
+                {"allowed": [list(f.value["colour"]) for f in surfaces]},
+                priority="high"))
+
+    for f in (f for f in facts if f.kind == "element"):
+        box = f.value["box"]
+        colour = f.value["colour"]
+        cases.append(mk(
+            f"Design: element {'#%02X%02X%02X' % colour} exists at "
+            f"({box[0]},{box[1]})",
+            "element_present", "design", "positive", f,
+            {"colour": list(colour), "min_pixels": f.value.get("fill_ratio", 1.0)}))
+        cases.append(mk(
+            f"Design: element at ({box[0]},{box[1]}) measures {box[2]}x{box[3]}",
+            "element_box", "design", "positive", f,
+            {"box": list(box), "tolerance": box_tolerance}))
+
+    for f in (f for f in facts if f.kind == "contrast"):
+        passes = f.value.get("passes_aa")
+        if passes is False and not include_failing_contrast:
+            continue
+        cases.append(mk(
+            f"Accessibility: {f.subject.replace('_on_', ' on ')} meets WCAG AA",
+            "contrast_aa", "a11y", "positive" if passes else "negative", f,
+            {"min_ratio": 4.5, "measured_in_design": f.value["ratio"]},
+            priority="high" if passes is False else "medium"))
+
+    for f in (f for f in facts if f.kind == "alignment"):
+        cases.append(mk(
+            f"Design: {f.value['elements']} elements share a {f.value['axis']} "
+            f"edge at {f.value['coordinate']}px",
+            "alignment", "design", "positive", f,
+            {"axis": f.value["axis"], "coordinate": f.value["coordinate"],
+             "elements": f.value["elements"], "tolerance": box_tolerance}))
+
+    for f in (f for f in facts if f.kind == "spacing"):
+        cases.append(mk(
+            f"Design: the {f.value['axis']} rhythm is {f.value['gaps']}px",
+            "spacing", "design", "positive", f,
+            {"axis": f.value["axis"], "gaps": f.value["gaps"],
+             "tolerance": box_tolerance}))
+
+    return cases

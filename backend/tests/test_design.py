@@ -290,3 +290,81 @@ def test_facts_are_not_invented_for_an_empty_canvas():
     facts = design_facts(Image(40, 40, tuple(canvas(40, 40, WHITE))))
     assert not [f for f in facts if f.kind == "element"]
     assert [f for f in facts if f.kind == "surface"]
+
+
+# --- UI cases ----------------------------------------------------------------
+
+from app.modules.design import ui_cases  # noqa: E402
+
+
+def test_every_case_is_grounded_in_a_fact_that_exists():
+    """The rule that makes this trustworthy: no case without a design fact."""
+    facts = design_facts(_screen(), min_element_pixels=100)
+    ids = {f.id for f in facts}
+    cases = ui_cases(facts)
+    assert cases
+    for c in cases:
+        assert c["design_fact_ids"]
+        for fid in c["design_fact_ids"]:
+            assert fid in ids
+
+
+def test_no_facts_means_no_cases():
+    assert ui_cases([]) == []
+
+
+def test_cases_match_the_generator_shape():
+    """Review, approval and the matrix treat them like any other case."""
+    cases = ui_cases(design_facts(_screen(), min_element_pixels=100))
+    for c in cases:
+        assert {"title", "description", "type", "priority", "technique", "steps"} <= set(c)
+        assert c["type"] in ("positive", "negative")
+        assert len(c["steps"]) == 1
+        step = c["steps"][0]
+        assert step["order"] == 0 and step["check"] and step["assertions"]
+
+
+def test_an_element_case_carries_the_box_and_a_tolerance():
+    cases = ui_cases(design_facts(_screen(), min_element_pixels=100), box_tolerance=2)
+    box_case = next(c for c in cases if c["steps"][0]["check"] == "element_box")
+    exp = box_case["steps"][0]["expected"]
+    assert len(exp["box"]) == 4 and exp["tolerance"] == 2
+
+
+def test_a_failing_contrast_still_becomes_a_case():
+    """The design itself can be the defect; omitting it would certify an
+    inaccessible screen as covered."""
+    px = canvas(60, 60, WHITE)
+    for x in range(10, 50):
+        px[30 * 60 + x] = (150, 150, 150)          # ~2.96:1 on white
+    facts = design_facts(Image(60, 60, tuple(px)), min_share=0.001)
+    cases = ui_cases(facts)
+    a11y = [c for c in cases if c["technique"] == "a11y"]
+    assert a11y
+    failing = [c for c in a11y if c["type"] == "negative"]
+    assert failing and failing[0]["priority"] == "high"
+    assert failing[0]["steps"][0]["expected"]["min_ratio"] == 4.5
+
+
+def test_failing_contrast_can_be_excluded_when_asked():
+    px = canvas(60, 60, WHITE)
+    for x in range(10, 50):
+        px[30 * 60 + x] = (150, 150, 150)
+    facts = design_facts(Image(60, 60, tuple(px)), min_share=0.001)
+    kept = ui_cases(facts, include_failing_contrast=False)
+    assert not [c for c in kept if c["technique"] == "a11y" and c["type"] == "negative"]
+
+
+def test_the_palette_case_closes_the_set():
+    """A colour the design never used appearing in the build is a regression."""
+    cases = ui_cases(design_facts(_screen(), min_element_pixels=100))
+    closed = next(c for c in cases if c["steps"][0]["check"] == "palette_closed")
+    assert closed["type"] == "negative" and closed["priority"] == "high"
+    assert len(closed["steps"][0]["expected"]["allowed"]) >= 3
+
+
+def test_generation_is_deterministic():
+    facts = design_facts(_screen(), min_element_pixels=100)
+    first = [c["title"] for c in ui_cases(facts)]
+    for _ in range(3):
+        assert [c["title"] for c in ui_cases(facts)] == first
