@@ -200,7 +200,7 @@ Every pattern is judged against *this* project:
 | Strategy | Authentication per actor: JWT via storageState / `X-API-Key` | Swaps the implementation without branching at the call sites |
 | DI (fixtures) | Always — Playwright's native DI | Typed per-test/per-worker lifetimes with no globals |
 | Facade | `GenerationJourney` over three pages | Keeps specs declarative |
-| Repository | All API access — one repository per backend module (11 of them) | A typed boundary over `request` that understands `202/job_id` and the `{detail:{code,message}}` error shape |
+| Repository | All API access — one repository per backend module (13 of them) | A typed boundary over `request` that understands `202/job_id` and the `{detail:{code,message}}` error shape |
 
 ### Singleton — evaluated and rejected (for shared mutable state)
 
@@ -416,7 +416,7 @@ Why: an invented environment is maintenance cost with no coverage; one resolutio
 
 ## 11. API testing layer
 
-The client is built as a **Repository** over `request` — one repository per backend module (identity, projects, ingestion, discovery, generation, review, execution, traceability, integrations, insight), with three properties the Traceo contract imposes:
+The client is built as a **Repository** over `request` — one repository per backend module (identity, projects, ingestion, discovery, generation, review, execution, traceability, integrations, insight, security, components), with three properties the Traceo contract imposes:
 
 1. **It understands `202/job_id`:** every long operation returns `202 {job_id}` — the repository offers both shapes: `generate()` (returns the job id) and `generateAndWait()` (polls `GET /v1/jobs/{id}` until `completed`, throwing with the last state on `failed` or timeout). Polling lives in one place — `api/job-poller.ts` — not in every spec.
 2. **The uniform error shape:** `{"detail":{"code","message"}}` is unpacked into an `ApiError` carrying `code` and `status` — and negative specs assert on `code` (`forbidden`, `missing_requirements`, `validation_error`).
@@ -949,3 +949,36 @@ Outcomes are deliberately **not** asserted: the demo SUT answers `404` for an un
 It is asserted twice, **anonymously and authenticated**, because the gate is the flag and not the caller: the route takes no credentials, so a valid session must not make it appear. A 401 or 403 would be a different — and worse — answer: it would confirm the endpoint exists and is merely locked. `identity.repository.ts` gained the one call (`devSession()`); nothing else in the layer moved, and no testid changed (`docs/TESTID_REGISTRY.md` records why the frontend's probe adds none).
 
 Note the coupling this creates on purpose: **a backend booted with `TRACEO_DEV_AUTOLOGIN=1` fails this test.** That is the intent — the flag is a local convenience, and CI is not local. It is also why the login specs stay honest: with the flag off the frontend's dev-session probe 404s and the login page renders exactly as before.
+
+---
+
+## Addendum — Security generation (S0) and the component inventory (S2)
+
+Two API-only capabilities landed together (`docs/SECURITY_TESTING_PLAN.md` §14). Neither has a screen, so both are covered at the API layer with no page object and no new lane: `tests/security.spec.ts` is `@critical @regression` (it is the grounding promise applied to the class of case that is easiest to fake), `tests/components.spec.ts` is `@regression`, and the refusal and permission cases inside them carry `@negative`/`@permission` exactly as the insight spec's do. The existing `--grep-invert "@regression"` therefore keeps both out of the PR lane; the ungrepped run picks them up. **No workflow edit** — the tag choice places the spec.
+
+### What `security.spec.ts` proves
+
+1. **The corpus is a shipped, versioned file.** `GET /v1/weaknesses` must answer with a dotted version and at least ten classes, each with a slug id, a title, a legal `severity`/`activity`, a **non-empty machine-checkable `precondition`**, a check family and at least one OWASP/CWE/ASVS reference. An empty precondition would match every endpoint; a class with no reference cannot be argued with in a report. Two reads must return the same corpus — it is a file, not a query.
+2. **Grounding, adversarially.** Every step of every generated case must name a `METHOD /path` that exists in the project's own discovered inventory — parsed from `GET /projects/{id}/endpoints` and diffed, verbatim, with no path normalising. Two control assertions prove the oracle can fail (a fabricated path, and a real path with the wrong method) before the real ones run, so the loop can never pass vacuously.
+3. **Traceability, resolved rather than assumed.** Each case carries ≥1 requirement link **and** every linked id must be a confirmed requirement of that project — a link to an id from nowhere is the same defect as a fabricated endpoint.
+4. **The tag is exclusive.** Security cases carry a `weakness_id` from the closed list; every non-security case must carry `null`, or the matrix would count cases that assert nothing about a class.
+5. **The matrix is auditable arithmetic.** `covered + not_applicable + gap == total` corpus-wide; the per-class rows partition each bucket to the same totals; there is exactly one row per catalogue class (an omitted class hides gaps); `pairs.total` cannot exceed endpoints × classes; the reported `corpus_version` equals the catalogue's; and the covered classes are **exactly** the classes the review queue has cases for — two independent endpoints held to one truth. Every skipped pair names a real endpoint id, a real class and a non-empty reason.
+6. **The server is the gate.** A viewer's `POST …/security/generate` is `403 forbidden` (asserted on `code`, never message text) and no case is persisted by the refused call, while the catalogue and the matrix stay readable to the same viewer — `view` and `generate` are different capabilities and the test proves both directions.
+
+### What `components.spec.ts` proves
+
+1. **The fixture is the oracle** (§6). `helpers/component-manifests.ts` re-derives the declared inventory from each manifest **in the test process** — CycloneDX `components[]`, the `packages` map of a v3 lockfile, `name==version` lines — and the spec diffs that set against the API's. The reference files live in `test-data/` (`sbom.cyclonedx.json`, `package-lock.json`, `requirements.txt`, `not-a-component-manifest.json`) and are never mutated (§8).
+2. **Nothing is imported that the file did not declare.** The SBOM's `metadata.component` is the subject of the document, not a dependency; the lockfile's root `""` entry is the project itself. Both must be absent from the inventory, or the denominator is inflated with the system under test.
+3. **Nothing is merged away.** A scoped package keeps its scope, and a nested second copy of `ms` at a different version is its own row — collapsing versions would silently drop the vulnerable one.
+4. **A version is never invented.** An unpinned `requests>=2.31.0` and a bare `pyyaml` arrive with `version: null`, are counted in `unpinned`, and carry an `unpinned_reason`; a pinned row carries the manifest's exact string and **no** reason.
+5. **Re-import is an upsert.** The same lockfile twice adds nothing and leaves the row count unchanged — the unique index, asserted through behaviour.
+6. **The refusal is actionable, and consistent with what is accepted.** An unknown file is `422 unsupported_component_format` with an `errors` list naming the six supported formats, and each accepted upload's detected `format` must be one of the names that refusal advertises — the two halves of the detector are held to the same vocabulary.
+
+### Layer changes
+
+- **`api/security.repository.ts`** (new, `api.security`) — `catalogue()`, `generate()` / `generateAndWait()` (counters **and** the resulting queue from one run, following the `InsightRepository` precedent), `coverage()`, plus pure read helpers (`weaknessIds`, `passiveWeaknesses`, `securityCases`).
+- **`api/components.repository.ts`** (new, `api.components`) — `importManifest()` / `importAndWait()`, `list()`, `remove()`, plus `componentKey`/`componentKeys`/`unpinnedComponents`. Shape-reading lives in the repository, never scattered across assertions.
+- **`api/job-poller.ts`** — budgets for the two new job kinds (`security` at the generate budget, since it fans out over endpoints × classes; `components` at 60s, one file and no fan-out). The kind passed by a repository selects a **budget**, not an assertion.
+- **`constants/states.ts`** — `security` joins `TEST_TECHNIQUES`, plus `RUN_KINDS`, `WEAKNESS_SEVERITIES`, `WEAKNESS_ACTIVITIES` and `COMPONENT_SOURCES`, all copied verbatim from the backend (§5: one vocabulary, no parallel list).
+- **`api/types.ts`** — `TestCase.weakness_id`, `Run.kind`, and the wire types of both surfaces, each documented with the contract line it comes from.
+- **`helpers/component-manifests.ts`** (new) — the independent oracle described above. Pure functions, no assertions, no API calls (§8, §11).

@@ -40,6 +40,7 @@ import (
 	"traceo/internal/jobs"
 	"traceo/internal/models"
 	"traceo/internal/modules/integrations"
+	secmod "traceo/internal/modules/security"
 	"traceo/internal/security"
 )
 
@@ -774,6 +775,12 @@ func ExecuteRun(j *jobs.Job, runID string, caseIDs []string) (result any, err er
 		if e := db.DB.First(&tc, "id = ?", cid).Error; e != nil {
 			continue
 		}
+		// SAFETY RAIL (SECURITY_TESTING_PLAN §7): an ACTIVE weakness class writes
+		// or floods. S0 generates and MARKS those cases; the executor refuses to
+		// run them until the S1 per-environment authorisation flag exists.
+		if tc.WeaknessID != nil && secmod.IsActive(*tc.WeaknessID) {
+			continue
+		}
 		var steps []models.TestStep
 		db.DB.Where("test_case_id = ?", tc.ID).Order("step_order ASC").Find(&steps)
 		snap := caseSnapshot{ID: tc.ID, Version: tc.Version,
@@ -922,6 +929,21 @@ func abortRun(runID, reason string) gin.H {
 	return gin.H{"run_id": runID, "state": "aborted", "reason": reason}
 }
 
+// runnableCases drops the cases the safety rails refuse to execute: an ACTIVE
+// weakness class writes or floods the system under test, so S0 generates and
+// marks it but never runs it (SECURITY_TESTING_PLAN §7). The rail lives at every
+// selection point AND inside ExecuteRun, so no path can route around it.
+func runnableCases(cases []models.TestCase) []models.TestCase {
+	out := make([]models.TestCase, 0, len(cases))
+	for _, tc := range cases {
+		if tc.WeaknessID != nil && secmod.IsActive(*tc.WeaknessID) {
+			continue
+		}
+		out = append(out, tc)
+	}
+	return out
+}
+
 // LaunchRunForSchedule creates and executes a run for a due schedule (all
 // approved cases, the schedule's environment). Port of the second half of the
 // Python integrations._launch_scheduled_run — the schedule's own last_run_at /
@@ -941,12 +963,13 @@ func LaunchRunForSchedule(projectID, envID, userID string) error {
 	var cases []models.TestCase
 	db.DB.Where("project_id = ? AND organisation_id = ? AND state = ?",
 		projectID, orgID, "approved").Find(&cases)
+	cases = runnableCases(cases)
 	if len(cases) == 0 {
 		return errors.New("no approved cases") // skip silently
 	}
 
 	run := models.Run{OrganisationID: orgID, ProjectID: projectID, EnvironmentID: env.ID,
-		State: "queued", InitiatedBy: userID, Counts: models.JSONMap{}}
+		State: "queued", Kind: "functional", InitiatedBy: userID, Counts: models.JSONMap{}}
 	if err := db.DB.Create(&run).Error; err != nil {
 		return err
 	}
@@ -1003,8 +1026,13 @@ func runDict(run *models.Run) gin.H {
 	if run.AbortReason != "" {
 		abort = run.AbortReason
 	}
+	kind := run.Kind
+	if kind == "" {
+		kind = "functional" // rows written before the column existed
+	}
 	return gin.H{
 		"id": run.ID, "project_id": run.ProjectID, "environment_id": run.EnvironmentID,
+		"kind":  kind,
 		"state": run.State, "started_at": iso(run.StartedAt),
 		"finished_at": iso(run.FinishedAt), "counts": counts,
 		"initiated_by": run.InitiatedBy, "abort_reason": abort,
@@ -1054,6 +1082,7 @@ func createRun(c *gin.Context) {
 	}
 	var cases []models.TestCase
 	q.Find(&cases)
+	cases = runnableCases(cases)
 	if len(cases) == 0 {
 		httpx.Err(c, http.StatusConflict, "no_approved_cases",
 			"No approved test cases to execute")
@@ -1061,7 +1090,7 @@ func createRun(c *gin.Context) {
 	}
 
 	run := models.Run{OrganisationID: u.OrganisationID, ProjectID: projectID,
-		EnvironmentID: env.ID, State: "queued", InitiatedBy: u.ID,
+		EnvironmentID: env.ID, State: "queued", Kind: "functional", InitiatedBy: u.ID,
 		Counts: models.JSONMap{}}
 	if err := db.DB.Create(&run).Error; err != nil {
 		httpx.Err(c, http.StatusInternalServerError, "internal_error", "Could not create run")

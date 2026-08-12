@@ -84,6 +84,7 @@ def _run_outcomes(db: Session, run_id: str) -> dict[str, TestResult]:
 def _run_dict(run: Run) -> dict:
     return {
         "id": run.id, "project_id": run.project_id, "environment_id": run.environment_id,
+        "kind": run.kind or "functional",
         "state": run.state, "started_at": _iso(run.started_at),
         "finished_at": _iso(run.finished_at), "counts": run.counts or {},
         "initiated_by": run.initiated_by, "abort_reason": run.abort_reason,

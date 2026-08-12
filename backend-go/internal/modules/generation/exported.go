@@ -36,3 +36,55 @@ func Prefilter(reqText string, endpoints []*models.Endpoint) []*models.Endpoint 
 
 // ValueFor exposes the schema-driven representative value generator.
 func ValueFor(schema any) any { return valueFor(schema, 0) }
+
+// Input is one place a case can put a value: a declared parameter or a
+// top-level body property. It is the exported face of the generator's internal
+// inputSpec, so sibling engines (insight, security) target exactly the inputs
+// the generator itself recognises instead of re-deriving them.
+type Input struct {
+	Name     string
+	Where    string // param | body
+	Location string // query | path | header | body
+	Schema   map[string]any
+	Required bool
+}
+
+func exportInputs(specs []inputSpec) []Input {
+	out := make([]Input, 0, len(specs))
+	for _, s := range specs {
+		out = append(out, Input{Name: s.name, Where: s.where, Location: s.location,
+			Schema: s.schema, Required: s.required})
+	}
+	return out
+}
+
+// ConstrainedInputs lists the endpoint's inputs that carry an explicit
+// constraint — parameters in declaration order, then body properties.
+func ConstrainedInputs(ep *models.Endpoint) []Input { return exportInputs(constrainedInputs(ep)) }
+
+// FreeTextBodyFields lists the top-level free-text string properties of the
+// request body (no enum, no pattern, no format).
+func FreeTextBodyFields(ep *models.Endpoint) []Input { return exportInputs(freeTextBodyFields(ep)) }
+
+// ParamSchema is the JSON-schema fragment a declared parameter describes.
+func ParamSchema(p map[string]any) map[string]any { return paramSchema(p) }
+
+// IsFreeText reports whether a schema fragment is an unconstrained string.
+func IsFreeText(schema map[string]any) bool { return isFreeText(schema) }
+
+// InvalidFor derives one value that violates the schema's declared constraint,
+// with the name of the constraint it violates ("" when none can be derived).
+func InvalidFor(schema map[string]any) (any, string) { return invalidFor(schema) }
+
+// ApplyInput writes a value into the params map or the body, returning copies.
+func ApplyInput(in Input, value any, params map[string]any, body any) (map[string]any, any) {
+	return applyInput(inputSpec{name: in.Name, where: in.Where, location: in.Location,
+		schema: in.Schema, required: in.Required}, value, params, body)
+}
+
+// Step builds the single-step payload every generated case carries. rawBody is
+// sent verbatim when non-nil; otherwise body is serialised as JSON.
+func Step(ep *models.Endpoint, params, headers map[string]any, body any,
+	assertions []any, rawBody any) map[string]any {
+	return mkStep(ep, params, headers, body, assertions, rawBody)
+}

@@ -1,0 +1,10 @@
+# Reference pip manifest for the component-inventory spec (e2e/tests/components.spec.ts).
+# Three lines are pinned with `==` and carry an exact version; two are NOT pinned
+# and must therefore arrive with `version: null` — a range is not a version, and
+# the parser is forbidden from resolving one (docs/SECURITY_TESTING_PLAN.md §2).
+
+fastapi==0.110.0
+uvicorn==0.29.0
+requests>=2.31.0
+pyyaml
+sqlalchemy==2.0.29

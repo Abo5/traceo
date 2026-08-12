@@ -271,8 +271,13 @@ func runDict(run *models.Run) gin.H {
 	if run.AbortReason != "" {
 		abort = run.AbortReason
 	}
+	kind := run.Kind
+	if kind == "" {
+		kind = "functional" // rows written before the column existed
+	}
 	return gin.H{
 		"id": run.ID, "project_id": run.ProjectID, "environment_id": run.EnvironmentID,
+		"kind":  kind,
 		"state": run.State, "started_at": isoPtr(run.StartedAt),
 		"finished_at": isoPtr(run.FinishedAt), "counts": counts,
 		"initiated_by": run.InitiatedBy, "abort_reason": abort,

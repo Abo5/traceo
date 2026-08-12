@@ -211,11 +211,17 @@ type TestCase struct {
 	UserModified   bool   `gorm:"default:false" json:"user_modified"`
 	Model          string `json:"model"`
 	PromptVersion  string `json:"prompt_version"`
-	Technique      string `json:"technique"` // ep|bva|decision_table|negative|manual|localisation|edge_case
+	// ep|bva|decision_table|negative|manual|localisation|edge_case|security
+	Technique string `json:"technique"`
 	// EdgeCategory is set ONLY by the insight engine (technique "edge_case") and
 	// carries one of insight's 9 canonical category ids. NULL for every other
 	// case — the column is nullable and needs no backfill (AutoMigrate adds it).
-	EdgeCategory    *string    `gorm:"size:32;index" json:"edge_category"`
+	EdgeCategory *string `gorm:"size:32;index" json:"edge_category"`
+	// WeaknessID is set ONLY by the security engine (technique "security") and
+	// carries a weakness id from the shipped catalogue (backend-go/internal/
+	// modules/security/data/weaknesses.json). NULL for every other case — the
+	// column is nullable and arrives through the AutoMigrate convention.
+	WeaknessID      *string    `gorm:"size:64;index" json:"weakness_id"`
 	ApprovedBy      *string    `json:"approved_by"`
 	ApprovedAt      *time.Time `json:"approved_at"`
 	RejectionReason string     `json:"rejection_reason,omitempty"`
@@ -247,15 +253,19 @@ type RequirementTestCase struct {
 
 type Run struct {
 	Base
-	OrganisationID string     `gorm:"index" json:"organisation_id"`
-	ProjectID      string     `gorm:"index" json:"project_id"`
-	EnvironmentID  string     `json:"environment_id"`
-	State          string     `gorm:"default:queued" json:"state"` // queued|running|completed|cancelled|aborted
-	StartedAt      *time.Time `json:"started_at"`
-	FinishedAt     *time.Time `json:"finished_at"`
-	Counts         JSONMap    `gorm:"type:text" json:"counts"`
-	InitiatedBy    string     `json:"initiated_by"`
-	AbortReason    string     `json:"abort_reason,omitempty"`
+	OrganisationID string `gorm:"index" json:"organisation_id"`
+	ProjectID      string `gorm:"index" json:"project_id"`
+	EnvironmentID  string `json:"environment_id"`
+	State          string `gorm:"default:queued" json:"state"` // queued|running|completed|cancelled|aborted
+	// Kind separates the run types so gates and reports never mix them
+	// (SECURITY_TESTING_PLAN §8). NOT NULL, default "functional"; existing rows
+	// take the default when AutoMigrate adds the column.
+	Kind        string     `gorm:"not null;default:functional" json:"kind"` // functional|security|performance
+	StartedAt   *time.Time `json:"started_at"`
+	FinishedAt  *time.Time `json:"finished_at"`
+	Counts      JSONMap    `gorm:"type:text" json:"counts"`
+	InitiatedBy string     `json:"initiated_by"`
+	AbortReason string     `json:"abort_reason,omitempty"`
 }
 
 type TestResult struct {
@@ -330,12 +340,37 @@ type Webhook struct {
 	LastFiredAt    *time.Time `json:"last_fired_at"`
 }
 
+// Component — one entry of the project's declared software inventory
+// (SECURITY_TESTING_PLAN §2). Without it a CVE feed is news about other people's
+// software, so this table is the precondition of the whole CVE track.
+//
+// Version is NULLABLE on purpose: an unpinned or ranged dependency is recorded
+// with a null version and a stated reason. A version is NEVER guessed.
+type Component struct {
+	Base
+	OrganisationID string  `gorm:"index" json:"organisation_id"`
+	ProjectID      string  `gorm:"index;uniqueIndex:idx_component_identity" json:"project_id"`
+	Name           string  `gorm:"size:255;uniqueIndex:idx_component_identity" json:"name"`
+	Version        *string `gorm:"size:128;uniqueIndex:idx_component_identity" json:"version"`
+	Ecosystem      string  `gorm:"size:64;uniqueIndex:idx_component_identity" json:"ecosystem"`
+	// Purl is derived deterministically from name+version+ecosystem.
+	Purl *string `gorm:"size:512" json:"purl"`
+	// CPE23 is carried ONLY when the source document states it — a CPE is never
+	// synthesised from a package name, because the vendor half cannot be derived.
+	CPE23 *string `gorm:"column:cpe23;size:512" json:"cpe23"`
+	// Source in fidelity order (§2): sbom > lockfile > manual > fingerprint.
+	Source string `gorm:"size:32" json:"source"`
+	// UnpinnedReason states why Version is null; null when the version is exact.
+	UnpinnedReason *string `gorm:"size:255" json:"unpinned_reason"`
+	Status         string  `gorm:"default:active" json:"status"` // active|removed
+}
+
 func All() []any {
 	return []any{
 		&Organisation{}, &User{}, &Project{}, &Environment{}, &SourceDocument{},
 		&Requirement{}, &ApiSpec{}, &Endpoint{}, &TestCase{}, &TestStep{},
 		&RequirementTestCase{}, &Run{}, &TestResult{}, &AuditEntry{},
-		&ApiKey{}, &Schedule{}, &Webhook{},
+		&ApiKey{}, &Schedule{}, &Webhook{}, &Component{},
 	}
 }
 

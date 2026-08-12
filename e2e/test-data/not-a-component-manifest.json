@@ -1,0 +1,14 @@
+{
+  "_comment": "Reference seed for the component-import refusal path (e2e/tests/components.spec.ts). Valid JSON, and deliberately NONE of the supported manifests: no `bomFormat` (CycloneDX), no `spdxVersion` (SPDX), no `packages`/`dependencies` map (package-lock), no `[[package]]` table (poetry.lock), no `name==version` lines (requirements.txt) and no module/version pairs (go.sum). Uploading it must yield 422 {code: 'unsupported_component_format'} whose `errors` list NAMES the formats that would be accepted.",
+  "service": "orders-platform",
+  "owner": "platform",
+  "libraries_we_like": ["express", "fastapi"],
+  "notes": [
+    "this file lists library NAMES in prose and still declares no inventory",
+    "the parser must refuse it rather than guess an ecosystem or a version"
+  ],
+  "settings": {
+    "retention_days": 30,
+    "notify": true
+  }
+}

@@ -22,6 +22,11 @@ const KIND_TIMEOUTS_MS: Record<JobKind, number> = {
   // deterministic builders (no model call) but the same per-endpoint fan-out
   // as generate — budgeted alike rather than optimistically.
   insight: 120_000,
+  // security builders fan out over endpoints × weakness classes — the widest
+  // deterministic product in the product, so the generate budget, not less.
+  security: 120_000,
+  // parsing one uploaded manifest: no fan-out, no model, no network.
+  components: 60_000,
 };
 
 const DEFAULT_TIMEOUT_MS = 60_000;

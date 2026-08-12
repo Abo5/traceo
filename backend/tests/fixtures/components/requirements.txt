@@ -1,0 +1,8 @@
+# Traceo component-inventory fixture — a mix of pinned and unpinned lines.
+fastapi==0.111.0
+sqlalchemy==2.0.30
+requests>=2.31.0
+uvicorn
+pyjwt[crypto]==2.8.0 ; python_version >= "3.10"
+-r other-requirements.txt
+--index-url https://pypi.org/simple

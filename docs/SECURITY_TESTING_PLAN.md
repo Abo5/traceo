@@ -3,7 +3,7 @@
 > How Traceo generates, grounds and runs security test cases, and how a live CVE feed becomes test cases instead of noise.
 >
 > Scope: **backend only** — engines, data model, routes, jobs. No UI in this document.
-> Status: proposal.
+> Status: **S0 and S2 have landed** — the weakness catalogue, the deterministic builders, the coverage matrix and the component inventory are shipped code, file by file in §14. S1 and S3–S5 remain proposals.
 
 ## 0. Where security sits
 
@@ -266,14 +266,14 @@ A gate can then say something meaningful: *no `gap` in the `critical` classes, n
 
 ## 12. Phases
 
-| Phase | Deliverable | Depends on |
-|---|---|---|
-| **S0** | Weakness catalogue + deterministic builders for the passive classes; coverage matrix | nothing |
-| **S1** | Active classes behind the authorisation flag; multi-actor steps; new assertion types | S0 |
-| **S2** | Component inventory: SBOM/lockfile parsing → `Component` | nothing |
-| **S3** | NVD + KEV sync, matching, the confirm gate, version-assertion cases | S2 |
-| **S4** | Model-assisted class mapping under the closed-list gate | S0, S3 |
-| **S5** | Security gate in `/gate`, severity model, exports | S1, S3 |
+| Phase | Deliverable | Depends on | Status |
+|---|---|---|---|
+| **S0** | Weakness catalogue + deterministic builders for the passive classes; coverage matrix | nothing | **Landed** — §14.1 |
+| **S1** | Active classes behind the authorisation flag; multi-actor steps; new assertion types | S0 | Proposal |
+| **S2** | Component inventory: SBOM/lockfile parsing → `Component` | nothing | **Landed** — §14.2 |
+| **S3** | NVD + KEV sync, matching, the confirm gate, version-assertion cases | S2 | Proposal |
+| **S4** | Model-assisted class mapping under the closed-list gate | S0, S3 | Proposal |
+| **S5** | Security gate in `/gate`, severity model, exports | S1, S3 | Proposal |
 
 S0 and S2 are independent and both worth shipping alone: S0 covers the classes that apply to every API without any feed at all, and S2 makes the CVE track possible later while immediately answering "what do we even run?".
 
@@ -288,3 +288,67 @@ S0 and S2 are independent and both worth shipping alone: S0 covers the classes t
 - **A green security run is not a certificate.** It says the covered corpus passed. The report states the corpus version and the gap list beside the result, precisely so nobody reads it as more than that.
 
 **Sources:** [NVD Vulnerability APIs](https://nvd.nist.gov/developers/vulnerabilities) · [NVD API workflows](https://nvd.nist.gov/developers/api-workflows) · [NVD API key](https://nvd.nist.gov/developers/request-an-api-key) · [NVD terms of use](https://nvd.nist.gov/developers/terms-of-use)
+
+---
+
+## 14. What landed — S0 and S2, file by file
+
+The two phases that depend on nothing shipped together. Everything below is code in the repository, not a plan: the corpus is a data file, the builders are pure functions, and no part of either phase calls a model or the network — so the whole surface is deterministic and runs air-gapped (NFR-D1).
+
+### 14.1 S0 — weakness catalogue, deterministic builders, coverage matrix
+
+| Piece | Where |
+|---|---|
+| The corpus (`{version, weaknesses[]}`) | `backend/app/data/weaknesses.json` — version `1.0.0`, ten classes |
+| `applicable()` / `build_cases()` / routes | `backend/app/modules/security.py` |
+| Case shape + grounding gate (reused, not reimplemented) | `backend/app/modules/generation.py` — `grounding_validate`, and the same requirement→endpoint mapping |
+| Schema: `TestCase.weakness_id`, `Run.kind` | `backend/app/models.py` + `backend/migrations/versions/e5a91c3d7b60_security_weakness_id_run_kind.py` |
+| Go parity | `backend-go/internal/modules/security/` (`catalogue.go`, `builders.go`, `security.go`, `data/weaknesses.json`) + `backend-go/internal/models/models.go` |
+| E2E | `e2e/tests/security.spec.ts`, `e2e/api/security.repository.ts`, types in `e2e/api/types.ts`, vocabularies in `e2e/constants/states.ts` |
+
+**Routes** (Go parity is byte-for-byte on field names, status codes and error codes):
+
+```
+GET  /v1/weaknesses                         view      → {version, weaknesses[]}
+POST /v1/projects/{id}/security/generate    generate  → 202 {job_id}
+     {weakness_ids?, requirement_ids?}      job result {generated, discarded, skipped[{endpoint, weakness, reason}]}
+GET  /v1/projects/{id}/security/coverage    view      → {corpus_version, pairs, by_weakness[], skipped[]}
+```
+
+**The ten classes**, with the safety tag of §7 — `passive` unless the check writes or floods:
+
+`missing-authn` (critical) · `broken-object-level-authz` (critical) · `broken-function-level-authz` (high) · `mass-assignment` (high, **active**) · `injection-surface` (high) · `input-validation` (medium) · `error-leakage` (medium) · `security-headers` (medium) · `token-handling` (high) · `rate-limiting` (low, **active**)
+
+Each entry carries its OWASP API / CWE / ASVS references, a base severity, and a **machine-checkable precondition** in a small closed vocabulary (`declares_security`, `path_has_parameter`, `request_has_privileged_field`, `has_string_field`, `has_constrained_input`, `always`) that the builder evaluates per endpoint. The two `active` classes are **generated and tagged, never executed** — execution stays closed until S1 ships the per-environment authorisation flag.
+
+What the phase is held to, and where that is enforced:
+
+- **Traceability.** Every case carries non-empty `requirement_ids`, from the same requirement→endpoint mapping the functional generator uses. An endpoint with no mapped requirement produces **no** cases and appears in the coverage report under its own distinct reason — BO-07 working, not a bug.
+- **Grounding.** Every candidate passes `generation.grounding_validate` before persistence; failures are counted in `discarded` and never repaired, never shown.
+- **Identical downstream treatment.** A security case is an ordinary case: same dict shape, `technique: "security"`, `steps[0]` carrying method/path/request — so review, approval, execution and the traceability matrix need no special path.
+- **The matrix adds up.** `covered + not_applicable + gap == total`, corpus-wide and per class, with `pairs.total = endpoints × classes` and one `by_weakness` row per class of the corpus (a matrix that omitted classes would hide the very gaps it exists to surface). Every skipped pair names a real endpoint, a real class and a **reason**.
+- **Audit.** `security.generate`, with the corpus version and the requested class ids.
+
+### 14.2 S2 — component inventory
+
+| Piece | Where |
+|---|---|
+| Parsers (pure, no network) + routes | `backend/app/modules/components.py` |
+| `Component` model + unique `(project, name, version, ecosystem)` | `backend/app/models.py` + `backend/migrations/versions/b8f3a2c47d19_components_inventory.py` |
+| Go parity | `backend-go/internal/modules/components/` + `backend-go/internal/models/models.go` |
+| E2E | `e2e/tests/components.spec.ts`, `e2e/api/components.repository.ts`, the fixture oracle `e2e/helpers/component-manifests.ts`, fixtures in `e2e/test-data/` |
+
+```
+POST   /v1/projects/{id}/components   import_spec  multipart file → 202 {job_id}
+                                                   job result {format, added, updated, unpinned, total}
+GET    /v1/projects/{id}/components   view         → {components[]}
+DELETE /v1/components/{id}            import_spec
+```
+
+Six formats are read, and named back to the user in the refusal so a rejected upload is actionable: `cyclonedx`, `spdx`, `package-lock.json`, `requirements.txt`, `go.sum`, `poetry.lock`. Anything else is `422 {code: "unsupported_component_format", errors: [the six]}`.
+
+The rule that matters more than the parsers: **a version is never invented.** `requests>=2.31.0` and a bare `pyyaml` are declarations without a version — they are stored with `version: null`, counted in `unpinned`, and carry an `unpinned_reason` saying why. Resolving a range would fabricate the single field CVE matching depends on, which is the failure §2 exists to prevent. Fidelity is recorded per row (`sbom` for an SBOM, `lockfile` for a lockfile), so S3 can weigh a match by where the version came from. Audit: `components.import`.
+
+### 14.3 Not in these phases
+
+No UI ships with S0 or S2 — both surfaces are API-only, so `docs/TESTID_REGISTRY.md` is unchanged. Execution of `active` classes waits on S1, and CVE ingestion on S3: until then the product answers "no component inventory / no feed" honestly rather than generating plausible nonsense (§2).

@@ -195,6 +195,58 @@ existing `generation.grounding_validate` before persistence (imported, never re-
   `technique` gains the legal value `edge_case` (see `models.TECHNIQUES`). Both fields appear in
   the test-case payloads.
 
+### modules/security.py  (Security generation — phase S0, docs/SECURITY_TESTING_PLAN.md)
+100% deterministic, ZERO LLM calls, fully offline (NFR-D1). Security is a technique family inside
+generation (`technique = "security"`), not a parallel engine: every case passes the existing
+`generation.grounding_validate` before persistence (imported, never re-implemented, never weakened)
+and carries >= 1 requirement link, so it appears in the traceability matrix like everything else.
+- WEAKNESS CATALOGUE — a shipped, versioned DATA FILE: `app/data/weaknesses.json`
+  `{version: str, weaknesses: [entry]}`, entry =
+  `{id, title, refs: {owasp_api: str|null, cwe: [str], asvs: [str]}, severity: critical|high|medium|low,
+    activity: passive|active, precondition: {term: bool}, checks: [str], description}`.
+  v1.0.0 ships 10 classes: `missing-authn | broken-object-level-authz | broken-function-level-authz |
+  mass-assignment | injection-surface | input-validation | error-leakage | security-headers |
+  token-handling | rate-limiting`. `activity` is `active` for `rate-limiting` and `mass-assignment`;
+  S0 GENERATES active classes (they belong in the corpus and the matrix) but the executor must not
+  run them until S1's `security_testing_authorised` flag exists.
+  `precondition` uses a CLOSED vocabulary the builder evaluates — `always | declares_security |
+  path_has_parameter | request_has_body | has_string_field | has_constrained_input |
+  request_has_privileged_field` — and a catalogue naming a term outside it fails validation ON LOAD.
+- `applicable(endpoint, weakness) -> (bool, reason)` — pure; the reason is REQUIRED on every False.
+  That reason is what makes a skipped pair auditable instead of invisible.
+- `build_cases(requirement, endpoint, weakness) -> [case]` — pure and deterministic (same inputs ->
+  identical titles). Case dicts match `generation`'s shape exactly — `{title, description,
+  preconditions, type, priority, technique, steps, requirement_ids}` — plus `weakness_id`;
+  `steps[0]` carries method/path/request like any generated functional case. `priority` is the
+  class's base severity. TRACEABILITY: the requirement<->endpoint association is the SAME
+  deterministic one the Insight engine uses (existing traceability links unioned with
+  `generation._prefilter`; the LLM mapper is NOT used). An endpoint no requirement maps to produces
+  ZERO cases — BO-07, not a bug — and the report states that as its own distinct reason.
+- New assertion families emitted for S1's executor (unknown types are SKIPPED, never failed, today):
+  `{"type": "no_5xx"}` | `{"type": "body_not_matches", "patterns": [str]}` |
+  `{"type": "header_present"|"header_absent", "name": str}` |
+  `{"type": "rate_limited_within", "requests": int, "expected_status": 429}`.
+- GET /weaknesses (capability `view`) -> `{version, weaknesses: [entry]}` — the shipped catalogue.
+- POST /projects/{id}/security/generate (capability `generate`)
+  `{weakness_ids?: [id], requirement_ids?: [id]}` -> 202 `{job_id}` (job kind `security`).
+  An id outside the catalogue -> 422 `{code: "unknown_weakness", message, errors: [known ids]}`.
+  Job result: `{generated, discarded, skipped: [{endpoint: "METHOD /path", weakness, reason}]}`.
+  Persists TestCase rows: state `draft`, technique `security`, `weakness_id` set, `generated=true`,
+  `model="deterministic-security"`. Duplicate key is (endpoint, weakness, title), so re-running is
+  idempotent while a class that emits several cases per pair (token handling) keeps all of them.
+  Audit per run: `security.generate` with `{generated, discarded, skipped, corpus_version, weakness_ids}`.
+- GET /projects/{id}/security/coverage (capability `view`) — the §11 matrix, no job:
+  `{corpus_version, pairs: {total, covered, not_applicable, gap},
+    by_weakness: [{weakness_id, covered, not_applicable, gap}],
+    skipped: [{endpoint_id, method, path, weakness_id, reason}]}`.
+  `total` = included endpoints x catalogue entries; `covered + not_applicable + gap == total`, always.
+  `gap` = applicable but no case exists — the number the report is for. `skipped` carries the
+  not-applicable reason per pair AND, for an applicable pair that cannot be covered yet, the
+  "not mapped to any confirmed requirement" reason.
+- TestCase gains a NULLABLE `weakness_id` (String(64), indexed; NULL for every non-security case).
+  `technique` gains the legal value `security` (see `models.TECHNIQUES`). Run gains `kind`
+  (NOT NULL, server default `functional`; `functional|security|performance`, see `models.RUN_KINDS`).
+
 ### modules/review.py  (FR-REV)
 - GET  /projects/{id}/test-cases?state=&requirement_id=&type=&q= — include requirement links {id, external_id, description}
 - GET  /test-cases/{id} — full detail incl. steps + linked requirements (queue shows req text alongside, FR-REV-02)
@@ -254,6 +306,13 @@ existing `generation.grounding_validate` before persistence (imported, never re-
   (incl. `n_a` when nothing can be grounded), the generate job, adversarial grounding (nothing
   outside the inventory, excluded endpoints never used, the gate rejects poisoned cases), the
   422s, the capability guards, the audit entry, and the hardened mock-prompt path. RELEASE GATE.
+- test_security.py — phase S0: the shipped catalogue validates against its own schema (ids unique,
+  every precondition term inside the closed vocabulary), `applicable()` returns a reason on EVERY
+  False, an endpoint with no mapped requirement yields zero cases and is reported with that specific
+  reason, every persisted case passes `grounding_validate` and carries non-empty requirement_ids plus
+  a weakness_id, `covered + not_applicable + gap == total` on the matrix, the 422 on an unknown
+  weakness id, the capability guards (viewer cannot generate -> 403), the `security.generate` audit
+  entry, and determinism (same inputs -> identical titles). RELEASE GATE.
 - test_isolation.py — two orgs; every list/get endpoint returns 404/empty across tenants. RELEASE GATE.
 - test_flow.py — end-to-end: register -> project -> upload md doc -> confirm -> import spec -> generate -> approve -> run against a local test SUT (spin up in-process FastAPI test app) -> matrix has passing rows -> export xlsx.
 - test_config_guard.py — `assert_production_safe` refuses to boot a production node on the dev secret

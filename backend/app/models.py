@@ -2,7 +2,8 @@
 tables carry organisation_id (org isolation enforced in the query layer — NFR-SEC-04)."""
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import String, Text, Integer, Float, Boolean, DateTime, ForeignKey, JSON, LargeBinary
+from sqlalchemy import (String, Text, Integer, Float, Boolean, DateTime, ForeignKey, JSON,
+                        LargeBinary, UniqueConstraint)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
 
@@ -143,10 +144,18 @@ class Endpoint(TimestampMixin, Base):
 
 # Legal TestCase.technique values. "localisation" is the FR-034 Unicode
 # round-trip probe; "edge_case" is produced only by the Insight engine
-# (modules/insight.py) and is always accompanied by a non-null edge_category.
+# (modules/insight.py) and is always accompanied by a non-null edge_category;
+# "security" is produced only by the security builders (modules/security.py) and
+# is always accompanied by a non-null weakness_id.
 TECHNIQUES: tuple[str, ...] = (
     "ep", "bva", "decision_table", "negative", "manual", "localisation", "edge_case",
+    "security",
 )
+
+# Legal Run.kind values (SECURITY_TESTING_PLAN §8). A run carries exactly one
+# kind so gates and reports can separate a functional regression from a security
+# sweep instead of averaging them into one meaningless number.
+RUN_KINDS: tuple[str, ...] = ("functional", "security", "performance")
 
 
 def is_legal_technique(technique: str | None) -> bool:
@@ -173,6 +182,12 @@ class TestCase(TimestampMixin, Base):
     # belong to an edge-case family — which is every case generated before this
     # engine existed, and every manually authored one.
     edge_category: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # Weakness class this case verifies (SECURITY_TESTING_PLAN §8), a slug from the
+    # shipped catalogue app/data/weaknesses.json. NULL for every non-security case,
+    # which is the honest value: "this case belongs to no weakness class" is not the
+    # same statement as "it belongs to the class named none". Indexed because the
+    # coverage matrix (§11) counts cases per (endpoint, weakness) pair.
+    weakness_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     approved_by: Mapped[str | None] = mapped_column(String(36), nullable=True)  # FR-REV-05
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)  # FR-REV-06
@@ -208,6 +223,11 @@ class Run(TimestampMixin, Base):
     organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
     environment_id: Mapped[str] = mapped_column(ForeignKey("environments.id"))
+    # What this run is: see RUN_KINDS. NOT NULL with a server default because every
+    # run that already exists is a functional one, and a nullable "kind" would make
+    # every reader handle a state that has no meaning.
+    kind: Mapped[str] = mapped_column(String(20), default="functional",
+                                      server_default="functional")  # functional|security|performance
     state: Mapped[str] = mapped_column(String(20), default="queued")  # queued|running|completed|cancelled|aborted
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -267,6 +287,41 @@ class Webhook(TimestampMixin, Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     last_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_fired_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+# --- Component inventory (security plan §2, phase S2) -------------------------------
+# Without a declared component set a CVE feed is news about other people's
+# software, so this table is the precondition for the whole CVE track. It is
+# populated by modules/components.py from an SBOM or a lockfile, in the fidelity
+# order below. A version is NEVER guessed: an unpinned requirement line is stored
+# with version NULL and the reason it could not be resolved.
+COMPONENT_SOURCES: tuple[str, ...] = ("sbom", "lockfile", "manual", "fingerprint")
+
+
+class Component(TimestampMixin, Base):
+    __tablename__ = "components"
+    __table_args__ = (
+        # One row per (project, name, version, ecosystem): re-uploading the same
+        # SBOM updates the inventory instead of duplicating it. version is
+        # nullable, and SQL treats NULLs as distinct, so modules/components.py
+        # ALSO does the NULL-aware lookup before inserting — this index is the
+        # backstop, not the only guard.
+        UniqueConstraint("project_id", "name", "version", "ecosystem",
+                         name="uq_components_project_name_version_ecosystem"),
+    )
+    organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(300))
+    version: Mapped[str | None] = mapped_column(String(100), nullable=True)  # NULL = unpinned
+    ecosystem: Mapped[str] = mapped_column(String(30), default="generic")  # purl type
+    purl: Mapped[str] = mapped_column(String(500), default="")
+    cpe23: Mapped[str | None] = mapped_column(String(300), nullable=True)  # only when declared
+    source: Mapped[str] = mapped_column(String(20), default="sbom")  # see COMPONENT_SOURCES
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active|removed
+    # Why the version is NULL — quoted in the import report so an unpinned
+    # dependency is visible rather than silently absent.
+    unpinned_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+# --- end component inventory ---------------------------------------------------------
 
 
 class AuditEntry(Base):

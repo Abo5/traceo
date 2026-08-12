@@ -9,6 +9,7 @@ import { config } from '../config/resolve';
 import type { Role } from '../constants/roles';
 import { ACTORS_FILE } from '../helpers/paths';
 import type { OrgActor, WorkerOrg } from './auth.helpers';
+import { ComponentsRepository } from './components.repository';
 import { DiscoveryRepository } from './discovery.repository';
 import { RunsRepository } from './execution.repository';
 import { GenerationRepository } from './generation.repository';
@@ -19,6 +20,7 @@ import { InsightRepository } from './insight.repository';
 import { JobPoller } from './job-poller';
 import { ProjectsRepository } from './projects.repository';
 import { ReviewRepository } from './review.repository';
+import { SecurityRepository } from './security.repository';
 
 export class ApiClient {
   readonly http: TraceoHttp;
@@ -30,6 +32,10 @@ export class ApiClient {
   readonly generation: GenerationRepository;
   /** The sixth engine — deterministic, offline (insight.repository.ts). */
   readonly insights: InsightRepository;
+  /** Weakness catalogue, security generation and the coverage matrix (S0). */
+  readonly security: SecurityRepository;
+  /** SBOM / lockfile inventory (S2) — the precondition of the CVE track. */
+  readonly components: ComponentsRepository;
   readonly review: ReviewRepository;
   readonly runs: RunsRepository;
 
@@ -52,6 +58,8 @@ export class ApiClient {
     this.discovery = new DiscoveryRepository(this.http);
     this.generation = new GenerationRepository(this.http, this.jobs);
     this.insights = new InsightRepository(this.http, this.jobs);
+    this.security = new SecurityRepository(this.http, this.jobs);
+    this.components = new ComponentsRepository(this.http, this.jobs);
     this.review = new ReviewRepository(this.http);
     this.runs = new RunsRepository(this.http, this.jobs);
   }

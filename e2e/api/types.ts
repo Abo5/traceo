@@ -5,6 +5,7 @@
 import type { Role } from '../constants/roles';
 import type {
   AiCriticality,
+  ComponentSource,
   EdgeCategory,
   InsightStatus,
   JobKind,
@@ -12,9 +13,12 @@ import type {
   ParseStatus,
   RequirementState,
   ResultOutcome,
+  RunKind,
   RunState,
   SpecFormat,
   TestCaseState,
+  WeaknessActivity,
+  WeaknessSeverity,
 } from '../constants/states';
 
 // --- identity (modules/identity.py `_user_payload`) --------------------------
@@ -258,6 +262,145 @@ export interface GenerationJobResult {
   duplicates: number;
 }
 
+// --- security (modules/security.py + data/weaknesses.json) --------------------
+// S0 of docs/SECURITY_TESTING_PLAN.md: a shipped, versioned weakness catalogue,
+// deterministic builders that reuse generation.py's case shape and its grounding
+// gate, and the §11 coverage matrix. No model is involved anywhere in this
+// surface — the catalogue is a data file and the builders are pure.
+
+/** Standard references of one catalogue entry — the audit trail of the class. */
+export interface WeaknessRefs {
+  /** OWASP API Security Top 10 id, e.g. "API1:2023" — null for a CWE-only class. */
+  owasp_api?: string | null;
+  /** CWE ids, e.g. ["CWE-639"]. */
+  cwe?: string[];
+  /** OWASP ASVS verification requirement ids, e.g. ["4.2.1"]. */
+  asvs?: string[];
+}
+
+/**
+ * One weakness class of the shipped catalogue.
+ *
+ * `precondition` is a MACHINE-CHECKABLE object in a small closed vocabulary
+ * (`path_has_parameter`, `declares_security`, `request_has_body`,
+ * `has_string_field`, `always`, …) — the builder evaluates it against an
+ * endpoint, which is what makes a skipped pair auditable rather than invisible.
+ * Kept as an open record on the wire: the vocabulary is the backend's to grow,
+ * and a spec asserts its EFFECT (a skip carries a reason) rather than its keys.
+ */
+export interface Weakness {
+  /** Stable slug — the value that lands on `TestCase.weakness_id`. */
+  id: string;
+  title: string;
+  refs: WeaknessRefs;
+  /** Base severity, before endpoint context (§10). */
+  severity: WeaknessSeverity;
+  /** passive = safe to run by default; active = gated behind S1's flag (§7). */
+  activity: WeaknessActivity;
+  precondition: Record<string, unknown>;
+  /** The assertion families the builder emits for this class. */
+  checks: unknown[];
+}
+
+/** GET /weaknesses — the shipped corpus and its version (capability "view"). */
+export interface WeaknessCatalogue {
+  /** Stamped into every generated case; a change makes affected cases stale. */
+  version: string;
+  weaknesses: Weakness[];
+}
+
+/** POST /projects/{id}/security/generate — both filters optional. */
+export interface SecurityGenerateBody {
+  weakness_ids?: string[];
+  requirement_ids?: string[];
+}
+
+/**
+ * One (endpoint × weakness) pair the builder did NOT emit a case for, as
+ * reported by the generation job. `reason` is REQUIRED — it is the whole point
+ * of the entry, and "no mapped requirement" (BO-07) is one of its values.
+ */
+export interface SecuritySkip {
+  /** "METHOD /path" of the endpoint, as the job reports it. */
+  endpoint: string;
+  weakness: string;
+  reason: string;
+}
+
+/** Job.result of a completed security-generation job. */
+export interface SecurityJobResult {
+  generated: number;
+  /** Candidates the grounding gate refused — counted, never persisted (BO-07). */
+  discarded: number;
+  skipped: SecuritySkip[];
+}
+
+/** A skipped pair as the coverage matrix reports it (identified, not stringly). */
+export interface CoverageSkip {
+  endpoint_id: string;
+  method: string;
+  path: string;
+  weakness_id: string;
+  reason: string;
+}
+
+/** The three buckets of §11, per weakness class. */
+export interface CoverageByWeakness {
+  weakness_id: string;
+  covered: number;
+  not_applicable: number;
+  /** Applicable, no case — the number the report exists to surface. */
+  gap: number;
+}
+
+/** GET /projects/{id}/security/coverage — the §11 matrix (capability "view"). */
+export interface SecurityCoverage {
+  /** The catalogue version the matrix was computed against. */
+  corpus_version: string;
+  pairs: { total: number; covered: number; not_applicable: number; gap: number };
+  by_weakness: CoverageByWeakness[];
+  skipped: CoverageSkip[];
+}
+
+// --- components — the SBOM inventory (modules/components.py) -------------------
+// S2: without an inventory a CVE feed is news about other people's software
+// (plan §2). Parsers are pure and offline; a version is NEVER invented —
+// an unpinned line arrives with `version: null` and is counted as such.
+
+export interface Component {
+  id: string;
+  project_id: string;
+  name: string;
+  /** null for an unpinned/ranged declaration — never guessed (plan §2). */
+  version: string | null;
+  ecosystem: string;
+  /** Derived only where the ecosystem allows it deterministically. */
+  cpe23: string | null;
+  /** Fidelity order: sbom > lockfile > manual > fingerprint. */
+  source: ComponentSource;
+  status: string;
+  purl?: string | null;
+  /**
+   * WHY this row has no version — set exactly when `version` is null (an
+   * unpinned requirements line, an SBOM entry without one). "Never invent a
+   * version" is only auditable if the absence is explained (plan §2).
+   */
+  unpinned_reason?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+/** Job.result of a completed component-import job. */
+export interface ComponentImportResult {
+  /** The detected manifest format — a member of the 422 refusal's `errors` list. */
+  format: string;
+  added: number;
+  updated: number;
+  /** Declarations recorded with `version: null` because they were not pinned. */
+  unpinned: number;
+  total: number;
+}
+
 // --- insight — the sixth engine (QA Insight Agent) ---------------------------
 
 /** One taxonomy row of GET /projects/{id}/insights. */
@@ -337,7 +480,7 @@ export interface TestCase {
   user_modified: boolean;
   model: string;
   prompt_version: string;
-  /** ep | bva | decision_table | negative | manual | edge_case (constants/states.ts). */
+  /** ep | bva | decision_table | negative | manual | edge_case | security (constants/states.ts). */
   technique: string;
   /**
    * Insight taxonomy id — one of the 9 canonical ids for cases produced by the
@@ -345,6 +488,13 @@ export interface TestCase {
    * test-case payloads).
    */
   edge_category: EdgeCategory | null;
+  /**
+   * Weakness class id (`Weakness.id`) for cases produced by the security
+   * builders, null for every other case. A security case still carries its
+   * requirement links, so it appears in the traceability matrix like any other
+   * case (plan §8).
+   */
+  weakness_id: string | null;
   version: number;
   approved_by: string | null;
   approved_at: string | null;
@@ -399,6 +549,12 @@ export interface Run {
   project_id: string;
   environment_id: string;
   state: RunState;
+  /**
+   * functional | security | performance — so gates and reports can separate a
+   * security run from a functional one (plan §8). Not null on the wire;
+   * pre-existing runs read back as "functional" (the column default).
+   */
+  kind: RunKind;
   started_at: string | null;
   finished_at: string | null;
   counts: RunCounts;

@@ -386,6 +386,113 @@ containing `/` or a space cannot alter the path structure.
 Every success writes the audit action **`auth.dev_session`** (`user`/user id, detail
 `{"email"}`).
 
+## Security testing S0 + component inventory S2 (fixed contract — parity with the Python backend is mandatory)
+
+Implements phases **S0** and **S2** of `docs/SECURITY_TESTING_PLAN.md`. Security is a
+**technique family inside generation**, not a second engine: the requirement → endpoint
+mapping, the case shape, the grounding gate, jobs, review, approval and the traceability
+matrix are all the existing ones. **Zero LLM calls** — every builder is deterministic, so
+the whole phase works air-gapped and the coverage matrix is reproducible.
+
+### 1. The weakness corpus is a shipped DATA file
+`backend/app/data/weaknesses.json` is the ONE source of truth for both backends;
+`go:embed` cannot reach outside the module, so `internal/modules/security/data/weaknesses.json`
+is a **byte-identical copy**, refreshed by `./scripts/sync-weaknesses.sh` (also wired as the
+package's `go:generate` step) and guarded by `tests/weakness_catalogue_test.go`, which FAILS
+the build when the two files diverge. Version `1.0.0` ships the ten classes
+`missing-authn · broken-object-level-authz · broken-function-level-authz · mass-assignment ·
+injection-surface · input-validation · error-leakage · security-headers · token-handling ·
+rate-limiting`, each with `title`, `description`, `refs{owasp_api (NULLABLE — the 2023 API
+Top 10 has no injection entry and none is invented), cwe[], asvs[]}`, `severity`
+(critical|high|medium|low), `activity` (passive|active), `precondition` and `checks`.
+`mass-assignment` (it writes) and `rate-limiting` (it floods) are **active**.
+
+`checks` names the assertion FAMILIES a class verifies. The builders emit them literally,
+including the S1 types the executor does not know yet (`no_5xx`, `body_not_matches`,
+`header_present`, `header_absent`, `rate_limited_within`) — both engines skip unknown
+assertion types rather than failing on them, so the case ships with the knowledge and the
+runner gains the ability in S1.
+
+### 2. `security.Applicable(endpoint, weakness) (bool, reason)` — pure, reason REQUIRED
+The precondition vocabulary is CLOSED, and every term is a named predicate over the
+endpoint record plus the reason printed when it does not hold:
+`always · declares_security · path_has_parameter · request_has_body · has_string_field ·
+has_constrained_input · request_has_privileged_field`. A term the table does not define is
+reported as unknown, never assumed — a catalogue typo is visible in the report instead of
+silently generating (or silently skipping) cases. A skipped pair with no reason is
+indistinguishable from a pair nobody thought about, which is why the reason is mandatory.
+
+### 3. `security.BuildCases(requirement, endpoint, weakness) []case`
+Case dicts carry exactly the keys the functional generator returns (`title`, `description`,
+`preconditions`, `type`, `priority`, `technique`, `steps`, `requirement_ids`) plus
+`weakness_id`; `technique = "security"`, `priority` = the class's base severity, and
+`steps[0]` carries method/path/request exactly like a generated functional case
+(`generation.Step`). Targets come from the GENERATOR'S own helpers, newly exported in
+`generation/exported.go` (`Input`, `ConstrainedInputs`, `FreeTextBodyFields`, `ParamSchema`,
+`IsFreeText`, `InvalidFor`, `ApplyInput`, `Step`) — reused, never restated, so both engines
+violate a constraint and pick a free-text field the same way. Where Python iterates a JSON
+object's declaration order, Go sorts the property names: a Go map has no order, and sorted
+is the deterministic equivalent.
+
+**Traceability (BO-07).** Every case carries non-empty `requirement_ids`. The anchor comes
+from `endpointRequirements`: existing traceability links first (a requirement already linked
+to a case that hits this endpoint is the strongest statement of intent there is), then the
+generator's own lexical `generation.Prefilter`, each list sorted by `(external_id, id)`. An
+endpoint no requirement maps to produces **NO** security cases, and the reports state that as
+its own reason — that is BO-07, not a bug. **Grounding:** every case passes
+`generation.GroundingValidate` before persistence, reused verbatim; failures are discarded
+and counted, never repaired or shown.
+
+### 4. Routes
+| route | capability | notes |
+|---|---|---|
+| `GET /v1/weaknesses` | `view` | `{version, weaknesses[]}` — the shipped corpus verbatim |
+| `POST /v1/projects/{id}/security/generate` | `generate` | body `{weakness_ids?, requirement_ids?}` → `202 {job_id}` (job kind `security`); an id outside the corpus ⇒ `422 unknown_weakness` with `errors` = the sorted corpus |
+| `GET /v1/projects/{id}/security/coverage` | `view` | the §11 matrix |
+| `POST /v1/projects/{id}/components` | `import_spec` | multipart `file` → `202 {job_id}` (job kind `ingest`); empty ⇒ `422 empty_file`, >10MB ⇒ `413 file_too_large`, unrecognised ⇒ `422 unsupported_component_format` with `errors` = the supported formats |
+| `GET /v1/projects/{id}/components` | `view` | `{components: [...]}` ordered by ecosystem, name |
+| `DELETE /v1/components/{id}` | `import_spec` | `{deleted: true, id}`; 404 across tenants |
+
+Generate job result: `{generated, discarded, skipped:[{endpoint:"METHOD path", weakness,
+reason}]}`. Coverage: `{corpus_version, pairs{total, covered, not_applicable, gap},
+by_weakness[{weakness_id, covered, not_applicable, gap}] (catalogue order),
+skipped[{endpoint_id, method, path, weakness_id, reason}]}` where
+`covered + not_applicable + gap == total` always, `covered` is PAIR granularity (token
+handling emits two cases and covers its pair once), and **`gap` = applicable but no case
+exists — the number that matters**. `skipped` carries every not-applicable pair with the
+precondition that failed, plus every gap that CANNOT be covered until a requirement maps
+there (the BO-07 reason). Audit actions: **`security.generate`**, **`components.import`**.
+
+### 5. Safety rail (§7)
+An ACTIVE class is GENERATED and MARKED, never executed: `execution.runnableCases` drops
+any case whose `weakness_id` names an active class at both selection points, and
+`ExecuteRun` drops it again, so no path can route around the rail until the S1
+per-environment authorisation flag exists.
+
+### 6. Component inventory (S2)
+`internal/modules/components/parse.go` holds six PURE parsers — no network, no filesystem,
+no clock: `cyclonedx` · `spdx` · `package-lock.json` (v1 `dependencies` and v2/v3
+`packages`) · `requirements.txt` · `go.sum` (the `/go.mod` twin deduplicated) ·
+`poetry.lock`. Detection is content-first, filename only as a tie-breaker. **A VERSION IS
+NEVER INVENTED:** a range, a bare name, an absent `version` or SPDX `NOASSERTION` is stored
+as `version = NULL` with a stated `unpinned_reason`, because "we do not know which version
+runs" is a fact the CVE track must be told, not a blank to fill in. A purl is derived
+deterministically (`pkg:{ecosystem}/{name}@{version}`, PEP 503 normalisation for pypi,
+scoped npm names kept verbatim); a **cpe23 is only ever carried when the document states
+one** — the vendor half cannot be derived from a package name, so it is never synthesised.
+Import result: `{format, added, updated, unpinned, total}` where `total` is the size of the
+imported DOCUMENT; re-importing is idempotent (`added: 0`).
+
+### 7. Schema
+`TestCase.weakness_id` (nullable, `size:64`, indexed, in every test-case payload) and
+`TestCase.technique` gains the legal value `security`. `Run.kind` (NOT NULL, default
+`functional`, values `functional|security|performance`) ships in every run payload. New
+table `Component(organisation_id, project_id, name, version NULLABLE, ecosystem, purl,
+cpe23, source sbom|lockfile|manual|fingerprint, unpinned_reason, status)` with a unique
+index on `(project_id, name, version, ecosystem)`; because SQL treats NULLs as distinct, the
+upsert lookup is explicitly NULL-aware so an unpinned line does not add a row per upload.
+All of it arrives through the AutoMigrate convention — no backfill.
+
 ## Quality gates
 backend-go/tests as Go tests (httptest against a fresh in-memory app+temp sqlite):
 grounding gate (adversarial fixtures — zero fabricated identifiers persisted), tenant
@@ -415,6 +522,21 @@ request line on the wire: value from the step params with the consumed key gone 
 query, value from an environment variable, an unfillable placeholder left literal, and a
 value containing a space and a slash percent-encoded), dev auto-login
 (`tests/dev_session_test.go` — 404 while off, token+user+`auth.dev_session` audit entry when
-on, 503 `dev_session_unavailable` when the configured user is missing, production refusal).
+on, 503 `dev_session_unavailable` when the configured user is missing, production refusal),
+security S0 (`tests/security_test.go` — the corpus is shipped, versioned and well-formed with
+every precondition inside the closed vocabulary; `Applicable` never refuses without a reason;
+every persisted case re-validated against `generation.GroundingValidate` and linked to a
+requirement; the auth classes build the right request shapes (`Authorization` dropped,
+`{{low_privilege_token}}`, `{{expired_token}}`/`{{unsigned_token}}`, `{{foreign_object_id}}`
+in the DECLARED path parameter); an endpoint with no requirement generates NOTHING and both
+reports say why; the matrix adds up and `gap` shrinks after generation; re-running generates
+nothing; `422 unknown_weakness`; capability guards + tenant isolation; the ACTIVE-class
+executor rail and `run.kind`) and the catalogue sync gate (`tests/weakness_catalogue_test.go`
+— byte-identity with `backend/app/data/weaknesses.json`, skipped only in a Go-only checkout),
+components S2 (`tests/components_test.go` — all six parsers, ranges and `NOASSERTION` stored
+as NULL with a reason, `-r` directives ignored, the `/go.mod` twin deduplicated, poetry
+sub-tables ignored, scoped npm purls, the npm root skipped, v1 nested dependencies walked,
+idempotent re-import, the 422 that names the supported formats, delete + tenant isolation +
+capability guards, and both audit actions).
 `gofmt -l .` silent; `go vet ./...` clean; `go build ./...` clean;
 `go test -race -count=1 ./...` green.

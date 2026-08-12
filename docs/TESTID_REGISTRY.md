@@ -585,3 +585,9 @@ The **QA Insight Agent** screen — the sixth engine: fully deterministic, no la
 | `integrations-webhook-delete-modal` | Modal | Delete confirmation |
 | `integrations-webhook-delete-cancel-button` | Button | Abort deletion |
 | `integrations-webhook-delete-confirm-button` | Button | Confirm deletion |
+
+---
+
+## Surfaces that deliberately have no testids
+
+**Security testing (S0) and the component inventory (S2)** — `docs/SECURITY_TESTING_PLAN.md` §14 — shipped as **API only**: the weakness catalogue, `POST /v1/projects/{id}/security/generate`, the coverage matrix and the SBOM/lockfile import have no screen, so there is nothing to register. Their cases land in the existing review queue and are selected there through the ids already listed under `/projects/[id]/review`. The specs that cover them (`e2e/tests/security.spec.ts`, `e2e/tests/components.spec.ts`) are therefore API-level, with no page objects. When a screen is added for either, its ids belong in this file in the same change.

@@ -1,0 +1,5 @@
+{
+  "kind": "not-a-component-manifest",
+  "note": "No bomFormat, no spdxVersion, no lockfileVersion — nothing to parse.",
+  "items": [1, 2, 3]
+}

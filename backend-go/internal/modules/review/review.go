@@ -242,6 +242,7 @@ func caseDict(tc *models.TestCase, links []gin.H, stepCount int) gin.H {
 		"generated": tc.Generated, "user_modified": tc.UserModified,
 		"model": tc.Model, "prompt_version": tc.PromptVersion,
 		"technique": tc.Technique, "edge_category": tc.EdgeCategory,
+		"weakness_id": tc.WeaknessID,
 		"version":     tc.Version,
 		"approved_by": tc.ApprovedBy, "approved_at": isoPtr(tc.ApprovedAt),
 		"rejection_reason": nilIfEmpty(tc.RejectionReason),

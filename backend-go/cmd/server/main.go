@@ -12,6 +12,7 @@ import (
 	"traceo/internal/db"
 	"traceo/internal/httpx"
 	"traceo/internal/jobs"
+	"traceo/internal/modules/components"
 	"traceo/internal/modules/discovery"
 	"traceo/internal/modules/execution"
 	"traceo/internal/modules/generation"
@@ -23,6 +24,7 @@ import (
 	"traceo/internal/modules/reference"
 	"traceo/internal/modules/reporting"
 	"traceo/internal/modules/review"
+	secmod "traceo/internal/modules/security"
 	"traceo/internal/modules/traceability"
 )
 
@@ -57,6 +59,7 @@ func buildEngine() *gin.Engine {
 		identity.Register, projects.Register, ingestion.Register, discovery.Register,
 		generation.Register, review.Register, execution.Register, traceability.Register,
 		reporting.Register, integrations.Register, reference.Register, insight.Register,
+		secmod.Register, components.Register,
 	} {
 		reg(v1)
 	}

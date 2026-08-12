@@ -1,0 +1,145 @@
+{
+  "version": "1.0.0",
+  "weaknesses": [
+    {
+      "id": "missing-authn",
+      "title": "Missing authentication",
+      "refs": {
+        "owasp_api": "API2:2023",
+        "cwe": ["CWE-306", "CWE-287"],
+        "asvs": ["4.1.1", "13.2.1"]
+      },
+      "severity": "critical",
+      "activity": "passive",
+      "precondition": {"declares_security": true},
+      "checks": ["status_code", "no_5xx", "body_not_matches"],
+      "description": "An endpoint that declares a security scheme must refuse a request that carries no credentials, and the refusal must not describe the resource it is protecting."
+    },
+    {
+      "id": "broken-object-level-authz",
+      "title": "Broken object-level authorisation",
+      "refs": {
+        "owasp_api": "API1:2023",
+        "cwe": ["CWE-639", "CWE-284"],
+        "asvs": ["4.2.1"]
+      },
+      "severity": "critical",
+      "activity": "passive",
+      "precondition": {"path_has_parameter": true},
+      "checks": ["status_code", "no_5xx"],
+      "description": "An endpoint addressed by an identifier must not serve one actor's object to another actor: the request is refused, never answered with 200."
+    },
+    {
+      "id": "broken-function-level-authz",
+      "title": "Broken function-level authorisation",
+      "refs": {
+        "owasp_api": "API5:2023",
+        "cwe": ["CWE-285", "CWE-862"],
+        "asvs": ["4.1.3"]
+      },
+      "severity": "high",
+      "activity": "passive",
+      "precondition": {"declares_security": true},
+      "checks": ["status_code", "no_5xx"],
+      "description": "A guarded operation must refuse a caller whose role does not carry the capability, rather than relying on the caller never finding the route."
+    },
+    {
+      "id": "mass-assignment",
+      "title": "Mass assignment of a privileged property",
+      "refs": {
+        "owasp_api": "API3:2023",
+        "cwe": ["CWE-915"],
+        "asvs": ["5.1.2"]
+      },
+      "severity": "high",
+      "activity": "active",
+      "precondition": {"request_has_privileged_field": true},
+      "checks": ["status_code", "json_field", "no_5xx"],
+      "description": "A privileged property named in the request schema must not be settable by the client: the value is ignored or the request is refused, never silently applied."
+    },
+    {
+      "id": "injection-surface",
+      "title": "Injection surface",
+      "refs": {
+        "owasp_api": null,
+        "cwe": ["CWE-89", "CWE-79", "CWE-77"],
+        "asvs": ["5.3.3", "5.3.4"]
+      },
+      "severity": "high",
+      "activity": "passive",
+      "precondition": {"has_string_field": true},
+      "checks": ["no_5xx", "body_not_matches", "status_code"],
+      "description": "Metacharacters sent into a free-text field must be handled as data: no unhandled exception, and no query, template or command fragment echoed back as an oracle."
+    },
+    {
+      "id": "input-validation",
+      "title": "Input validation",
+      "refs": {
+        "owasp_api": null,
+        "cwe": ["CWE-20"],
+        "asvs": ["5.1.3", "5.1.4"]
+      },
+      "severity": "medium",
+      "activity": "passive",
+      "precondition": {"has_constrained_input": true},
+      "checks": ["status_code", "no_5xx"],
+      "description": "A value that violates a declared constraint must be rejected by the contract's own error status. An unhandled 5xx is a defect in every class."
+    },
+    {
+      "id": "error-leakage",
+      "title": "Error handling leaks internals",
+      "refs": {
+        "owasp_api": "API8:2023",
+        "cwe": ["CWE-209", "CWE-497"],
+        "asvs": ["7.4.1"]
+      },
+      "severity": "medium",
+      "activity": "passive",
+      "precondition": {"always": true},
+      "checks": ["no_5xx", "body_not_matches"],
+      "description": "However the request is malformed, the response must not carry a stack trace, a framework version, a SQL fragment or an internal hostname."
+    },
+    {
+      "id": "security-headers",
+      "title": "Transport and response security headers",
+      "refs": {
+        "owasp_api": "API8:2023",
+        "cwe": ["CWE-693", "CWE-16"],
+        "asvs": ["14.4.1", "14.4.3", "14.4.5"]
+      },
+      "severity": "medium",
+      "activity": "passive",
+      "precondition": {"always": true},
+      "checks": ["header_present", "header_absent"],
+      "description": "Every response carries the transport and content-type protections, and none of the banners that name the server software and its version."
+    },
+    {
+      "id": "token-handling",
+      "title": "Authentication token handling",
+      "refs": {
+        "owasp_api": "API2:2023",
+        "cwe": ["CWE-347", "CWE-613"],
+        "asvs": ["3.5.3", "3.3.1"]
+      },
+      "severity": "high",
+      "activity": "passive",
+      "precondition": {"declares_security": true},
+      "checks": ["status_code", "no_5xx", "body_not_matches"],
+      "description": "An expired token and a token whose signature was stripped are both refused; neither is accepted because its claims read correctly."
+    },
+    {
+      "id": "rate-limiting",
+      "title": "Unrestricted resource consumption",
+      "refs": {
+        "owasp_api": "API4:2023",
+        "cwe": ["CWE-770", "CWE-799"],
+        "asvs": ["11.1.4"]
+      },
+      "severity": "low",
+      "activity": "active",
+      "precondition": {"always": true},
+      "checks": ["rate_limited_within", "no_5xx"],
+      "description": "Repeated identical requests are eventually refused with 429 rather than served without limit. The probe is bounded and backs off — a QA tool must not be the outage."
+    }
+  ]
+}
