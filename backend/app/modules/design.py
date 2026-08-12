@@ -393,3 +393,66 @@ def roles(img: Image, *, min_share: float = 0.002,
             c, counts[c], counts[c] / total, ratios[c], "ink", under,
             contrast_ratio(c, under) if under else None))
     return out
+
+
+def _mix(a: RGB, b: RGB, t: float) -> RGB:
+    """Composite b over a at opacity t, in LINEAR light — how a renderer blends."""
+    from .visual import _linearize
+
+    out = []
+    for ca, cb in zip(a, b):
+        lin = _linearize(ca) * (1.0 - t) + _linearize(cb) * t
+        lin = max(0.0, min(1.0, lin))
+        srgb = 12.92 * lin if lin <= 0.0031308 else 1.055 * (lin ** (1 / 2.4)) - 0.055
+        out.append(max(0, min(255, round(srgb * 255))))
+    return tuple(out)  # type: ignore[return-value]
+
+
+def is_blend(colour: RGB, surface: RGB, candidates: list[RGB], *,
+             tolerance: float = 1.5, steps: int = 32) -> RGB | None:
+    """Is this colour just `surface` blended with one of `candidates`?
+
+    An antialiased glyph edge and a semi-transparent divider are not design
+    decisions — they are the renderer mixing two colours the design DID choose.
+    Reporting them as low-contrast text buries the real findings under dozens of
+    fringes, which is how an accessibility report becomes unreadable and then
+    ignored.
+
+    A blend is detectable exactly: composite the candidate over the surface in
+    linear light and see whether any opacity reproduces the colour. Returns the
+    candidate it blends towards, or None if the colour stands on its own.
+    """
+    from .visual import delta_e_2000, srgb_to_lab
+
+    if colour == surface:
+        return surface
+    want = srgb_to_lab(*colour)
+    for cand in candidates:
+        if cand == surface:
+            continue
+        for i in range(1, steps):
+            t = i / steps
+            if delta_e_2000(want, srgb_to_lab(*_mix(surface, cand, t))) <= tolerance:
+                return cand
+    return None
+
+
+def text_inks(img: Image, *, min_share: float = 0.0002,
+              blend_tolerance: float = 1.5) -> list[Role]:
+    """Ink colours that are a colour in their own right, not a rendering artefact.
+
+    This is the list an accessibility report should show: every entry is a colour
+    somebody chose, paired with the surface it is read on and its exact WCAG
+    ratio. Fringes and blends are filtered out because a renderer produced them,
+    not a designer.
+    """
+    all_roles = roles(img, min_share=min_share)
+    surfaces = [r.colour for r in all_roles if r.kind == "surface"]
+    inks = [r for r in all_roles if r.kind == "ink" and r.on_surface is not None]
+    standalone = [r.colour for r in inks]
+    out: list[Role] = []
+    for r in inks:
+        others = [c for c in standalone + surfaces if c != r.colour]
+        if is_blend(r.colour, r.on_surface, others, tolerance=blend_tolerance) is None:
+            out.append(r)
+    return out

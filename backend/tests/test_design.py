@@ -199,3 +199,38 @@ def test_a_failing_contrast_is_reported_as_failing():
     assert ink.contrast == pytest.approx(3.363, abs=1e-3)
     assert ink.passes() is False                            # body text: fails
     assert ink.passes(large_text=True) is True              # large text: passes
+
+
+# --- blends ------------------------------------------------------------------
+
+from app.modules.design import is_blend, text_inks  # noqa: E402
+
+
+def test_an_antialiasing_fringe_is_recognised_as_a_blend():
+    """Half-way between the surface and the glyph is the renderer's doing."""
+    surface, glyph = (255, 255, 255), (0, 0, 0)
+    for t in (0.25, 0.5, 0.75):
+        from app.modules.design import _mix
+        fringe = _mix(surface, glyph, t)
+        assert is_blend(fringe, surface, [glyph]) == glyph
+
+
+def test_a_chosen_colour_is_not_a_blend():
+    """A brand colour is not on the line between the page and the text."""
+    assert is_blend((60, 136, 76), (255, 255, 255), [(0, 0, 0), (30, 30, 30)]) is None
+
+
+def test_text_inks_drop_the_fringes_and_keep_the_colour():
+    from app.modules.design import _mix
+    px = canvas(40, 40, WHITE)
+    for x in range(6, 34):                       # a muted grey "line of text"
+        px[20 * 40 + x] = (140, 140, 140)
+        px[19 * 40 + x] = _mix(WHITE, (140, 140, 140), 0.5)   # its antialiased edge
+        px[21 * 40 + x] = _mix(WHITE, (140, 140, 140), 0.5)
+    found = text_inks(Image(40, 40, tuple(px)))
+    colours = {r.colour for r in found}
+    assert (140, 140, 140) in colours
+    assert _mix(WHITE, (140, 140, 140), 0.5) not in colours
+    ink = next(r for r in found if r.colour == (140, 140, 140))
+    assert ink.on_surface == WHITE
+    assert ink.passes() is False                  # 3.36:1 — the finding survives

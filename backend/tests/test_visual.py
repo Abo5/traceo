@@ -161,3 +161,62 @@ def test_antialiasing_suppression_only_applies_above_exact_mode():
     assert compare(base, edge, tolerance=0.0, suppress_antialiasing=True).different == 1
     assert compare(base, edge, tolerance=0.2, suppress_antialiasing=True).different == 0
     assert compare(base, edge, tolerance=0.2, suppress_antialiasing=False).different == 1
+
+
+# --- remediation --------------------------------------------------------------
+
+from app.modules.visual import lab_to_srgb, nearest_accessible  # noqa: E402
+
+
+def test_lab_round_trips_through_srgb():
+    """The inverse must land back on the same byte, or a suggestion would drift."""
+    for rgb in [(0, 0, 0), (255, 255, 255), (140, 140, 140), (60, 136, 76),
+                (240, 144, 63), (92, 142, 220), (17, 17, 17)]:
+        assert lab_to_srgb(srgb_to_lab(*rgb)) == rgb
+
+
+def test_a_passing_colour_is_returned_untouched():
+    r = nearest_accessible((0, 0, 0), (255, 255, 255))
+    assert r.suggested == (0, 0, 0) and r.delta_e == 0.0
+    assert r.ratio_after == pytest.approx(21.0, abs=1e-9)
+
+
+def test_the_suggestion_reaches_the_target_and_no_further():
+    """Overshooting would change the design more than the standard requires."""
+    r = nearest_accessible((140, 140, 140), (255, 255, 255), target=4.5)
+    assert r.ratio_before < 4.5 <= r.ratio_after
+    assert r.ratio_after < 5.0                      # minimal, not "just make it black"
+    assert r.suggested == (118, 118, 118)
+
+
+def test_the_suggestion_keeps_the_hue():
+    """Only lightness moves: a green stays the same green, a blue the same blue."""
+    for ink, surface in [((60, 136, 76), (255, 255, 255)),
+                         ((92, 142, 220), (255, 255, 255))]:
+        r = nearest_accessible(ink, surface)
+        _, a0, b0 = srgb_to_lab(*ink)
+        _, a1, b1 = srgb_to_lab(*r.suggested)
+        assert a1 == pytest.approx(a0, abs=1.5)
+        assert b1 == pytest.approx(b0, abs=1.5)
+        assert r.ratio_after >= 4.5
+
+
+def test_it_darkens_on_a_light_surface_and_lightens_on_a_dark_one():
+    dark_ink = nearest_accessible((140, 140, 140), (255, 255, 255))
+    light_ink = nearest_accessible((90, 90, 90), (17, 17, 17))
+    assert sum(dark_ink.suggested) < sum((140, 140, 140))
+    assert sum(light_ink.suggested) > sum((90, 90, 90))
+
+
+def test_an_impossible_target_says_so_instead_of_pretending():
+    """On mid-grey, no text colour reaches 7:1 — the SURFACE has to change."""
+    r = nearest_accessible((130, 130, 130), (128, 128, 128), target=7.0)
+    assert r.achievable is False
+    assert r.ratio_after < 7.0
+    assert r.suggested in ((0, 0, 0), (255, 255, 255))   # it reports the extreme it tried
+
+
+def test_remediation_is_deterministic():
+    first = nearest_accessible((140, 140, 140), (245, 245, 245))
+    for _ in range(5):
+        assert nearest_accessible((140, 140, 140), (245, 245, 245)) == first

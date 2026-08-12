@@ -379,3 +379,99 @@ def verdict(cmp: Comparison, th: Thresholds) -> tuple[str, list[str]]:
             f"palette distance {cmp.histogram_distance:.6f} > "
             f"{th.max_histogram_distance:.6f}")
     return ("failed" if reasons else "passed"), reasons
+
+
+# --- remediation ------------------------------------------------------------
+# Reporting a contrast failure without the fix leaves the designer to guess, and
+# guessing usually means "make it darker" until it looks wrong. The passing
+# colour is derivable: hold the hue and chroma the designer chose, move only
+# lightness, and stop at the first value that clears the ratio.
+
+def lab_to_srgb(lab: tuple[float, float, float]) -> tuple[int, int, int]:
+    """Inverse of srgb_to_lab, clamped to the 8-bit gamut."""
+    l, a, b = lab
+    fy = (l + 16.0) / 116.0
+    fx = fy + a / 500.0
+    fz = fy - b / 200.0
+
+    def _inv(f: float) -> float:
+        c = f ** 3
+        return c if c > _EPS else (116.0 * f - 16.0) / _KAPPA
+
+    x = _inv(fx) * _D65[0]
+    y = (((l + 16.0) / 116.0) ** 3 if l > _KAPPA * _EPS else l / _KAPPA) * _D65[1]
+    z = _inv(fz) * _D65[2]
+
+    rl = 3.2404542 * x - 1.5371385 * y - 0.4985314 * z
+    gl = -0.9692660 * x + 1.8760108 * y + 0.0415560 * z
+    bl = 0.0556434 * x - 0.2040259 * y + 1.0572252 * z
+
+    def _encode(c: float) -> int:
+        c = max(0.0, min(1.0, c))
+        srgb = 12.92 * c if c <= 0.0031308 else 1.055 * (c ** (1 / 2.4)) - 0.055
+        return max(0, min(255, round(srgb * 255)))
+
+    return _encode(rl), _encode(gl), _encode(bl)
+
+
+@dataclass(frozen=True)
+class Remedy:
+    original: tuple[int, int, int]
+    surface: tuple[int, int, int]
+    suggested: tuple[int, int, int]
+    ratio_before: float
+    ratio_after: float
+    delta_e: float          # perceptual distance from the designer's colour
+    target: float
+    achievable: bool        # False when even black/white cannot reach the target
+
+    @property
+    def hex(self) -> str:
+        return "#%02X%02X%02X" % self.suggested
+
+
+def nearest_accessible(ink: tuple[int, int, int], surface: tuple[int, int, int],
+                       *, target: float = 4.5) -> Remedy:
+    """The closest colour to `ink` that reaches `target` contrast on `surface`.
+
+    Only L* moves: a* and b* are the designer's hue and chroma decision and are
+    left alone, so the suggestion is recognisably the same colour rather than a
+    different one that happens to pass. Returned unchanged when it already
+    passes, and flagged unachievable when even pure black or white falls short —
+    which means the SURFACE has to change, not the text.
+    """
+    before = contrast_ratio(ink, surface)
+    if before >= target:
+        return Remedy(ink, surface, ink, before, before, 0.0, target, True)
+
+    l0, a0, b0 = srgb_to_lab(*ink)
+    darker = relative_luminance(*surface) > relative_luminance(*ink) or \
+        relative_luminance(*surface) > 0.5
+
+    lo, hi = (0.0, l0) if darker else (l0, 100.0)
+    extreme = lab_to_srgb((lo if darker else hi, a0, b0))
+    if contrast_ratio(extreme, surface) < target:
+        return Remedy(ink, surface, extreme, before,
+                      contrast_ratio(extreme, surface),
+                      delta_e_2000(srgb_to_lab(*ink), srgb_to_lab(*extreme)),
+                      target, False)
+
+    # Contrast is monotone in L* on either side of the surface, so bisection
+    # converges on the least perceptual change that clears the bar.
+    best = extreme
+    for _ in range(40):
+        mid = (lo + hi) / 2.0
+        cand = lab_to_srgb((mid, a0, b0))
+        if contrast_ratio(cand, surface) >= target:
+            best = cand
+            if darker:
+                lo = mid
+            else:
+                hi = mid
+        else:
+            if darker:
+                hi = mid
+            else:
+                lo = mid
+    return Remedy(ink, surface, best, before, contrast_ratio(best, surface),
+                  delta_e_2000(srgb_to_lab(*ink), srgb_to_lab(*best)), target, True)
