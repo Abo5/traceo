@@ -234,3 +234,59 @@ def test_text_inks_drop_the_fringes_and_keep_the_colour():
     ink = next(r for r in found if r.colour == (140, 140, 140))
     assert ink.on_surface == WHITE
     assert ink.passes() is False                  # 3.36:1 — the finding survives
+
+
+# --- design facts ------------------------------------------------------------
+
+from app.modules.design import Fact, design_facts  # noqa: E402
+
+
+def _screen():
+    """A miniature screen: page, card, field, primary button — sharing a left edge."""
+    px = canvas(120, 90, (19, 18, 23))                 # page
+    paint(px, 120, 20, 10, 80, 70, (27, 26, 32))       # card
+    paint(px, 120, 30, 30, 60, 12, (34, 33, 42))       # input
+    paint(px, 120, 30, 50, 60, 14, (240, 144, 63))     # primary button
+    return Image(120, 90, tuple(px))
+
+
+def test_facts_cover_palette_elements_alignment_and_spacing():
+    kinds = {f.kind for f in design_facts(_screen(), min_element_pixels=100)}
+    assert {"palette", "surface", "element", "alignment", "spacing"} <= kinds
+
+
+def test_every_fact_is_identifiable_and_states_something():
+    facts = design_facts(_screen(), min_element_pixels=100)
+    assert len({f.id for f in facts}) == len(facts)      # ids are unique
+    assert all(f.statement.strip() for f in facts)
+    assert all(f.value is not None for f in facts)
+
+
+def test_element_facts_carry_the_box_as_evidence():
+    facts = design_facts(_screen(), min_element_pixels=100)
+    button = next(f for f in facts
+                  if f.kind == "element" and f.value["colour"] == (240, 144, 63))
+    assert button.evidence == (30, 50, 60, 14)
+    assert button.value["box"] == (30, 50, 60, 14)
+
+
+def test_the_shared_left_edge_is_stated_as_a_fact():
+    """The input and the button start at the same x — that is a design decision,
+    and it is the kind of thing no written requirement ever records."""
+    facts = design_facts(_screen(), min_element_pixels=100)
+    align = [f for f in facts if f.kind == "alignment" and f.value["axis"] == "left"]
+    assert any(f.value["coordinate"] == 30 and f.value["elements"] >= 2 for f in align)
+
+
+def test_extraction_is_deterministic():
+    screen = _screen()
+    first = [(f.kind, f.subject, f.statement) for f in design_facts(screen)]
+    for _ in range(3):
+        assert [(f.kind, f.subject, f.statement) for f in design_facts(screen)] == first
+
+
+def test_facts_are_not_invented_for_an_empty_canvas():
+    """A flat image states its palette and nothing else — no phantom elements."""
+    facts = design_facts(Image(40, 40, tuple(canvas(40, 40, WHITE))))
+    assert not [f for f in facts if f.kind == "element"]
+    assert [f for f in facts if f.kind == "surface"]

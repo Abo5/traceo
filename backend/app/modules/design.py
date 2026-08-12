@@ -456,3 +456,100 @@ def text_inks(img: Image, *, min_share: float = 0.0002,
         if is_blend(r.colour, r.on_surface, others, tolerance=blend_tolerance) is None:
             out.append(r)
     return out
+
+
+# --- design facts -----------------------------------------------------------
+# A design is a specification. Most of what it states never reaches a written
+# document: that this button exists, that the field sits above it, that the
+# palette has exactly these four surfaces. Those statements are testable, and
+# extracting them turns a design from a picture into an inventory — the same
+# role the endpoint inventory plays for the API side, and the same guarantee:
+# a UI case may only reference an element the design actually contains.
+
+@dataclass(frozen=True)
+class Fact:
+    """One checkable statement derived from a design, with its evidence."""
+    kind: str            # palette | surface | element | alignment | spacing | contrast
+    subject: str         # a stable identifier: "#F0903F", "element@480,916"
+    statement: str       # human-readable, for the requirement text
+    value: object        # the machine-checkable value
+    evidence: tuple[int, int, int, int] | None = None   # box in the design
+
+    @property
+    def id(self) -> str:
+        return f"{self.kind}:{self.subject}"
+
+
+def design_facts(img: Image, *,
+                 min_share: float = 0.002,
+                 min_element_pixels: int = 400,
+                 align_threshold: float = 0.35) -> list[Fact]:
+    """Everything this design states that a test can later check.
+
+    Deterministic and complete for what a raster can support: the palette and
+    its roles, the elements as boxes, their shared edges, the spacing rhythm,
+    and the contrast of every real ink. What it cannot state from pixels alone
+    is meaning — that the orange box is the SUBMIT button, or that the field is
+    required. Those come from the design file's node names and properties, not
+    from its rendering; see docs/DESIGN_AS_REQUIREMENT_SOURCE.md.
+    """
+    facts: list[Fact] = []
+    total = img.width * img.height
+
+    role_list = roles(img, min_share=min_share)
+    surfaces = [r for r in role_list if r.kind == "surface"]
+
+    facts.append(Fact(
+        "palette", "count",
+        f"the design uses {len(surfaces)} surface colours above {min_share:.1%} of the canvas",
+        len(surfaces)))
+
+    for r in surfaces:
+        facts.append(Fact(
+            "surface", r.hex,
+            f"{r.hex} covers {r.share:.2%} of the screen",
+            {"colour": r.colour, "share": r.share}))
+
+    for ink in text_inks(img, min_share=min_share / 10):
+        if ink.contrast is None:
+            continue
+        facts.append(Fact(
+            "contrast", f"{ink.hex}_on_{'#%02X%02X%02X' % ink.on_surface}",
+            f"{ink.hex} on {'#%02X%02X%02X' % ink.on_surface} has a contrast ratio "
+            f"of {ink.contrast:.2f}:1",
+            {"ratio": ink.contrast, "passes_aa": ink.passes(),
+             "passes_aa_large": ink.passes(large_text=True)}))
+
+    page = surfaces[0].colour if surfaces else None
+    elements = [r for r in regions(img, min_pixels=min_element_pixels)
+                if page is None or r.colour != page]
+    for el in elements:
+        facts.append(Fact(
+            "element", f"{el.x},{el.y}",
+            f"an element of {'#%02X%02X%02X' % el.colour} occupies "
+            f"{el.width}x{el.height} at ({el.x},{el.y})",
+            {"colour": el.colour, "box": el.box, "fill_ratio": el.fill_ratio},
+            el.box))
+
+    # Shared edges are the design's alignment decisions, stated as integers.
+    for axis, key in (("left", lambda e: e.x), ("top", lambda e: e.y)):
+        shared: dict[int, int] = {}
+        for el in elements:
+            shared[key(el)] = shared.get(key(el), 0) + 1
+        for coord, n in sorted(shared.items()):
+            if n >= 2:
+                facts.append(Fact(
+                    "alignment", f"{axis}@{coord}",
+                    f"{n} elements share a {axis} edge at {coord}px",
+                    {"axis": axis, "coordinate": coord, "elements": n}))
+
+    prof = projection_profile(img)
+    for axis in ("row", "column"):
+        gaps = spacing(prof.gridlines(axis, threshold=align_threshold))
+        if gaps:
+            facts.append(Fact(
+                "spacing", axis,
+                f"the {axis} rhythm is {list(gaps)}px",
+                {"axis": axis, "gaps": list(gaps)}))
+
+    return facts
