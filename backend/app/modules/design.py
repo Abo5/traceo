@@ -34,7 +34,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field
 
-from .visual import Image, delta_e_2000, srgb_to_lab
+from .visual import Image, contrast_ratio, delta_e_2000, srgb_to_lab
 
 RGB = tuple[int, int, int]
 
@@ -305,3 +305,91 @@ def conform(design: Image, impl: Image, *,
         impl_regions=len(i_regions),
         box_matches=box_matches,
     )
+
+
+# --- roles ------------------------------------------------------------------
+# Contrast is a question about INK on a SURFACE. Asking it of every colour
+# against the page background reports a card fill as a contrast failure, which
+# is noise: nobody reads a card. Roles are therefore derived from the shape a
+# colour makes, not assumed.
+
+@dataclass(frozen=True)
+class Role:
+    colour: RGB
+    pixels: int
+    share: float
+    solid_ratio: float        # fraction of this colour's pixels whose 4 neighbours match
+    kind: str                 # "surface" | "ink"
+    on_surface: RGB | None    # for ink: the surface it actually sits on
+    contrast: float | None    # ink vs that surface, exact WCAG ratio
+
+    @property
+    def hex(self) -> str:
+        return "#%02X%02X%02X" % self.colour
+
+    def passes(self, *, large_text: bool = False) -> bool | None:
+        """WCAG 2.x AA: 4.5:1 for body text, 3:1 for large text and UI shapes."""
+        if self.contrast is None:
+            return None
+        return self.contrast >= (3.0 if large_text else 4.5)
+
+
+def roles(img: Image, *, min_share: float = 0.002,
+          solid_cut: float = 0.6) -> list[Role]:
+    """Classify each significant colour as surface or ink, and pair ink with its background.
+
+    A surface is a colour whose pixels are mostly interior — its four neighbours
+    are the same colour. Glyph strokes and icon lines are thin, so most of their
+    pixels touch something else; that single ratio separates the two without any
+    model, and it is a property of the raster, so it is reproducible exactly.
+
+    For ink, the surface underneath is the most frequent surface colour adjacent
+    to its pixels — the background the text is actually read against, which is
+    the only surface WCAG is asking about.
+    """
+    from collections import Counter as _Counter
+
+    w, h = img.width, img.height
+    total = w * h
+    counts = _Counter(img.pixels)
+    significant = {c for c, n in counts.items() if n / total >= min_share}
+
+    solid = _Counter()
+    neighbours: dict[RGB, _Counter] = {c: _Counter() for c in significant}
+    px = img.pixels
+    for y in range(h):
+        row = y * w
+        for x in range(w):
+            c = px[row + x]
+            if c not in significant:
+                continue
+            same = True
+            for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+                if 0 <= nx < w and 0 <= ny < h:
+                    n = px[ny * w + nx]
+                    if n != c:
+                        same = False
+                        neighbours[c][n] += 1
+                else:
+                    same = False
+            if same:
+                solid[c] += 1
+
+    ratios = {c: solid[c] / counts[c] for c in significant}
+    surfaces = {c for c in significant if ratios[c] >= solid_cut}
+
+    out: list[Role] = []
+    for c in sorted(significant, key=lambda k: -counts[k]):
+        if c in surfaces:
+            out.append(Role(c, counts[c], counts[c] / total, ratios[c],
+                            "surface", None, None))
+            continue
+        under = None
+        for cand, _ in neighbours[c].most_common():
+            if cand in surfaces:
+                under = cand
+                break
+        out.append(Role(
+            c, counts[c], counts[c] / total, ratios[c], "ink", under,
+            contrast_ratio(c, under) if under else None))
+    return out

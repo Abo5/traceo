@@ -147,3 +147,55 @@ def test_structure_survives_a_rasterisation_difference_that_pixels_do_not():
     c = conform(design, impl, box_tolerance=0, min_region_pixels=64)
     assert c.box_score == 1.0                                       # structure: matches
     assert c.colour_score == 1.0
+
+
+# --- roles -------------------------------------------------------------------
+
+from app.modules.design import roles  # noqa: E402
+
+
+def test_roles_separate_a_surface_from_ink():
+    """A filled block is a surface; a one-pixel stroke through it is ink.
+    The separator is interior-ness, which is a property of the raster — no model."""
+    px = canvas(30, 30, WHITE)
+    paint(px, 30, 5, 5, 20, 20, (240, 240, 240))          # a card
+    for x in range(8, 22):                                 # a thin dark line on the card
+        px[12 * 30 + x] = (60, 60, 60)
+    found = {r.colour: r for r in roles(Image(30, 30, tuple(px)), min_share=0.001)}
+    assert found[WHITE].kind == "surface"
+    assert found[(240, 240, 240)].kind == "surface"
+    assert found[(60, 60, 60)].kind == "ink"
+
+
+def test_ink_is_paired_with_the_surface_it_sits_on_not_the_page():
+    """The contrast question is about the background actually behind the glyph."""
+    px = canvas(30, 30, WHITE)
+    paint(px, 30, 5, 5, 20, 20, (30, 30, 30))             # a dark panel on a white page
+    for x in range(8, 22):
+        px[12 * 30 + x] = (250, 250, 250)                  # light text ON the dark panel
+    ink = next(r for r in roles(Image(30, 30, tuple(px)), min_share=0.001)
+               if r.colour == (250, 250, 250))
+    assert ink.kind == "ink"
+    assert ink.on_surface == (30, 30, 30)                  # not WHITE
+    assert ink.contrast > 15                               # and the ratio is against the panel
+
+
+def test_role_contrast_is_the_exact_wcag_ratio():
+    px = canvas(20, 20, (255, 255, 255))
+    for x in range(4, 16):
+        px[10 * 20 + x] = (0, 0, 0)
+    ink = next(r for r in roles(Image(20, 20, tuple(px)), min_share=0.001)
+               if r.colour == (0, 0, 0))
+    assert ink.contrast == pytest.approx(21.0, abs=1e-9)   # the WCAG maximum, exactly
+    assert ink.passes() is True and ink.passes(large_text=True) is True
+
+
+def test_a_failing_contrast_is_reported_as_failing():
+    px = canvas(20, 20, (255, 255, 255))
+    for x in range(4, 16):
+        px[10 * 20 + x] = (140, 140, 140)                  # 3.36:1 — the classic muted grey
+    ink = next(r for r in roles(Image(20, 20, tuple(px)), min_share=0.001)
+               if r.colour == (140, 140, 140))
+    assert ink.contrast == pytest.approx(3.363, abs=1e-3)
+    assert ink.passes() is False                            # body text: fails
+    assert ink.passes(large_text=True) is True              # large text: passes
