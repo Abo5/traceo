@@ -3,11 +3,26 @@
 package jobs
 
 import (
+	"errors"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// Error is a job failure the caller is expected to ACT on, carrying a stable
+// code. A bare error string tells the UI nothing it can branch on: "node was not
+// found" and "the page timed out" need different sentences in front of the user,
+// and only the failing code knows which is which.
+type Error struct {
+	Code    string
+	Message string
+}
+
+func (e *Error) Error() string { return e.Message }
+
+// Fail builds a coded job failure.
+func Fail(code, message string) error { return &Error{Code: code, Message: message} }
 
 type Job struct {
 	mu       sync.Mutex
@@ -18,7 +33,9 @@ type Job struct {
 	Message  string  `json:"message"`
 	Result   any     `json:"result"`
 	Error    *string `json:"error"`
-	Created  string  `json:"created_at"`
+	// ErrorCode is set only when the job failed with a coded jobs.Error.
+	ErrorCode *string `json:"error_code"`
+	Created   string  `json:"created_at"`
 }
 
 func (j *Job) Set(progress float64, message string) {
@@ -37,7 +54,8 @@ func (j *Job) Snapshot() map[string]any {
 	defer j.mu.Unlock()
 	return map[string]any{
 		"id": j.ID, "kind": j.Kind, "status": j.Status, "progress": j.Progress,
-		"message": j.Message, "result": j.Result, "error": j.Error, "created_at": j.Created,
+		"message": j.Message, "result": j.Result, "error": j.Error,
+		"error_code": j.ErrorCode, "created_at": j.Created,
 	}
 }
 
@@ -104,6 +122,11 @@ func submitLocked(kind, projectID string, fn func(j *Job) (any, error)) *Job {
 			msg := err.Error()
 			j.Status = "failed"
 			j.Error = &msg
+			var coded *Error
+			if errors.As(err, &coded) {
+				code := coded.Code
+				j.ErrorCode = &code
+			}
 		} else {
 			j.Status = "completed"
 			j.Progress = 1

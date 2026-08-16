@@ -1,0 +1,933 @@
+package tests_test
+
+// Web targets — point Traceo at a URL and pick what to test. Parity gate for
+// backend/tests/test_webtarget.py: the same claims, the same recorded sidecar
+// document, so a client cannot tell the two backends apart.
+//
+// Nothing here starts a browser: a unit test that shells out to Chromium is a
+// network test wearing a costume. The sidecar seam (webtarget.SidecarRunner) is
+// replaced with the recorded payload instead.
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"traceo/internal/config"
+	"traceo/internal/db"
+	"traceo/internal/models"
+	"traceo/internal/modules/webtarget"
+)
+
+const webTargetURL = "http://localhost:8019/web/index.php/auth/login"
+
+// recordedPayload is the sidecar document captured from the real SPA target,
+// with the screenshot pointed at the committed fixture raster.
+func recordedPayload(t *testing.T) map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("fixtures", "webtarget_orangehrm.json"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("fixture is not JSON: %v", err)
+	}
+	abs, err := filepath.Abs(filepath.Join("fixtures", "webtarget_screen.png"))
+	if err != nil {
+		t.Fatalf("fixture path: %v", err)
+	}
+	doc["screenshot"] = abs
+	return doc
+}
+
+// withSidecar replaces the browser invocation with the recorded document and
+// allows a loopback target (the SSRF guard has its own test).
+func withSidecar(t *testing.T, doc map[string]any) {
+	t.Helper()
+	previousRunner := webtarget.SidecarRunner
+	previousPrivate := config.C.AllowPrivateTargets
+	webtarget.SidecarRunner = func(url, viewport, outDir string, timeoutS float64) (map[string]any, error) {
+		return doc, nil
+	}
+	config.C.AllowPrivateTargets = true
+	t.Cleanup(func() {
+		webtarget.SidecarRunner = previousRunner
+		config.C.AllowPrivateTargets = previousPrivate
+	})
+}
+
+func allowPrivate(t *testing.T) {
+	t.Helper()
+	previous := config.C.AllowPrivateTargets
+	config.C.AllowPrivateTargets = true
+	t.Cleanup(func() { config.C.AllowPrivateTargets = previous })
+}
+
+func webTargetProject(t *testing.T) (map[string]string, string) {
+	t.Helper()
+	headers := registerOrg(t, "Web Target Org")
+	return headers, createProject(t, headers, "Web Target Project")
+}
+
+func startTarget(t *testing.T, headers map[string]string, projectID string,
+	types []string, target string) *httptest.ResponseRecorder {
+	t.Helper()
+	if target == "" {
+		target = webTargetURL
+	}
+	return do(t, "POST", "/v1/projects/"+projectID+"/web-targets",
+		M{"url": target, "test_types": types}, headers)
+}
+
+// pollTerminal polls until the job reaches a terminal state — failure included.
+func pollTerminal(t *testing.T, headers map[string]string, jobID string) M {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		w := do(t, "GET", "/v1/jobs/"+jobID, nil, headers)
+		if w.Code != 200 {
+			t.Fatalf("job poll failed: %d %.300s", w.Code, w.Body.String())
+		}
+		job := jsonMap(t, w)
+		if job["status"] == "completed" || job["status"] == "failed" {
+			return job
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("job %s never finished", jobID)
+	return nil
+}
+
+func runTarget(t *testing.T, headers map[string]string, projectID string, types []string) (M, M) {
+	t.Helper()
+	w := startTarget(t, headers, projectID, types, "")
+	if w.Code != 202 {
+		t.Fatalf("start failed: %d %.300s", w.Code, w.Body.String())
+	}
+	accepted := jsonMap(t, w)
+	job := pollTerminal(t, headers, accepted["job_id"].(string))
+	if job["status"] != "completed" {
+		t.Fatalf("job failed: %v", job["error"])
+	}
+	return job, accepted
+}
+
+func allTypes() []string { return append([]string{}, webtarget.TestTypes...) }
+
+// ---------------------------------------------------------------------------
+// 1. Request validation
+// ---------------------------------------------------------------------------
+
+func TestWebTargetUnknownTestTypeIsRefusedWithTheLegalList(t *testing.T) {
+	allowPrivate(t)
+	headers, pid := webTargetProject(t)
+	w := startTarget(t, headers, pid, []string{"functional", "perfomance"}, "")
+	if w.Code != 422 {
+		t.Fatalf("expected 422, got %d %.300s", w.Code, w.Body.String())
+	}
+	detail := jsonMap(t, w)["detail"].(map[string]any)
+	if detail["code"] != "invalid_test_type" {
+		t.Fatalf("code = %v", detail["code"])
+	}
+	legal := detail["errors"].([]any)
+	if len(legal) != len(webtarget.TestTypes) {
+		t.Fatalf("errors must list every legal type, got %v", legal)
+	}
+	for i, want := range webtarget.TestTypes {
+		if legal[i] != want {
+			t.Fatalf("errors[%d] = %v, want %s", i, legal[i], want)
+		}
+	}
+	if !strings.Contains(fmt.Sprint(detail["message"]), "perfomance") {
+		t.Fatalf("message must name the offending value: %v", detail["message"])
+	}
+	// nothing was created for a request that was refused
+	listed := jsonMap(t, do(t, "GET", "/v1/projects/"+pid+"/web-targets", nil, headers))
+	if len(listed["web_targets"].([]any)) != 0 {
+		t.Fatalf("a refused request created a target")
+	}
+}
+
+func TestWebTargetNoTestTypeIsRefused(t *testing.T) {
+	allowPrivate(t)
+	headers, pid := webTargetProject(t)
+	w := startTarget(t, headers, pid, []string{}, "")
+	if w.Code != 422 {
+		t.Fatalf("expected 422, got %d", w.Code)
+	}
+	if jsonMap(t, w)["detail"].(map[string]any)["code"] != "invalid_test_type" {
+		t.Fatalf("wrong code: %.200s", w.Body.String())
+	}
+}
+
+func TestWebTargetTestTypesAreDeduplicatedIntoCanonicalOrder(t *testing.T) {
+	got, code, _ := webtarget.ValidateTestTypes([]string{"ui", "api", "ui"})
+	if code != "" || strings.Join(got, ",") != "api,ui" {
+		t.Fatalf("got %v (code %q)", got, code)
+	}
+	got, code, _ = webtarget.ValidateTestTypes([]string{"SECURITY", " functional "})
+	if code != "" || strings.Join(got, ",") != "functional,security" {
+		t.Fatalf("got %v (code %q)", got, code)
+	}
+}
+
+func TestWebTargetRejectsNonHTTPSchemesAndPrivateHosts(t *testing.T) {
+	headers, pid := webTargetProject(t)
+	w := startTarget(t, headers, pid, []string{"ui"}, "file:///etc/passwd")
+	if w.Code != 422 || jsonMap(t, w)["detail"].(map[string]any)["code"] != "invalid_url" {
+		t.Fatalf("scheme guard: %d %.200s", w.Code, w.Body.String())
+	}
+	// with the escape hatch OFF, a loopback target is refused by the same SSRF
+	// rule the spec fetcher applies
+	previous := config.C.AllowPrivateTargets
+	config.C.AllowPrivateTargets = false
+	defer func() { config.C.AllowPrivateTargets = previous }()
+	w = startTarget(t, headers, pid, []string{"ui"}, "http://127.0.0.1:8019/login")
+	if w.Code != 422 || jsonMap(t, w)["detail"].(map[string]any)["code"] != "ssrf_blocked" {
+		t.Fatalf("ssrf guard: %d %.200s", w.Code, w.Body.String())
+	}
+}
+
+func TestWebTargetRejectsAnImpossibleViewport(t *testing.T) {
+	allowPrivate(t)
+	headers, pid := webTargetProject(t)
+	w := do(t, "POST", "/v1/projects/"+pid+"/web-targets",
+		M{"url": webTargetURL, "test_types": []string{"ui"}, "viewport": "banana"}, headers)
+	if w.Code != 422 || jsonMap(t, w)["detail"].(map[string]any)["code"] != "invalid_viewport" {
+		t.Fatalf("viewport guard: %d %.200s", w.Code, w.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 2. Capability guards and org scoping
+// ---------------------------------------------------------------------------
+
+func TestWebTargetViewerMayReadButNeverStart(t *testing.T) {
+	withSidecar(t, recordedPayload(t))
+	headers, pid := webTargetProject(t)
+	_, accepted := runTarget(t, headers, pid, []string{"functional"})
+
+	viewer, _, _ := seedOrgUserInOrg(t, headers, "viewer")
+	w := do(t, "GET", "/v1/projects/"+pid+"/web-targets", nil, viewer)
+	if w.Code != 200 {
+		t.Fatalf("a viewer must be able to read targets: %d", w.Code)
+	}
+	if w = do(t, "GET", "/v1/web-targets/"+accepted["target_id"].(string), nil, viewer); w.Code != 200 {
+		t.Fatalf("viewer detail read: %d", w.Code)
+	}
+	w = startTarget(t, viewer, pid, []string{"functional"}, "")
+	if w.Code != 403 || jsonMap(t, w)["detail"].(map[string]any)["code"] != "forbidden" {
+		t.Fatalf("a viewer must not start a discovery: %d %.200s", w.Code, w.Body.String())
+	}
+}
+
+func TestWebTargetIsNeverVisibleToAnotherOrganisation(t *testing.T) {
+	withSidecar(t, recordedPayload(t))
+	headers, pid := webTargetProject(t)
+	_, accepted := runTarget(t, headers, pid, []string{"functional"})
+
+	other := registerOrg(t, "Other Org")
+	if w := do(t, "GET", "/v1/web-targets/"+accepted["target_id"].(string), nil, other); w.Code != 404 {
+		t.Fatalf("cross-org read: %d", w.Code)
+	}
+	if w := do(t, "GET", "/v1/projects/"+pid+"/web-targets", nil, other); w.Code != 404 {
+		t.Fatalf("cross-org list: %d", w.Code)
+	}
+	if w := do(t, "GET", "/v1/projects/"+pid+"/web-targets", nil, nil); w.Code != 401 {
+		t.Fatalf("unauthenticated list: %d", w.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 3. The sidecar is missing — the failure that must never be silent
+// ---------------------------------------------------------------------------
+
+func TestWebTargetMissingSidecarFailsTheJobWithANamedCode(t *testing.T) {
+	allowPrivate(t)
+	previous := config.C.WebDiscoveryScript
+	config.C.WebDiscoveryScript = "/nonexistent/discover.mjs"
+	defer func() { config.C.WebDiscoveryScript = previous }()
+
+	headers, pid := webTargetProject(t)
+	w := startTarget(t, headers, pid, []string{"functional", "ui"}, "")
+	if w.Code != 202 {
+		t.Fatalf("start failed: %d %.300s", w.Code, w.Body.String())
+	}
+	accepted := jsonMap(t, w)
+	job := pollTerminal(t, headers, accepted["job_id"].(string))
+	if job["status"] != "failed" {
+		t.Fatalf("a missing sidecar must FAIL the job, got %v", job["status"])
+	}
+	if job["error_code"] != "browser_discovery_unavailable" {
+		t.Fatalf("error_code = %v", job["error_code"])
+	}
+	message := strings.ToLower(fmt.Sprint(job["error"]))
+	if !strings.Contains(message, "playwright") || !strings.Contains(message, "node") {
+		t.Fatalf("the message must say what to install: %v", job["error"])
+	}
+	detail := jsonMap(t, do(t, "GET", "/v1/web-targets/"+accepted["target_id"].(string), nil, headers))
+	if detail["status"] != "failed" {
+		t.Fatalf("target status = %v", detail["status"])
+	}
+	if !strings.Contains(fmt.Sprint(detail["error"]), "browser_discovery_unavailable") {
+		t.Fatalf("target error = %v", detail["error"])
+	}
+}
+
+func TestWebTargetMissingNodeBinaryFailsTheSameWay(t *testing.T) {
+	allowPrivate(t)
+	prevScript, prevNode := config.C.WebDiscoveryScript, config.C.NodeBin
+	// a script that exists, and a node that does not — the other half of "unavailable"
+	abs, _ := filepath.Abs(filepath.Join("fixtures", "webtarget_orangehrm.json"))
+	config.C.WebDiscoveryScript = abs
+	config.C.NodeBin = "/nonexistent/node-binary"
+	defer func() {
+		config.C.WebDiscoveryScript, config.C.NodeBin = prevScript, prevNode
+	}()
+
+	headers, pid := webTargetProject(t)
+	w := startTarget(t, headers, pid, []string{"api"}, "")
+	job := pollTerminal(t, headers, jsonMap(t, w)["job_id"].(string))
+	if job["status"] != "failed" || job["error_code"] != "browser_discovery_unavailable" {
+		t.Fatalf("job = %v / %v", job["status"], job["error_code"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 4. The recorded payload — per-type persistence
+// ---------------------------------------------------------------------------
+
+func TestWebTargetRecordedPayloadDrivesEverySelectedTrack(t *testing.T) {
+	withSidecar(t, recordedPayload(t))
+	headers, pid := webTargetProject(t)
+	job, accepted := runTarget(t, headers, pid, allTypes())
+	result := job["result"].(map[string]any)
+
+	if result["target_id"] != accepted["target_id"] {
+		t.Fatalf("target_id mismatch")
+	}
+	if result["title"] != "OrangeHRM" {
+		t.Fatalf("title = %v", result["title"])
+	}
+	for key, want := range map[string]float64{
+		"forms": 2, "controls": 3, "requests": 8, "endpoints": 4,
+	} {
+		if result[key].(float64) != want {
+			t.Fatalf("%s = %v, want %v", key, result[key], want)
+		}
+	}
+	if result["requirements"].(float64) < 5 {
+		t.Fatalf("requirements = %v", result["requirements"])
+	}
+	byType := result["cases_by_type"].(map[string]any)
+	for _, kind := range []string{"functional", "ui", "performance", "security", "api"} {
+		if byType[kind].(float64) <= 0 {
+			t.Fatalf("no %s cases: %v", kind, byType)
+		}
+	}
+
+	var target models.WebTarget
+	if err := db.DB.First(&target, "id = ?", accepted["target_id"]).Error; err != nil {
+		t.Fatalf("target row: %v", err)
+	}
+	if target.Status != "discovered" || target.Title != "OrangeHRM" ||
+		target.LastDiscovered == nil || !strings.HasSuffix(target.ScreenshotKey, ".png") {
+		t.Fatalf("target row not finalised: %+v", target)
+	}
+}
+
+func TestWebTargetAPITrackWritesDomEndpointsWithTemplatedIDs(t *testing.T) {
+	withSidecar(t, recordedPayload(t))
+	headers, pid := webTargetProject(t)
+	runTarget(t, headers, pid, []string{"api"})
+
+	rows := itemsOf(jsonAny(t, do(t, "GET", "/v1/projects/"+pid+"/endpoints", nil, headers)))
+	byKey := map[string]map[string]any{}
+	for _, raw := range rows {
+		e := raw.(map[string]any)
+		byKey[fmt.Sprintf("%v %v", e["method"], e["path"])] = e
+		if e["source"] != "dom" {
+			t.Fatalf("source = %v, want dom", e["source"])
+		}
+	}
+	for _, want := range []string{
+		"GET /web/index.php/api/v2/admin/validation/user-name",
+		"GET /web/index.php/api/v2/pim/employees/{id}",
+		"POST /web/index.php/api/v2/auth/session",
+		"GET /web/index.php/api/v2/core/i18n/messages",
+	} {
+		if _, present := byKey[want]; !present {
+			t.Fatalf("missing endpoint %q — got %v", want, keysOf(byKey))
+		}
+	}
+	if len(byKey) != 4 {
+		t.Fatalf("document/script/image requests must not become endpoints: %v", keysOf(byKey))
+	}
+	// the two concrete employee ids collapsed onto ONE templated endpoint
+	employees := byKey["GET /web/index.php/api/v2/pim/employees/{id}"]
+	if employees["observed_count"].(float64) != 2 {
+		t.Fatalf("observed_count = %v", employees["observed_count"])
+	}
+	params := employees["parameters"].([]any)
+	if len(params) != 1 {
+		t.Fatalf("parameters = %v", params)
+	}
+	p := params[0].(map[string]any)
+	if p["name"] != "id" || p["location"] != "path" || p["required"] != true {
+		t.Fatalf("path parameter = %v", p)
+	}
+	// a query string becomes a query parameter carrying the observed example
+	username := byKey["GET /web/index.php/api/v2/admin/validation/user-name"]
+	qp := username["parameters"].([]any)[0].(map[string]any)
+	if qp["name"] != "userName" || qp["location"] != "query" {
+		t.Fatalf("query parameter = %v", qp)
+	}
+	if qp["constraints"].(map[string]any)["example"] != "Admin" {
+		t.Fatalf("the observed value must be recorded: %v", qp["constraints"])
+	}
+}
+
+func TestWebTargetNeverDowngradesASpecEndpoint(t *testing.T) {
+	withSidecar(t, recordedPayload(t))
+	headers, pid := webTargetProject(t)
+	spec := M{
+		"openapi": "3.0.3", "info": M{"title": "PIM", "version": "1"},
+		"paths": M{"/web/index.php/api/v2/pim/employees/{id}": M{"get": M{
+			"operationId": "getEmployee", "summary": "Declared by the spec",
+			"parameters": []any{M{"name": "id", "in": "path", "required": true,
+				"schema": M{"type": "integer"}}},
+			"responses": M{"200": M{"description": "OK"}}}}},
+	}
+	raw, _ := json.Marshal(spec)
+	w := uploadFile(t, "/v1/projects/"+pid+"/api-specs", "spec.json", raw,
+		"application/json", headers)
+	if w.Code != 200 && w.Code != 201 {
+		t.Fatalf("spec import: %d %.300s", w.Code, w.Body.String())
+	}
+	runTarget(t, headers, pid, []string{"api"})
+
+	rows := itemsOf(jsonAny(t, do(t, "GET", "/v1/projects/"+pid+"/endpoints", nil, headers)))
+	for _, item := range rows {
+		e := item.(map[string]any)
+		key := fmt.Sprintf("%v %v", e["method"], e["path"])
+		if key == "GET /web/index.php/api/v2/pim/employees/{id}" {
+			if e["source"] != "spec" || e["summary"] != "Declared by the spec" {
+				t.Fatalf("a crawl overwrote a declared contract: %v", e)
+			}
+		}
+		if key == "POST /web/index.php/api/v2/auth/session" && e["source"] != "dom" {
+			t.Fatalf("the endpoints the spec never mentioned must still arrive: %v", e)
+		}
+	}
+}
+
+func TestWebTargetFunctionalTrackMakesARequirementPerForm(t *testing.T) {
+	withSidecar(t, recordedPayload(t))
+	headers, pid := webTargetProject(t)
+	runTarget(t, headers, pid, []string{"functional"})
+
+	var reqs []models.Requirement
+	db.DB.Where("project_id = ?", pid).Find(&reqs)
+	if len(reqs) != 2 {
+		t.Fatalf("one requirement per discovered form, got %d", len(reqs))
+	}
+	var login *models.Requirement
+	for i := range reqs {
+		if strings.Contains(reqs[i].Description, "form.oxd-form") {
+			login = &reqs[i]
+		}
+	}
+	if login == nil {
+		t.Fatalf("no requirement names the login form: %+v", reqs)
+	}
+	if login.State != "extracted" {
+		t.Fatalf("state = %q, want extracted (awaiting confirmation)", login.State)
+	}
+	for _, want := range []string{"input[name=username]", "Required: Username, Password"} {
+		if !strings.Contains(login.Description, want) {
+			t.Fatalf("description must contain %q: %s", want, login.Description)
+		}
+	}
+}
+
+func TestWebTargetFunctionalCasesCarryTheFormSelectorsVerbatim(t *testing.T) {
+	withSidecar(t, recordedPayload(t))
+	headers, pid := webTargetProject(t)
+	runTarget(t, headers, pid, []string{"functional"})
+
+	var cases []models.TestCase
+	db.DB.Preload("Steps").Where("project_id = ?", pid).Find(&cases)
+	if len(cases) == 0 {
+		t.Fatal("no functional cases were generated")
+	}
+	var titles, payloads []string
+	for _, c := range cases {
+		titles = append(titles, c.Title)
+		for _, s := range c.Steps {
+			form, _ := s.Request["form"].(string)
+			if !strings.HasPrefix(form, "form.") && !strings.HasPrefix(form, "form#") {
+				t.Fatalf("a case step does not name its form: %v", s.Request)
+			}
+			payloads = append(payloads, jsonOf(t, s.Request))
+		}
+	}
+	joinedPayloads := strings.Join(payloads, " ")
+	for _, want := range []string{"input[name=username]", "input[name=password]"} {
+		if !strings.Contains(joinedPayloads, want) {
+			t.Fatalf("the selectors must travel verbatim: missing %q", want)
+		}
+	}
+	joinedTitles := strings.Join(titles, " | ")
+	for _, want := range []string{
+		"rejects submission with Username empty",
+		"rejects submission with Password empty",
+		"at most 120 characters",
+		"enforces its declared pattern",
+	} {
+		if !strings.Contains(joinedTitles, want) {
+			t.Fatalf("missing case %q in %s", want, joinedTitles)
+		}
+	}
+}
+
+func TestWebTargetUITrackExtractsFactsPaletteAndRemediation(t *testing.T) {
+	withSidecar(t, recordedPayload(t))
+	headers, pid := webTargetProject(t)
+	_, accepted := runTarget(t, headers, pid, []string{"ui"})
+
+	detail := jsonMap(t, do(t, "GET", "/v1/web-targets/"+accepted["target_id"].(string), nil, headers))
+	designed := detail["design"].(map[string]any)
+	if designed["fact_count"].(float64) < 8 {
+		t.Fatalf("fact_count = %v", designed["fact_count"])
+	}
+	shares := map[string]float64{}
+	for _, raw := range designed["palette"].([]any) {
+		entry := raw.(map[string]any)
+		shares[entry["hex"].(string)] = entry["share"].(float64)
+	}
+	for _, hex := range []string{"#FFFFFF", "#F0903F"} {
+		if share, present := shares[hex]; !present || share <= 0 || share >= 1 {
+			t.Fatalf("palette must carry %s with its share: %v", hex, shares)
+		}
+	}
+	var failing map[string]any
+	for _, raw := range designed["contrast"].([]any) {
+		entry := raw.(map[string]any)
+		if passes, _ := entry["passes_aa"].(bool); !passes {
+			failing = entry
+			break
+		}
+	}
+	if failing == nil {
+		t.Fatalf("the fixture screen has a failing ink: %v", designed["contrast"])
+	}
+	if failing["suggested"] == failing["ink"] {
+		t.Fatalf("a failure without the passing colour leaves the designer guessing")
+	}
+	if failing["ratio_after"].(float64) < 4.5 || failing["achievable"] != true {
+		t.Fatalf("remediation = %v", failing)
+	}
+
+	// every UI case cites a fact the design actually states
+	stated := map[string]bool{}
+	for _, raw := range designed["facts"].([]any) {
+		stated[raw.(map[string]any)["id"].(string)] = true
+	}
+	var cases []models.TestCase
+	db.DB.Preload("Steps").Where("project_id = ? AND technique IN ?", pid,
+		[]string{"design", "a11y"}).Find(&cases)
+	if len(cases) == 0 {
+		t.Fatal("no UI cases were generated")
+	}
+	for _, c := range cases {
+		fact, _ := c.Steps[0].Request["fact"].(string)
+		if !stated[fact] {
+			t.Fatalf("%s cites %q, which the design does not state", c.Title, fact)
+		}
+	}
+}
+
+func TestWebTargetPerformanceTrackStatesABudgetAgainstTheBaseline(t *testing.T) {
+	withSidecar(t, recordedPayload(t))
+	headers, pid := webTargetProject(t)
+	runTarget(t, headers, pid, []string{"performance"})
+
+	var req models.Requirement
+	if err := db.DB.Where("project_id = ? AND type = ?", pid, "non_functional").
+		First(&req).Error; err != nil {
+		t.Fatalf("no performance requirement: %v", err)
+	}
+	if !strings.Contains(req.Description, "2410ms") {
+		t.Fatalf("the observed baseline must be stated: %s", req.Description)
+	}
+	var kase models.TestCase
+	if err := db.DB.Preload("Steps").Where("project_id = ? AND technique = ?", pid,
+		"performance").First(&kase).Error; err != nil {
+		t.Fatalf("no performance case: %v", err)
+	}
+	assertion := kase.Steps[0].Assertions[0].(map[string]any)
+	if assertion["type"] != "page_load_ms" ||
+		int(assertion["expected_max"].(float64)) != config.C.PageLoadBudgetMS ||
+		int(assertion["observed_baseline_ms"].(float64)) != 2410 {
+		t.Fatalf("assertion = %v", assertion)
+	}
+}
+
+// TestWebTargetAPITrackGeneratesCasesBoundToTheCapturedRequests asserts that
+// selecting `api` produces cases, not merely an endpoint inventory: every step
+// must address an endpoint the crawl actually observed, since a case against a
+// path the browser never called is exactly the fabrication BO-07 stops.
+func TestWebTargetAPITrackGeneratesCasesBoundToTheCapturedRequests(t *testing.T) {
+	withSidecar(t, recordedPayload(t))
+	headers, pid := webTargetProject(t)
+	job, _ := runTarget(t, headers, pid, []string{"api"})
+	byType := job["result"].(map[string]any)["cases_by_type"].(map[string]any)
+	if byType["api"].(float64) <= 0 {
+		t.Fatalf("no api cases: %v", byType)
+	}
+
+	dom := map[string]string{}
+	var endpoints []models.Endpoint
+	db.DB.Where("project_id = ? AND source = ?", pid, "dom").Find(&endpoints)
+	for _, e := range endpoints {
+		dom[e.ID] = strings.ToUpper(e.Method) + " " + e.Path
+	}
+	if len(dom) == 0 {
+		t.Fatal("no dom endpoints were recorded")
+	}
+	var cases []models.TestCase
+	db.DB.Preload("Steps").Where("project_id = ?", pid).Find(&cases)
+	if len(cases) == 0 {
+		t.Fatal("no cases were written")
+	}
+	for _, c := range cases {
+		if len(c.Steps) == 0 {
+			t.Fatalf("case %q has no step", c.Title)
+		}
+		step := c.Steps[0]
+		if step.EndpointID == nil {
+			t.Fatalf("case %q is not bound to an endpoint", c.Title)
+		}
+		want, known := dom[*step.EndpointID]
+		if !known {
+			t.Fatalf("case %q cites an endpoint the crawl never found", c.Title)
+		}
+		if got := strings.ToUpper(step.Method) + " " + step.Path; got != want {
+			t.Fatalf("case %q addresses %s, endpoint is %s", c.Title, got, want)
+		}
+		if len(step.Assertions) == 0 {
+			t.Fatalf("case %q asserts nothing", c.Title)
+		}
+	}
+}
+
+func TestWebTargetSecurityTrackBuildsS0OnTheDiscoveredEndpoints(t *testing.T) {
+	withSidecar(t, recordedPayload(t))
+	headers, pid := webTargetProject(t)
+	job, _ := runTarget(t, headers, pid, []string{"security"})
+	byType := job["result"].(map[string]any)["cases_by_type"].(map[string]any)
+	if byType["security"].(float64) <= 0 {
+		t.Fatalf("no security cases: %v", byType)
+	}
+
+	domIDs := map[string]bool{}
+	var endpoints []models.Endpoint
+	db.DB.Where("project_id = ? AND source = ?", pid, "dom").Find(&endpoints)
+	for _, e := range endpoints {
+		domIDs[e.ID] = true
+	}
+	var cases []models.TestCase
+	db.DB.Preload("Steps").Where("project_id = ? AND technique = ?", pid, "security").Find(&cases)
+	if len(cases) == 0 {
+		t.Fatal("no security cases were persisted")
+	}
+	for _, c := range cases {
+		if c.WeaknessID == nil || *c.WeaknessID == "" {
+			t.Fatalf("%s carries no weakness id", c.Title)
+		}
+		if c.Steps[0].EndpointID == nil || !domIDs[*c.Steps[0].EndpointID] {
+			t.Fatalf("%s is not bound to a discovered endpoint", c.Title)
+		}
+	}
+}
+
+func TestWebTargetEveryCaseIsLinkedToARequirement(t *testing.T) {
+	withSidecar(t, recordedPayload(t))
+	headers, pid := webTargetProject(t)
+	runTarget(t, headers, pid, allTypes())
+
+	var cases []models.TestCase
+	db.DB.Where("project_id = ?", pid).Find(&cases)
+	if len(cases) == 0 {
+		t.Fatal("nothing was generated")
+	}
+	for _, c := range cases {
+		var links int64
+		db.DB.Model(&models.RequirementTestCase{}).Where("test_case_id = ?", c.ID).Count(&links)
+		if links == 0 {
+			t.Fatalf("%s is linked to no requirement — it could never be traced", c.Title)
+		}
+	}
+}
+
+func TestWebTargetRerunRefreshesInsteadOfDuplicating(t *testing.T) {
+	withSidecar(t, recordedPayload(t))
+	headers, pid := webTargetProject(t)
+	_, first := runTarget(t, headers, pid, allTypes())
+	var casesBefore, reqsBefore int64
+	db.DB.Model(&models.TestCase{}).Where("project_id = ?", pid).Count(&casesBefore)
+	db.DB.Model(&models.Requirement{}).Where("project_id = ?", pid).Count(&reqsBefore)
+
+	job, second := runTarget(t, headers, pid, allTypes())
+	if second["target_id"] != first["target_id"] {
+		t.Fatalf("a re-run forked the target")
+	}
+	if job["result"].(map[string]any)["duplicates"].(float64) <= 0 {
+		t.Fatalf("the re-run did not recognise its own cases")
+	}
+	var targets, casesAfter, reqsAfter int64
+	db.DB.Model(&models.WebTarget{}).Where("project_id = ?", pid).Count(&targets)
+	db.DB.Model(&models.TestCase{}).Where("project_id = ?", pid).Count(&casesAfter)
+	db.DB.Model(&models.Requirement{}).Where("project_id = ?", pid).Count(&reqsAfter)
+	if targets != 1 || casesAfter != casesBefore || reqsAfter != reqsBefore {
+		t.Fatalf("re-run duplicated: targets=%d cases %d->%d reqs %d->%d",
+			targets, casesBefore, casesAfter, reqsBefore, reqsAfter)
+	}
+}
+
+func TestWebTargetScreenshotRouteServesThePNG(t *testing.T) {
+	withSidecar(t, recordedPayload(t))
+	headers, pid := webTargetProject(t)
+	_, accepted := runTarget(t, headers, pid, []string{"ui"})
+	w := do(t, "GET", "/v1/web-targets/"+accepted["target_id"].(string)+"/screenshot", nil, headers)
+	if w.Code != 200 {
+		t.Fatalf("screenshot: %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "image/png" {
+		t.Fatalf("content-type = %q", ct)
+	}
+	if !strings.HasPrefix(w.Body.String(), "\x89PNG\r\n\x1a\n") {
+		t.Fatalf("body is not a PNG")
+	}
+}
+
+func TestWebTargetWithoutAScreenshotSaysSo(t *testing.T) {
+	doc := recordedPayload(t)
+	doc["screenshot"] = ""
+	withSidecar(t, doc)
+	headers, pid := webTargetProject(t)
+	job, accepted := runTarget(t, headers, pid, []string{"ui"})
+	if !skippedFor(job, "ui", "the sidecar produced no screenshot") {
+		t.Fatalf("skipped = %v", job["result"].(map[string]any)["skipped"])
+	}
+	w := do(t, "GET", "/v1/web-targets/"+accepted["target_id"].(string)+"/screenshot", nil, headers)
+	if w.Code != 404 || jsonMap(t, w)["detail"].(map[string]any)["code"] != "no_screenshot" {
+		t.Fatalf("screenshot route: %d %.200s", w.Code, w.Body.String())
+	}
+}
+
+func TestWebTargetPageWithNoAPICallsReportsTheReason(t *testing.T) {
+	doc := recordedPayload(t)
+	var kept []any
+	for _, raw := range doc["requests"].([]any) {
+		r := raw.(map[string]any)
+		if r["resourceType"] != "xhr" && r["resourceType"] != "fetch" {
+			kept = append(kept, r)
+		}
+	}
+	doc["requests"] = kept
+	withSidecar(t, doc)
+	headers, pid := webTargetProject(t)
+	job, _ := runTarget(t, headers, pid, []string{"api", "security"})
+	result := job["result"].(map[string]any)
+	if result["endpoints"].(float64) != 0 {
+		t.Fatalf("endpoints = %v", result["endpoints"])
+	}
+	for _, kind := range []string{"api", "security"} {
+		if !skippedFor(job, kind, "XHR/fetch") {
+			t.Fatalf("%s must be skipped with its reason: %v", kind, result["skipped"])
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 5. Grounding — the rule that does not bend
+// ---------------------------------------------------------------------------
+
+func TestWebTargetArtefactSetIsExactlyWhatTheRenderFound(t *testing.T) {
+	inv := webtarget.NormalisePayload(recordedPayload(t))
+	ids := webtarget.ArtefactIDs(inv, nil)
+	for _, want := range []string{
+		"selector:input[name=username]", "selector:form.oxd-form",
+		"request:GET https://opensource-demo.orangehrmlive.com/web/index.php/api/v2/pim/employees/7",
+	} {
+		if !ids[want] {
+			t.Fatalf("missing artefact %q", want)
+		}
+	}
+	if ids["selector:input[name=nonexistent]"] {
+		t.Fatal("an artefact nobody found is in the set")
+	}
+}
+
+func TestWebTargetACaseCitingAnUndiscoveredSelectorIsAViolation(t *testing.T) {
+	inv := webtarget.NormalisePayload(recordedPayload(t))
+	ids := webtarget.ArtefactIDs(inv, nil)
+	if len(webtarget.GroundingViolations([]string{"selector:#totally-made-up"}, ids)) == 0 {
+		t.Fatal("an invented selector must be a violation")
+	}
+	if v := webtarget.GroundingViolations(nil, ids); len(v) != 1 {
+		t.Fatalf("a case with no artefact must be a violation: %v", v)
+	}
+	if v := webtarget.GroundingViolations([]string{"selector:input[name=password]"}, ids); len(v) != 0 {
+		t.Fatalf("a real selector must be grounded: %v", v)
+	}
+}
+
+func TestWebTargetEveryFormCaseIsGroundedInItsForm(t *testing.T) {
+	inv := webtarget.NormalisePayload(recordedPayload(t))
+	ids := webtarget.ArtefactIDs(inv, nil)
+	for _, form := range inv.Forms {
+		cases := webtarget.FormCases(form, inv)
+		if len(cases) == 0 {
+			t.Fatalf("form %s produced no case", form.Selector)
+		}
+		for _, c := range cases {
+			if v := webtarget.GroundingViolations(c.Grounds, ids); len(v) > 0 {
+				t.Fatalf("%s: %v", c.Title, v)
+			}
+		}
+	}
+}
+
+// TestWebTargetLabelsANamelessFormByWhatThePageShows: a real SPA form usually
+// carries neither name nor id. Falling straight through to the CSS selector
+// produced titles that repeated a 200-character path twice, so the heading and
+// the submit control — both already reported by the sidecar — are read first.
+func TestWebTargetLabelsANamelessFormByWhatThePageShows(t *testing.T) {
+	form := map[string]any{
+		"selector": "#app > div:nth-of-type(1) > div > form",
+		"heading":  "Login",
+		"submits": []any{map[string]any{
+			"selector": "#app form button", "name": "Login", "type": "submit"}},
+		"fields": []any{map[string]any{
+			"selector": "input[name=username]", "name": "username"}},
+	}
+	inv := webtarget.NormalisePayload(map[string]any{"forms": []any{form}})
+	got := inv.Forms[0]
+	if got.Submit != "#app form button" || got.SubmitName != "Login" || got.Heading != "Login" {
+		t.Fatalf("submit control and heading must survive normalisation: %+v", got)
+	}
+	if label := webtarget.FormLabel(got); label != "Login" {
+		t.Fatalf("label = %q, want Login", label)
+	}
+
+	form["name"] = "signin" // the page's own naming outranks both
+	inv = webtarget.NormalisePayload(map[string]any{"forms": []any{form}})
+	if label := webtarget.FormLabel(inv.Forms[0]); label != "signin" {
+		t.Fatalf("label = %q, want signin", label)
+	}
+
+	// a form the page says nothing about still gets an unambiguous label
+	inv = webtarget.NormalisePayload(map[string]any{"forms": []any{
+		map[string]any{"selector": "form.x"}}})
+	if label := webtarget.FormLabel(inv.Forms[0]); label != "form.x" {
+		t.Fatalf("label = %q, want form.x", label)
+	}
+}
+
+func TestWebTargetDropsAFieldWithoutASelector(t *testing.T) {
+	inv := webtarget.NormalisePayload(map[string]any{"forms": []any{map[string]any{
+		"selector": "form#a", "fields": []any{
+			map[string]any{"name": "ghost", "required": true}, // no selector -> dropped
+			map[string]any{"selector": "#real", "name": "real", "required": true},
+		}}}})
+	if len(inv.Forms) != 1 || len(inv.Forms[0].Fields) != 1 ||
+		inv.Forms[0].Fields[0].Selector != "#real" {
+		t.Fatalf("a field with no selector must be dropped, not invented: %+v", inv.Forms)
+	}
+}
+
+func TestWebTargetToleratesUnknownSidecarKeys(t *testing.T) {
+	doc := recordedPayload(t)
+	doc["future_field"] = map[string]any{"anything": []any{1.0, 2.0}}
+	doc["forms"].([]any)[0].(map[string]any)["shadow_root"] = true
+	inv := webtarget.NormalisePayload(doc)
+	if len(inv.Forms) != 2 || inv.ElapsedMS == nil || *inv.ElapsedMS != 2410 {
+		t.Fatalf("unknown keys broke normalisation: %+v", inv)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------------
+
+func keysOf(m map[string]map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+func jsonOf(t *testing.T, v any) string {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return string(raw)
+}
+
+func skippedFor(job M, kind, fragment string) bool {
+	result, _ := job["result"].(map[string]any)
+	for _, raw := range asAnyList(result["skipped"]) {
+		entry, _ := raw.(map[string]any)
+		if entry["type"] == kind && strings.Contains(fmt.Sprint(entry["reason"]), fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+func asAnyList(v any) []any {
+	l, _ := v.([]any)
+	return l
+}
+
+// seedOrgUserInOrg adds a user with the given role to the organisation the
+// supplied headers belong to.
+func seedOrgUserInOrg(t *testing.T, headers map[string]string, role string) (map[string]string, string, string) {
+	t.Helper()
+	w := do(t, "POST", "/v1/members/invite", M{
+		"email": fmt.Sprintf("member%s@example.sa", uuidLike()), "name": "Member",
+		"role": role, "password": "Passw0rd!"}, headers)
+	if w.Code != 200 && w.Code != 201 {
+		t.Fatalf("invite %s: %d %.200s", role, w.Code, w.Body.String())
+	}
+	invited := jsonMap(t, w)
+	email, _ := invited["email"].(string)
+	if member, ok := invited["member"].(map[string]any); ok && email == "" {
+		email, _ = member["email"].(string)
+	}
+	login := jsonMap(t, do(t, "POST", "/v1/auth/login",
+		M{"email": email, "password": "Passw0rd!"}, nil))
+	token, _ := login["token"].(string)
+	if token == "" {
+		t.Fatalf("no token for the invited %s: %v", role, login)
+	}
+	return map[string]string{"Authorization": "Bearer " + token}, "", ""
+}
+
+var uuidCounter int
+
+func uuidLike() string {
+	uuidCounter++
+	return fmt.Sprintf("%d%d", time.Now().UnixNano(), uuidCounter)
+}

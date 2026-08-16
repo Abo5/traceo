@@ -64,11 +64,47 @@ export function setUser(u: any | null): void {
   }
 }
 
+/**
+ * No-login mode: a backend running with TRACEO_DEV_AUTOLOGIN=1 hands out a
+ * session without credentials. This resolves once, before the first request
+ * goes out — otherwise every screen would fire its initial fetch while the
+ * token is still in flight and fail with "Missing bearer token", which is a
+ * race, not an authorisation problem. On any other backend the endpoint 404s,
+ * nothing is stored, and normal authentication is untouched.
+ *
+ * The answer is "is this backend running without login", NOT "did we just mint a
+ * token" — a reload already holding a token must still learn that login is gone,
+ * or the shell would put the sign-out control back.
+ */
+let sessionBootstrap: Promise<boolean> | null = null;
+
+export function ensureSession(): Promise<boolean> {
+  if (typeof window === "undefined") return Promise.resolve(false);
+  if (sessionBootstrap === null) {
+    sessionBootstrap = (async () => {
+      try {
+        const res = await fetch(`${API}/auth/dev-session`, { method: "POST" });
+        if (!res.ok) return false;
+        const data = await res.json();
+        if (!getToken()) {
+          setToken(data.token);
+          setUser(data.user);
+        }
+        return true;
+      } catch {
+        return false; // offline or endpoint absent
+      }
+    })();
+  }
+  return sessionBootstrap;
+}
+
 export async function api<T = any>(
   path: string,
   opts?: { method?: string; body?: any; form?: FormData }
 ): Promise<T> {
   const headers: Record<string, string> = {};
+  if (!getToken()) await ensureSession();
   const token = getToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
 

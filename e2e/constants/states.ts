@@ -43,6 +43,12 @@ export const JOB_KINDS = [
   // parsers both follow the 202 → GET /v1/jobs/{id} pattern.
   'security',
   'components',
+  // Browser discovery of a web target (jobs.submit("discover", …)): render the
+  // URL in a real browser, then persist per selected test type. It is the
+  // longest job in the product — a navigation, a network-idle wait and a
+  // full-page screenshot before any builder runs — hence its own budget in
+  // job-poller.ts. No spec asserts the string; it selects a budget.
+  'discover',
 ] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 
@@ -59,6 +65,16 @@ export const TEST_TECHNIQUES = [
   'manual',
   'edge_case',
   'security',
+  // Parity with backend/app/models.py TECHNIQUES — `localisation` is the FR-034
+  // Unicode round-trip probe and predates this list; it was simply missing here.
+  'localisation',
+  // Web-target tracks. `design`/`a11y` come from design.ui_cases (structural
+  // facts and contrast findings, each carrying its design fact id); the
+  // `performance` case carries the observed page-load baseline it is measured
+  // against. All three joined models.py TECHNIQUES with the web-target feature.
+  'design',
+  'a11y',
+  'performance',
 ] as const;
 export type TestTechnique = (typeof TEST_TECHNIQUES)[number];
 
@@ -107,6 +123,31 @@ export type SpecFormat = (typeof SPEC_FORMATS)[number];
  */
 export const ENDPOINT_SOURCES = ['spec', 'traffic', 'dom', 'postman'] as const;
 export type EndpointSource = (typeof ENDPOINT_SOURCES)[number];
+
+/**
+ * The five test types a web target may be created with — the closed list of
+ * `POST /projects/{id}/web-targets` `test_types`, and the legal list the 422
+ * `invalid_test_type` refusal must name. One string per checkbox on the target
+ * page (`target-type-{type}`), so this array is also the UI's row-count guard
+ * (§5: one vocabulary, not two).
+ */
+export const WEB_TARGET_TEST_TYPES = [
+  'functional',
+  'api',
+  'ui',
+  'performance',
+  'security',
+] as const;
+export type WebTargetTestType = (typeof WEB_TARGET_TEST_TYPES)[number];
+
+/**
+ * WebTarget.status — `pending` while the browser job runs, then `discovered`
+ * or `failed`. A failed discovery keeps its row: "we tried this URL and could
+ * not read it" is information, and deleting it would make the failure
+ * invisible (the same reason a skipped pair keeps its reason).
+ */
+export const WEB_TARGET_STATUSES = ['pending', 'discovered', 'failed'] as const;
+export type WebTargetStatus = (typeof WEB_TARGET_STATUSES)[number];
 
 /**
  * Endpoint.ai_criticality — the ONLY enumerated field the optional AI

@@ -118,6 +118,21 @@ func assertPublicHost(hostname string) error {
 	return nil
 }
 
+// PublicHostError applies the spec fetcher's SSRF rule to a hostname on behalf
+// of the other modules that open sockets to a user-supplied URL. Returns
+// ("", "") when the host is acceptable — one rule, one implementation, because
+// a second copy is a second thing to forget to update.
+func PublicHostError(hostname string) (string, string) {
+	err := assertPublicHost(hostname)
+	if err == nil {
+		return "", ""
+	}
+	if se, isSpec := err.(*specError); isSpec {
+		return se.Code, se.Message
+	}
+	return "invalid_url", err.Error()
+}
+
 func isBlockedIP(ip net.IP) bool {
 	if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
 		ip.IsMulticast() || ip.IsUnspecified() {

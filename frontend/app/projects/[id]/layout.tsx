@@ -13,6 +13,7 @@ const NAV_GROUPS: { label: string; items: { seg: string; label: string }[] }[] =
       { seg: "", label: "Overview" },
       { seg: "requirements", label: "Requirements" },
       { seg: "endpoints", label: "Endpoints" },
+      { seg: "target", label: "Target" },
     ],
   },
   {

@@ -2,6 +2,9 @@
 
 export const routes = {
   home: '/',
+  // Deliberately absent from frontend/app: this build has no sign-in screen.
+  // They are kept here as the addresses tests/auth.spec.ts proves do not
+  // resolve — deleting the constants would delete the guard with them.
   login: '/login',
   register: '/register',
   projects: '/projects',
@@ -10,6 +13,8 @@ export const routes = {
 
   project: (projectId: string) => `/projects/${projectId}`,
   requirements: (projectId: string) => `/projects/${projectId}/requirements`,
+  /** Web target — point Traceo at a URL, pick test types, read the design box. */
+  target: (projectId: string) => `/projects/${projectId}/target`,
   endpoints: (projectId: string) => `/projects/${projectId}/endpoints`,
   environments: (projectId: string) => `/projects/${projectId}/environments`,
   generate: (projectId: string) => `/projects/${projectId}/generate`,

@@ -22,6 +22,7 @@ from .modules.integrations import router as integrations_router, start_scheduler
 from .modules.reference import router as reference_router
 from .modules.security import router as security_router
 from .modules.components import router as components_router
+from .modules.webtarget import router as webtarget_router
 
 app = FastAPI(title=settings.APP_NAME, version="2.0.0")
 
@@ -40,7 +41,7 @@ for r in (integrations_router, reference_router,
           identity_router, projects_router, ingestion_router, discovery_router,
           generation_router, insight_router, review_router, execution_router,
           traceability_router, reporting_router, components_router,
-          security_router):
+          security_router, webtarget_router):
     app.include_router(r, prefix=P)
 
 

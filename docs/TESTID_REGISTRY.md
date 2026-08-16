@@ -16,33 +16,22 @@ Note: the components in `frontend/components/ui.tsx` forward a `testId` prop to 
 
 ---
 
-## /login — `frontend/app/login/page.tsx`
+## /login and /register — removed
 
-| data-testid | Element | Purpose |
-|---|---|---|
-| `login-page-root` | container | Login page root |
-| `login-form-root` | form | Credentials form |
-| `login-form-email-input` | Input | Email field |
-| `login-form-password-input` | Input | Password field |
-| `login-form-error-text` | text | Login failure message (rendered on error only) |
-| `login-form-submit-button` | Button | Submit credentials |
-| `login-register-link` | Link | Go to /register |
+This build has no sign-in screen. `frontend/app/login/` and
+`frontend/app/register/` were deleted, so both routes answer `404`, and the
+shell has no sign-out control (it existed only to return the user to a login
+page). There is nothing left to register here.
 
-**Dev auto-login adds no testid — deliberately.** `frontend/components/providers.tsx` probes `POST /v1/auth/dev-session` once on mount when no token is stored; on a backend with `TRACEO_DEV_AUTOLOGIN=1` it stores the returned session and redirects to `/projects`, and on any other backend the endpoint answers `404` and the probe falls through silently. There is no rendered element, so there is nothing to register and nothing to select. The table above therefore stays the complete login surface for the suite: the E2E backend runs with the flag off (pinned by `negative.spec.ts` — "the dev auto-login route does not exist while the flag is off"), so `auth.spec.ts` and the login negatives observe the same page they always did.
+The session comes from `POST /v1/auth/dev-session`, which `lib/api.ts::ensureSession`
+requests once before the first API call. It renders no element, so it has no
+testid — and `backend/app/config.py::assert_production_safe` refuses to start a
+production node with that flag set, so the trade is loud rather than silent.
 
-## /register — `frontend/app/register/page.tsx`
-
-| data-testid | Element | Purpose |
-|---|---|---|
-| `register-page-root` | container | Registration page root |
-| `register-form-root` | form | Registration form (org + admin) |
-| `register-form-org-name-input` | Input | Organisation name |
-| `register-form-name-input` | Input | Admin display name |
-| `register-form-email-input` | Input | Admin email |
-| `register-form-password-input` | Input | Password (min 8 chars) |
-| `register-form-error-text` | text | Registration failure message |
-| `register-form-submit-button` | Button | Submit registration |
-| `register-login-link` | Link | Go to /login |
+`tests/auth.spec.ts` pins the property: both routes must 404, and no credentials
+form or link to one may appear anywhere in the shell. The HTTP endpoints
+`/auth/login` and `/auth/register` are untouched — the suite composes its role
+sessions from them.
 
 ## /projects — `frontend/app/projects/page.tsx`
 
@@ -129,6 +118,7 @@ Note: the components in `frontend/components/ui.tsx` forward a `testId` prop to 
 | `nav-project-archived-badge` | Badge | Shown when the project is archived |
 | `nav-link-overview` | Link | Sidebar → overview (dashboard) |
 | `nav-link-requirements` | Link | Sidebar → requirements |
+| `nav-link-target` | Link | Sidebar → web target (URL discovery + design box) — Workspace group, beside Requirements |
 | `nav-link-endpoints` | Link | Sidebar → endpoints |
 | `nav-link-generate` | Link | Sidebar → generate |
 | `nav-link-insights` | Link | Sidebar → insights (QA Insight Agent — the sixth engine) |
@@ -263,6 +253,81 @@ Note: the components in `frontend/components/ui.tsx` forward a `testId` prop to 
 **Derived-environment line.** A successful import echoes `environment_created` — `null` or `{id, name, base_url}`. It is non-null **only** when the project had zero environments at import time *and* a base URL could be derived from the document itself; an existing environment is never touched, and no host is ever invented. When it is non-null the page renders `endpoints-import-environment-created` with the created name and base URL, plus `endpoints-import-environment-created-link` to `/projects/{id}/environments`. Absence of both ids is therefore a legitimate state (the usual one on any re-import), not a defect — specs assert their presence only on a project that started with no environment.
 
 **AI-enrichment cells.** The three `endpoints-row-ai-*` ids are rendered **only where the corresponding column is non-null** — enrichment is optional (gated on the project's `automation: "auto"`) and an import always succeeds with zero enrichment. Absence of these ids is therefore a legitimate state, not a defect, and specs assert the count against the API rather than assuming a fixed number of them. `ai_description` and `ai_group` are stored and rendered as **plain text**: enrichment may never create, rename or delete an endpoint, nor alter a path, a parameter or a field name.
+
+## /projects/[id]/target — `frontend/app/projects/[id]/target/page.tsx`
+
+The **web target** screen: a URL plus a subset of the five test types, discovered by the browser sidecar (`tools/web-discovery/discover.mjs`) through `POST /v1/projects/{id}/web-targets` (202 + `job_id`, polled like any other job). The page reads `GET /v1/projects/{id}/web-targets` for the stored list, `GET /v1/web-targets/{id}` for one target's inventory and design payload, and `GET /v1/web-targets/{id}/screenshot` for the PNG — fetched with the bearer token and rendered from an object URL, so `target-design-screenshot` never carries the API path in `src`.
+
+**The five type checkboxes are always rendered**, in the canonical order `functional | api | ui | performance | security`, each with its own one-line explanation id (`target-type-{type}-hint`). `functional` and `ui` are checked on first paint. The launcher card (`target-form-card`) and everything inside it is gated on capability `import_spec`; the list, the inventory and the design box are `view`-level and render for every role.
+
+| data-testid | Element | Purpose |
+|---|---|---|
+| `target-page-root` | container | Target page root |
+| `target-page-header` | PageHeader | Page title + subtitle |
+| `target-form-card` | Card | Launcher — URL, viewport, test types (capability `import_spec`) |
+| `target-url-input` | Input | Target page URL (absolute http/https) |
+| `target-url-hint` | text | Shown while the typed URL is not an absolute http(s) URL |
+| `target-viewport-select` | Select | Render viewport, `WIDTHxHEIGHT` (default `1280x800`) |
+| `target-type-row` | row (repeated) | One test-type choice — identified by its checkbox id |
+| `target-type-functional` | checkbox | Test type: functional (checked by default) |
+| `target-type-api` | checkbox | Test type: api |
+| `target-type-ui` | checkbox | Test type: ui (checked by default) |
+| `target-type-performance` | checkbox | Test type: performance |
+| `target-type-security` | checkbox | Test type: security |
+| `target-type-functional-hint` | text | One-line explanation of what `functional` does with this URL |
+| `target-type-api-hint` | text | One-line explanation of what `api` does with this URL |
+| `target-type-ui-hint` | text | One-line explanation of what `ui` does with this URL |
+| `target-type-performance-hint` | text | One-line explanation of what `performance` does with this URL |
+| `target-type-security-hint` | text | One-line explanation of what `security` does with this URL |
+| `target-types-hint` | text | Shown when no test type is checked |
+| `target-start-button` | Button | Start discovery (disabled on an invalid URL or an empty type set) |
+| `target-job-progress` | Progress | Discovery job progress (202 → poll) |
+| `target-start-error` | text | Start/job refusal — `data-state` carries the API error code (e.g. `invalid_test_type`, `browser_discovery_unavailable`) |
+| `target-start-error-list` | list | Field-level lines the API attached (e.g. the legal test-type list) |
+| `target-start-error-item` | list item (repeated) | One error line |
+| `target-result-card` | Card | Job result panel (appears on completion) |
+| `target-result-title` | text | `title` of the discovered page |
+| `target-result-forms-stat` | StatCard | Forms discovered |
+| `target-result-controls-stat` | StatCard | Buttons and links discovered |
+| `target-result-requests-stat` | StatCard | Network requests captured |
+| `target-result-endpoints-stat` | StatCard | Endpoint rows written (`source="dom"`) |
+| `target-result-requirements-stat` | StatCard | Requirements written (state `extracted`) |
+| `target-result-cases-badge` | Badge (repeated) | One `cases_by_type` entry — `data-state` is the test type |
+| `target-result-skipped` | panel | `skipped[]` — types that produced nothing, with the reason |
+| `target-result-skipped-row` | row (repeated) | One skipped type — `data-state` is the type |
+| `target-to-requirements-button` | Button | Go to requirements |
+| `target-to-endpoints-button` | Button | Go to endpoints |
+| `target-to-review-button` | Button | Go to the review queue |
+| `target-list-card` | Card | Stored web targets for the project |
+| `target-list-error` | text | List load error |
+| `target-list-retry-button` | Button | Reload after a load error |
+| `target-empty-state` | Empty | No web target discovered yet |
+| `target-list-row` | row (repeated) | One stored target — identified by its URL; `data-state="discovered\|failed\|pending"` |
+| `target-list-status-badge` | Badge | `data-state="discovered\|failed\|pending"` |
+| `target-list-select-button` | Button | Load this target into the inventory + design box |
+| `target-detail-card` | Card | Inventory summary of the selected target |
+| `target-detail-status-badge` | Badge | Selected target status — `data-state` verbatim |
+| `target-detail-forms-stat` | StatCard | Forms in the stored inventory (one `target-detail-{key}-stat` per reported counter: `forms`, `controls`, `requests`, `endpoints`, `requirements`, `cases`, `console_errors`) |
+| `target-design-section` | Card | **The design box** — screenshot + palette + contrast |
+| `target-design-empty` | Empty | No target selected yet |
+| `target-design-error` | text | Detail load error |
+| `target-design-screenshot` | img | Rendered full-page PNG (object URL, alt names the target URL) |
+| `target-design-screenshot-missing` | panel | Rendered instead when no screenshot is stored/readable |
+| `target-design-palette` | container | Extracted palette |
+| `target-design-palette-swatch` | row (repeated) | One colour — `data-colour="#RRGGBB"`, identified by that attribute |
+| `target-design-palette-share` | text (repeated) | That colour's share of the screen |
+| `target-design-palette-empty` | text | No palette facts (UI type was not selected) |
+| `target-design-contrast` | container | WCAG contrast findings |
+| `target-design-contrast-row` | row (repeated) | One ink-on-surface finding — `data-state="pass\|fail"`, `data-fact-id` carries the design fact id |
+| `target-design-contrast-ratio` | text (repeated) | The measured ratio, `N.NN:1` |
+| `target-design-contrast-badge` | Badge | AA pass/fail for that ink |
+| `target-design-contrast-suggestion` | text (repeated) | The passing colour from `visual.nearest_accessible` — `data-colour="#RRGGBB"`, rendered on failing rows only |
+| `target-design-contrast-unachievable` | text | Shown when `achievable=false` — the surface has to change, not the ink |
+| `target-design-contrast-empty` | text | No contrast facts (UI type was not selected) |
+
+**Colours are asserted on `data-colour`, never on the swatch's inline style** — the same rule as `data-state`: the hex is backend data, the styling is presentation. A palette row is addressed by `[data-colour="#RRGGBB"]`, a contrast row by its `data-fact-id` (`contrast:#INK_on_#SURFACE`), which is exactly the fact id the generated UI cases carry.
+
+**Absence of the design ids is a legitimate state.** `ui` is only one of five optional types: a run with `ui` unchecked stores no design facts, so `target-design-palette-empty` and `target-design-contrast-empty` are rendered instead. Specs assert the design box against the types they actually requested.
 
 ## /projects/[id]/generate — `frontend/app/projects/[id]/generate/page.tsx`
 

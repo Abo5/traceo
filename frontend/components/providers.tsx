@@ -2,12 +2,21 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { API, getToken, getUser, setToken, setUser } from "@/lib/api";
+import { ensureSession, getToken, getUser } from "@/lib/api";
 
+/**
+ * The application shell.
+ *
+ * Signing in is not part of this build. There is no login route, no
+ * registration route and no sign-out control: `ensureSession` obtains a session
+ * from the backend's dev-session endpoint before the first request goes out,
+ * and every screen simply assumes it. Nothing here can strand the user at a
+ * form, because no form exists to strand them at.
+ *
+ * The backend refuses to boot in production with that endpoint enabled
+ * (`assert_production_safe`), so this trade is loud rather than silent.
+ */
 export default function Providers({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
-
   const [auth, setAuth] = useState<{ token: string | null; user: any | null }>({
     token: null,
     user: null,
@@ -25,41 +34,14 @@ export default function Providers({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Development auto-login: when the backend runs with TRACEO_DEV_AUTOLOGIN=1 it
-  // hands out a session without credentials, so the login screen never appears.
-  // On any other backend the endpoint 404s and normal login is untouched.
   useEffect(() => {
-    if (getToken()) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(`${API}/auth/dev-session`, { method: "POST" });
-        if (!res.ok || cancelled) return;
-        const data = await res.json();
-        setToken(data.token);
-        setUser(data.user);
-        if (window.location.pathname === "/login" || window.location.pathname === "/") {
-          router.replace("/projects");
-        }
-      } catch {
-        /* offline or endpoint absent — fall through to the login screen */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [router]);
-
-  function logout() {
-    setToken(null);
-    setUser(null);
-    router.push("/login");
-  }
+    void ensureSession();
+  }, []);
 
   return (
     <>
       <header className="app-header">
-        <Link href={auth.token ? "/projects" : "/login"} className="brand">
+        <Link href="/projects" className="brand">
           <span className="logo-tile" aria-hidden>
             T
           </span>
@@ -68,17 +50,10 @@ export default function Providers({ children }: { children: React.ReactNode }) {
         </Link>
         <div className="header-spacer" />
         <div className="header-right">
-          {auth.token && (
-            <>
-              {auth.user?.name && (
-                <span className="header-user" title={auth.user?.email ?? ""}>
-                  {auth.user.name}
-                </span>
-              )}
-              <button type="button" className="btn btn-ghost btn-sm" onClick={logout}>
-                Log out
-              </button>
-            </>
+          {auth.user?.name && (
+            <span className="header-user" title={auth.user?.email ?? ""}>
+              {auth.user.name}
+            </span>
           )}
         </div>
       </header>

@@ -269,6 +269,20 @@ func mergeParams(a, b []map[string]any) []map[string]any {
 
 // --- shared parameter/url helpers ------------------------------------------------
 
+// Param exposes the inventory parameter builder to the other discovery modes.
+// The DOM crawler records query values exactly the way a HAR capture does, and
+// two builders that must stay identical are one builder.
+func Param(name, location string, required bool, example string) map[string]any {
+	return param(name, location, required, example)
+}
+
+// TemplateConcretePath exposes the concrete-id templating rule (all-digits, UUID
+// and ObjectId segments become {id}, {id2}, …) to the other discovery modes, so
+// a URL captured in the browser is templated exactly as the same URL in a HAR.
+func TemplateConcretePath(path string) (string, []string) {
+	return templateConcretePath(path)
+}
+
 // param builds one inventory parameter in the exact shape the OpenAPI importer
 // emits. The observed example value (when there is one) is recorded under
 // constraints.example — collections carry examples, not JSON Schema constraints.

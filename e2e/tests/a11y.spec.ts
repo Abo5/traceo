@@ -1,6 +1,6 @@
 /**
  * Accessibility scans (@a11y, §18) — axe over every top-level surface:
- * the public auth pages, the projects list, and each project sub-page
+ * the projects list and each project sub-page
  * (API-created project + storage-state auth, §9). The gate is delta-based:
  * only violations absent from e2e/a11y-baseline.json fail (see helpers/a11y.ts).
  * Page readiness is asserted on `{domain}-page-root` testids, never on
@@ -10,10 +10,8 @@ import { test, expect } from '../fixtures';
 import { checkA11y } from '../helpers/a11y';
 import { sampleFile } from '../helpers/test-data';
 import { EndpointsPage } from '../pages/endpoints.page';
-import { LoginPage } from '../pages/login.page';
 import { ProjectsPage } from '../pages/projects.page';
 import { PROJECT_SECTIONS, ProjectShellPage } from '../pages/project-shell.page';
-import { RegisterPage } from '../pages/register.page';
 import { projectFactory } from '../test-data/project.factory';
 
 test.describe('accessibility @a11y', () => {
@@ -23,24 +21,7 @@ test.describe('accessibility @a11y', () => {
     test.setTimeout(60_000);
   });
 
-  // `page` (no storage state) — the auth pages are public surfaces.
-  test('login page has no new a11y violations', async ({ page }) => {
-    const login = new LoginPage(page);
 
-    await login.goto();
-    await expect(login.root).toBeVisible({ timeout: 20_000 });
-
-    await checkA11y(page, 'login');
-  });
-
-  test('register page has no new a11y violations', async ({ page }) => {
-    const register = new RegisterPage(page);
-
-    await register.goto();
-    await expect(register.root).toBeVisible({ timeout: 20_000 });
-
-    await checkA11y(page, 'register');
-  });
 
   test('projects list has no new a11y violations', async ({ asQaLead }) => {
     const projects = new ProjectsPage(asQaLead);

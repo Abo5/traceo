@@ -147,9 +147,14 @@ class Endpoint(TimestampMixin, Base):
 # (modules/insight.py) and is always accompanied by a non-null edge_category;
 # "security" is produced only by the security builders (modules/security.py) and
 # is always accompanied by a non-null weakness_id.
+# "design" and "a11y" are produced only by the design engine (modules/design.py
+# ui_cases) and always carry a design fact id in their step; "performance" is
+# produced only by the web-target performance track and always carries the
+# observed page-load baseline it is measured against. They are techniques in the
+# same sense the others are: the deterministic method that produced the case.
 TECHNIQUES: tuple[str, ...] = (
     "ep", "bva", "decision_table", "negative", "manual", "localisation", "edge_case",
-    "security",
+    "security", "design", "a11y", "performance",
 )
 
 # Legal Run.kind values (SECURITY_TESTING_PLAN §8). A run carries exactly one
@@ -322,6 +327,43 @@ class Component(TimestampMixin, Base):
     # dependency is visible rather than silently absent.
     unpinned_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
 # --- end component inventory ---------------------------------------------------------
+
+
+# --- Web targets (browser discovery) -------------------------------------------------
+# A URL the project tests. The row is created by the POST and updated by the
+# discovery job, so a target is visible (status "pending") while the browser is
+# still rendering — a job that dies never leaves the user with nothing.
+WEB_TARGET_STATUSES: tuple[str, ...] = ("pending", "discovered", "failed")
+
+
+class WebTarget(TimestampMixin, Base):
+    __tablename__ = "web_targets"
+    __table_args__ = (
+        # One row per (project, url, viewport): pointing Traceo at the same page
+        # again RE-discovers that target instead of accumulating duplicates, which
+        # is what keeps the requirements and cases derived from it stable.
+        UniqueConstraint("project_id", "url", "viewport",
+                         name="uq_web_targets_project_url_viewport"),
+    )
+    organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    url: Mapped[str] = mapped_column(String(1000))
+    viewport: Mapped[str] = mapped_column(String(20), default="1280x800")
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # see WEB_TARGET_STATUSES
+    title: Mapped[str] = mapped_column(String(500), default="")
+    final_url: Mapped[str] = mapped_column(String(1000), default="")  # after redirects
+    last_discovered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    screenshot_key: Mapped[str] = mapped_column(String(300), default="")
+    # What the render actually found: the counts, the form/control/request digests
+    # and the design summary (palette shares + contrast findings). It is stored
+    # rather than recomputed because a full-page raster costs seconds to analyse,
+    # and because the detail route must answer from what THIS discovery saw, not
+    # from a re-render that would see a different page.
+    inventory: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Why status is "failed" — a failed target with no reason is indistinguishable
+    # from one nobody looked at.
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+# --- end web targets -------------------------------------------------------------------
 
 
 class AuditEntry(Base):

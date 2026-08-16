@@ -460,6 +460,14 @@ func runSecurityGeneration(job *jobs.Job, orgID, userID, projectID string,
 	return map[string]any{"generated": generated, "discarded": discarded, "skipped": out}, nil
 }
 
+// PersistCase writes ONE grounded security case as a draft plus its requirement
+// link. Exported for the other engines that build S0 cases over their own
+// discovered endpoints (the web-target crawler): two persistence paths for the
+// same case shape would be two places for weakness_id to go missing.
+func PersistCase(orgID, projectID string, req *models.Requirement, caseData map[string]any) {
+	persistCase(orgID, projectID, req, caseData)
+}
+
 func persistCase(orgID, projectID string, req *models.Requirement, caseData map[string]any) {
 	steps := asList(caseData["steps"])
 	tsteps := make([]models.TestStep, 0, len(steps))

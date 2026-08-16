@@ -540,3 +540,23 @@ idempotent re-import, the 422 that names the supported formats, delete + tenant 
 capability guards, and both audit actions).
 `gofmt -l .` silent; `go vet ./...` clean; `go build ./...` clean;
 `go test -race -count=1 ./...` green.
+
+## Web target addendum (fixed contract — parity with the Python backend is mandatory)
+
+`internal/modules/webtarget` is a 1:1 port of `backend/app/modules/webtarget.py`: same four routes,
+same codes, same JSON. Read `backend/API_CONTRACT_V2_ADDENDUM.md` §"Web targets" for the surface —
+this section only records what is Go-specific.
+
+- The browser sidecar is SHARED (`tools/web-discovery/discover.mjs`); both backends shell out to it,
+  so parity here is about the API surface and the persistence, not the crawler.
+- `webtarget.SidecarRunner` is the seam the tests replace with a recorded document. No test in this
+  repo starts a browser.
+- `internal/modules/design` is the Go port of the deterministic parts of `backend/app/modules/
+  design.py` + the colour half of `visual.py`: PNG decode (stdlib `image/png`), Roles/TextInks,
+  Regions, ProjectionProfile/Spacing, DesignFacts, UICases, ContrastRatio, DeltaE2000 and
+  NearestAccessible. It is used by the ui track and by nothing else yet.
+- `jobs.Fail(code, message)` produces a coded failure; `jobs.Job.ErrorCode` surfaces it on
+  `GET /v1/jobs/{id}` as `error_code` (null for every other failure).
+- `models.WebTarget` arrives through AutoMigrate. UNIQUE (project_id, url, viewport).
+- Exported for reuse rather than duplicated: `collections.Param`, `collections.TemplateConcretePath`
+  (the HAR id-templating rule), `discovery.PublicHostError` (the SSRF rule), `security.PersistCase`.

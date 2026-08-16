@@ -759,6 +759,14 @@ func mkStep(ep *models.Endpoint, params, headers map[string]any, body any, asser
 		"path": ep.Path, "request": request, "assertions": assertions, "extractions": []any{}}
 }
 
+// GenerateCases exposes the deterministic builders to the other engines that
+// generate against an endpoint inventory — the web-target crawl builds its API
+// track from exactly these, so a crawled endpoint and a specified one get the
+// same cases.
+func GenerateCases(req *models.Requirement, ep *models.Endpoint, depth string) []map[string]any {
+	return generateCases(req, ep, depth)
+}
+
 func generateCases(req *models.Requirement, ep *models.Endpoint, depth string) []map[string]any {
 	suffix := strings.ToUpper(ep.Method) + " " + ep.Path
 	reqRef := req.ExternalID

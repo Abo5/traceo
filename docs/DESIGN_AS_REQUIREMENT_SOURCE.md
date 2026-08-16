@@ -2,16 +2,17 @@
 
 > Architecture for making a UI design a first-class specification in Traceo — extracted, confirmed, traced and tested exactly like a written requirement.
 >
-> Status: proposal. The deterministic extraction layer exists (`backend/app/modules/design.py::design_facts`); the data model, routes and UI below are not built yet.
+> Status: partly shipped. The deterministic extraction layer exists (`backend/app/modules/design.py::design_facts` + `ui_cases`), and **one design source is live end to end: a URL** — see §2 Path C and `docs/WEB_TARGETS.md`. The `DesignSource` entity, the Figma path and the conformance run below are still proposals.
 
 ## The gap this closes
 
-Traceo today accepts two kinds of input:
+Traceo today accepts three kinds of input:
 
 | Input | Produces | Grounds |
 |---|---|---|
 | A document | `Requirement` | *what* the system must do |
 | An OpenAPI/Postman/HAR file | `Endpoint` | *where* it does it |
+| **A URL** (rendered in a browser) | `Requirement` + `Endpoint` + design facts | *what the product actually shows and calls* |
 
 And a test case must reference both, which is what makes BO-07 enforceable.
 
@@ -34,7 +35,7 @@ The proposal is small to state and large in effect: **treat a design as a source
 ```mermaid
 flowchart TD
     DOC[Document] --> REQ[Requirement<br/>extracted → confirmed]
-    DES[Design source<br/>Figma file or image] --> DREQ[Design requirement<br/>extracted → confirmed]
+    DES[Design source<br/>Figma file · image · URL] --> DREQ[Design requirement<br/>extracted → confirmed]
     DES --> INV[Screen inventory<br/>screens + elements]
     SPEC[API spec / collection] --> EP[Endpoint inventory]
 
@@ -85,7 +86,32 @@ When only a PNG is available, extraction is limited to what a raster can support
 
 What Path B **cannot** produce is meaning: it can prove an orange rectangle 708×116 exists at (479,917), never that it is the submit button. So Path B facts are structural — they catch drift, regressions and contrast defects — while Path A facts are semantic and can drive real UI test cases.
 
-**Recommendation: Path A for anything you intend to generate cases from; Path B for conformance and for teams who can only hand over a PNG.** Never blur the two in the UI — a fact's source must be visible, because "the design says the button is labelled X" and "there is an orange rectangle here" carry very different authority.
+### Path C — a URL rendered in a browser (**shipped**)
+
+The third source, and the only one that needs no file from anybody: point Traceo at a running screen
+and let a real browser render it (`docs/WEB_TARGETS.md`). It yields **both halves at once**, which
+neither of the other paths does:
+
+| Half | Where it comes from | Authority |
+|---|---|---|
+| Semantic facts | the rendered DOM — form and field selectors, `required`/`maxlength`/`pattern`, labels, accessible names, captured XHR/fetch calls | as exact as Path A, because these are declarations, not measurements |
+| Structural facts | a full-page screenshot at the stated viewport, through the same `design_facts` extractor as Path B | exactly Path B's ceiling, and the same 5 kinds of fact |
+
+The measurement that makes this path necessary rather than convenient: the target the owner pointed
+at returns **3453 bytes with 0 forms, 0 inputs and 0 buttons** to a plain GET, because it is a Vue
+SPA. A file-based path cannot see that screen at all; only a rendered one can.
+
+The honest difference from Path A: a rendering states what the product **is**, while a Figma file
+states what it **should be**. Path C facts are therefore a baseline and a regression net — extremely
+good at catching drift, unable on their own to prove the current screen is the intended one. When
+both exist, Path A is the specification and Path C is the observation, and a disagreement between
+them is precisely the finding worth having.
+
+**Recommendation: Path A for anything you intend to generate cases from; Path C when the product is
+running and no design file is available (and for the DOM half, which Path A cannot give you); Path B
+for conformance and for teams who can only hand over a PNG.** Never blur them in the UI — a fact's
+source must be visible, because "the design says the button is labelled X", "the running app has a
+button labelled X" and "there is an orange rectangle here" carry very different authority.
 
 ---
 
@@ -178,6 +204,7 @@ Go parity is mandatory, as for every route.
 | Phase | Deliverable | State |
 |---|---|---|
 | **D0** | Deterministic fact extraction from an image | **done** — `design_facts`, 48 facts on a real export |
+| **D0.5** | **URL as a design source** — browser render → design facts + UI cases + the design box (palette shares, contrast findings, suggested passing colours) | **done** — `modules/webtarget.py` `ui` track, `docs/WEB_TARGETS.md` |
 | **D1** | `DesignSource` + facts + confirm → requirements; image path end to end | next |
 | **D2** | Figma file import: named nodes, text, tokens, variants → semantic facts | needs a Figma token; the MCP server already exposes what is required |
 | **D3** | Screen/element inventory + `data-design-node` mapping | after D2 |
@@ -192,5 +219,6 @@ D1 is worth shipping alone: it makes design-derived facts visible in the matrix,
 
 - **A design is not a behaviour.** It shows what a screen looks like, not what happens on submit. Business rules still come from documents, and that is the correct division — this plan does not replace the document track, it fills the half that was missing.
 - **Path B cannot name things.** Structural facts catch drift; they cannot tell you the button is mislabelled. Teams that only supply PNGs get real but narrower value, and the product should say so rather than let them assume otherwise.
+- **Path C sees one state, and only what it can reach without touching anything.** Discovery is read-only by contract: it never submits a form or clicks a control, so what it can state about a screen behind a login, a modal or a tab is nothing. It also states what the product *does*, not what it *should* do — a rendering can never be the arbiter of its own correctness.
 - **The design-to-DOM mapping is a human decision.** One annotation per component, once. Every attempt to infer it is where these tools start being confidently wrong.
 - **Designs change under you.** Without the `changed`/`stale` cascade, a design source becomes a stale baseline within a sprint and the suite starts defending last month's product.

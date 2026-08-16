@@ -1,5 +1,4 @@
 {
-  "login": [],
   "project:endpoints": [],
   "project:environments": [],
   "project:generate": [],
@@ -12,6 +11,6 @@
   "project:review": [],
   "project:runs": [],
   "project:settings": [],
-  "projects": [],
-  "register": []
+  "project:target": [],
+  "projects": []
 }

@@ -51,3 +51,66 @@ Sidebar: the "Setup" group grows to: Environments, Settings, Integrations; and a
 4. **New Run wizard restyle** (shots/new.png): rework /runs launch card into a numbered 3-step card layout (01 Target: environment + base_url display; 02 Scope: approved count + subset; 03 Rules: read-only chips of enabled techniques incl. localisation) keeping existing behavior — keep it one page, numbered sections with NumberedChips.
 
 Design: follow docs/FIGMA_DESIGN_SPEC.md (tokens, components). The product is English-only and LTR: `<html lang="en" dir="ltr">`, no language switcher, no RTL rules.
+
+## Web targets (fixed contract — "give it a URL and pick the test types")
+
+`modules/webtarget.py` (Python) and `internal/modules/webtarget` (Go) — identical routes, codes and
+JSON. The page is rendered by ONE shared Node/Playwright sidecar,
+`tools/web-discovery/discover.mjs`, invoked as
+`node discover.mjs --url <url> --out <dir> --viewport WxH --timeout <ms>`; both backends shell out to
+the same script. This is not an optimisation: the reference target
+(https://opensource-demo.orangehrmlive.com/web/index.php/auth/login) is a Vue SPA whose plain HTTP GET
+returns 3453 bytes with 0 forms, 0 inputs and 0 buttons, so server-side HTML parsing discovers
+nothing at all.
+
+### Model
+`web_targets` — organisation_id, project_id, url, viewport, status (pending|discovered|failed), title,
+final_url, last_discovered_at, screenshot_key, inventory (JSON: counts + form/control/request digests
++ design summary), last_error. UNIQUE (project_id, url, viewport): re-posting the same URL
+RE-discovers that target instead of forking the requirements and cases derived from it.
+Python migration `f2c6a09b41d8`; Go arrives through AutoMigrate.
+
+### Routes
+- `POST /projects/{id}/web-targets` — capability **import_spec**, body `{url, viewport?, test_types[]}`
+  → **202** `{job_id, target_id, test_types}`. test_types ⊆
+  `["functional","api","ui","performance","security"]`; an unknown or empty value → **422**
+  `{"code":"invalid_test_type", "errors":[the five legal values]}`. Non-http(s) → 422 `invalid_url`;
+  a private/loopback host → 422 `ssrf_blocked` unless `TRACEO_ALLOW_PRIVATE_TARGETS=1` (the spec
+  fetcher's rule, reused); a malformed viewport → 422 `invalid_viewport`.
+- `GET /projects/{id}/web-targets` — capability **view** → `{"web_targets":[...]}`.
+- `GET /web-targets/{id}` — capability **view** → the target plus `inventory` (forms/controls/
+  requests/endpoints/console_errors/skipped) and `design` (palette with shares, contrast findings with
+  the suggested passing colour from `visual.nearest_accessible`, fact list).
+- `GET /web-targets/{id}/screenshot` — capability **view** → `image/png`, 404 `no_screenshot`.
+
+### The job (kind `discover`)
+Result: `{target_id, title, forms, controls, requests, endpoints, requirements, cases_by_type{},
+skipped:[{type, reason}], discarded, duplicates}`. Per selected type:
+- **api** — Endpoint rows with `source="dom"`, paths templated by the SAME rule the HAR importer uses
+  (concrete ids → `{id}`, `{id2}`…), query values recorded as `constraints.example`, `observed_count`
+  = times the browser made the call. Fidelity precedence spec > traffic > dom > postman: a spec or
+  traffic row is never overwritten, and nothing is ever deleted (a crawl observes a page, it does not
+  enumerate an API). Selecting **security** implies this persistence — the S0 builders need the
+  inventory to stand on.
+- **functional** — one Requirement per FORM, state `extracted` (awaiting confirmation), description
+  naming the form and its required fields, plus cases carrying the form's selectors verbatim.
+- **ui** — `design.design_facts` over the screenshot, cases via `design.ui_cases` (techniques
+  `design`/`a11y`), and the design summary for the UI's design box.
+- **performance** — a requirement and a case (technique `performance`) asserting page load under
+  `TRACEO_PAGE_LOAD_BUDGET_MS` (default 3000) with the observed `elapsed_ms` recorded as the baseline.
+- **security** — the S0 builders over the endpoints above, through
+  `generation.grounding_validate` exactly like the security generator.
+
+If the sidecar cannot run (node or Playwright missing) the job **FAILS** with
+`error_code = "browser_discovery_unavailable"` and a message naming what to install — never a silent
+empty result. `GET /jobs/{id}` now carries `error_code` (null unless the job failed with a coded
+error).
+
+### Grounding (unchanged, non-negotiable)
+Every generated case cites at least one artefact the discovery actually found — a form field
+selector, a captured request, or a design fact id — and every id it cites must be in that set. A case
+that fails the check is discarded and counted, never repaired and never shown (BO-07).
+
+### Settings
+`TRACEO_WEB_DISCOVERY_SCRIPT`, `TRACEO_NODE_BIN`, `TRACEO_WEB_DISCOVERY_TIMEOUT_S`,
+`TRACEO_ALLOW_PRIVATE_TARGETS`, `TRACEO_PAGE_LOAD_BUDGET_MS`, `TRACEO_DESIGN_MAX_PIXELS`.

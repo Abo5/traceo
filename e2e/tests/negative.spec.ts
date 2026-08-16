@@ -23,46 +23,10 @@ import { expectApiError } from '../helpers/expect-api-error';
 import { registerForeignOrg } from '../helpers/foreign-org';
 import { ProjectCreateModalProbe } from '../helpers/project-create-modal.probe';
 import { uniqueSuffix } from '../helpers/unique';
-import { LoginPage } from '../pages/login.page';
 import { ProjectsPage } from '../pages/projects.page';
-import { RegisterPage } from '../pages/register.page';
 
 test.describe('negative paths — UI @negative @regression', () => {
-  test('login with a wrong password shows the error and stays on the login page', async ({
-    page, // plain unauthenticated page
-    api,
-  }) => {
-    // A REAL provisioned email with the wrong password — the UI failure must be
-    // indistinguishable from an unknown email (identity.py: generic 401).
-    const { email } = api.actor('qa_engineer');
-    const login = new LoginPage(page);
 
-    await login.goto();
-    await login.logIn(email, `wrong-${uniqueSuffix()}`);
-
-    await expect(login.errorText).toBeVisible({ timeout: 20_000 });
-    await expect(login.root).toBeVisible(); // no redirect — still on /login
-  });
-
-  test('registering with an already-used email surfaces an error on the form', async ({
-    page,
-    api,
-  }) => {
-    const taken = api.actor('viewer').email; // provisioned this run → guaranteed taken
-    const register = new RegisterPage(page);
-
-    await register.goto();
-    await register.register({
-      orgName: `e2e-dup-${uniqueSuffix()}`,
-      name: 'E2E Duplicate',
-      email: taken,
-      password: 'E2e-pass-12345',
-    });
-
-    // 409 email_taken surfaces in the form's error slot; no redirect happens.
-    await expect(register.errorText).toBeVisible({ timeout: 20_000 });
-    await expect(register.root).toBeVisible();
-  });
 
   test('project create with an empty name is prevented — submit stays disabled', async ({
     asQaLead, // manage_projects = admin|qa_lead (backend/app/security.py)
@@ -91,6 +55,21 @@ test.describe('negative paths — API @negative @regression', () => {
       status: 401,
       code: 'invalid_credentials',
     });
+  });
+
+  test('registering an already-used email is refused with 409 email_taken', async ({ api }) => {
+    // Re-homed from the register screen, which this build no longer has: the
+    // rule is identity.py's, not the form's, so it belongs on the API.
+    const taken = api.actor('viewer').email; // provisioned this run -> guaranteed taken
+    await expectApiError(
+      api.identity.register({
+        org_name: `e2e-dup-${uniqueSuffix()}`,
+        name: 'E2E Duplicate',
+        email: taken,
+        password: 'E2e-pass-12345',
+      }),
+      { status: 409, code: 'email_taken' },
+    );
   });
 
   test('cross-org access answers 404, never 403 — tenant isolation (NFR-SEC-04)', async ({

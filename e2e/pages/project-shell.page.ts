@@ -11,6 +11,8 @@ import { routes } from '../constants/routes';
 export const PROJECT_SECTIONS = [
   'overview',
   'requirements',
+  // Workspace group: point Traceo at a URL, pick test types, read the design box.
+  'target',
   'endpoints',
   'generate',
   'insights',
@@ -29,6 +31,7 @@ export type ProjectSection = (typeof PROJECT_SECTIONS)[number];
 const ROOT_DOMAIN: Record<ProjectSection, string> = {
   overview: 'dashboard',
   requirements: 'requirements',
+  target: 'target',
   endpoints: 'endpoints',
   generate: 'generate',
   insights: 'insights',

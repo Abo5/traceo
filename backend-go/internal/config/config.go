@@ -35,6 +35,24 @@ type Settings struct {
 	CORSOrigins []string
 	SeedDemo    bool
 
+	// --- Web target discovery (browser sidecar) ---------------------------
+	// The target page is rendered by a Node/Playwright sidecar shared with the
+	// Python backend; a plain HTTP GET of a SPA returns a shell with zero forms,
+	// so server-side HTML parsing would discover nothing at all.
+	WebDiscoveryScript  string
+	NodeBin             string
+	WebDiscoveryTimeout float64
+	// AllowPrivateTargets relaxes the SSRF rule so the stack can be pointed at a
+	// local application under test.
+	AllowPrivateTargets bool
+	// PageLoadBudgetMS is the stated budget the performance track asserts; the
+	// observed elapsed_ms is recorded beside it as the baseline.
+	PageLoadBudgetMS int
+	// DesignMaxPixels caps the raster the design engine analyses. Above it the
+	// screenshot is subsampled by an integer step (nearest neighbour, never
+	// averaged — averaging would invent colours the page never painted).
+	DesignMaxPixels int
+
 	// Development convenience: hand out a session for the seeded demo user
 	// without a login form. Off by default and refused in production (see
 	// ProductionSafetyError).
@@ -93,6 +111,14 @@ func Load() {
 
 		DevAutologin:      os.Getenv("TRACEO_DEV_AUTOLOGIN") == "1",
 		DevAutologinEmail: env("TRACEO_DEV_AUTOLOGIN_EMAIL", "demo@traceo.sa"),
+
+		WebDiscoveryScript: env("TRACEO_WEB_DISCOVERY_SCRIPT",
+			filepath.Join(filepath.Dir(base), "tools", "web-discovery", "discover.mjs")),
+		NodeBin:             env("TRACEO_NODE_BIN", "node"),
+		WebDiscoveryTimeout: envF("TRACEO_WEB_DISCOVERY_TIMEOUT_S", 30),
+		AllowPrivateTargets: os.Getenv("TRACEO_ALLOW_PRIVATE_TARGETS") == "1",
+		PageLoadBudgetMS:    envInt("TRACEO_PAGE_LOAD_BUDGET_MS", 3000),
+		DesignMaxPixels:     envInt("TRACEO_DESIGN_MAX_PIXELS", 1200000),
 	}
 	_ = os.MkdirAll(C.StorageDir, 0o755)
 	if err := ProductionSafetyError(C); err != nil {

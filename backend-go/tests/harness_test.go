@@ -49,6 +49,7 @@ import (
 	"traceo/internal/modules/review"
 	secmod "traceo/internal/modules/security"
 	"traceo/internal/modules/traceability"
+	"traceo/internal/modules/webtarget"
 	"traceo/internal/security"
 )
 
@@ -84,7 +85,7 @@ func TestMain(m *testing.M) {
 		identity.Register, projects.Register, ingestion.Register, discovery.Register,
 		generation.Register, review.Register, execution.Register, traceability.Register,
 		reporting.Register, integrations.Register, reference.Register, insight.Register,
-		secmod.Register, components.Register,
+		secmod.Register, components.Register, webtarget.Register,
 	} {
 		reg(v1)
 	}

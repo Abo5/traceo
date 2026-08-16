@@ -40,6 +40,25 @@ export class TraceoHttp {
     return this.unwrap<T>(await this.ctx.get(this.url(path, params), { headers: this.headers() }));
   }
 
+  /**
+   * GET a binary body (a PNG screenshot). Returns the bytes and the declared
+   * content type rather than a parsed object: `unwrap` would turn a PNG into a
+   * mangled string, and the point of asserting on a screenshot route is that
+   * what comes back is really an image — magic bytes, not a JSON envelope.
+   * Failures still surface as a typed ApiError through the same unwrapping.
+   */
+  async getBinary(path: string): Promise<{ body: Buffer; contentType: string; status: number }> {
+    const res = await this.ctx.get(this.url(path), { headers: this.headers() });
+    if (!res.ok()) {
+      await this.unwrap<unknown>(res); // throws the typed refusal
+    }
+    return {
+      body: await res.body(),
+      contentType: res.headers()['content-type'] ?? '',
+      status: res.status(),
+    };
+  }
+
   async post<T>(path: string, body?: unknown): Promise<T> {
     return this.unwrap<T>(
       await this.ctx.post(this.url(path), { headers: this.headers(), data: body ?? {} }),

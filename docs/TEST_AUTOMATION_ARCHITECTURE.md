@@ -229,7 +229,7 @@ Text is ranked so low for one reason: visible copy is product wording. It is rev
 **Naming convention:** `domain-component-element-state` — examples matching the real application pages:
 
 ```
-login-form-email-input              # /login
+target-url-input                    # /projects/[id]/target
 projects-list-create-button         # /projects — the primary header action
 projects-empty-create-button        # /projects — the empty-state call to action (same modal)
 requirements-toolbar-confirm-all-button
@@ -324,7 +324,7 @@ Tenant isolation is guaranteed by the server rather than by framework discipline
 
 ## 9. Fixtures strategy
 
-The cornerstone here **differs from the standard pattern** because JWT authentication lives in `localStorage`, not cookies: instead of a browser login per role, **storage-state files are built programmatically over the API** — `POST /v1/auth/login` returns `{token, user}`, and from those a `storageState.origins[].localStorage` entry is composed with the exact keys the frontend reads (`traceo_token`, `traceo_user` in `frontend/lib/api.ts`). No browser is involved in setup at all, and the UI login flow stays covered by its own `@smoke` specs.
+The cornerstone here **differs from the standard pattern** because JWT authentication lives in `localStorage`, not cookies: instead of a browser login per role, **storage-state files are built programmatically over the API** — `POST /v1/auth/login` returns `{token, user}`, and from those a `storageState.origins[].localStorage` entry is composed with the exact keys the frontend reads (`traceo_token`, `traceo_user` in `frontend/lib/api.ts`). No browser is involved in setup at all. The UI login flow is no longer covered as a flow, because this build has no login screen: `frontend/app/login/` and `frontend/app/register/` were deleted, and `auth.spec.ts` now pins that both routes 404 and that no credentials form is reachable from the shell.
 
 ```typescript
 // global/auth.setup.ts — composes each role's state over the API, no browser
@@ -948,7 +948,7 @@ Outcomes are deliberately **not** asserted: the demo SUT answers `404` for an un
 
 It is asserted twice, **anonymously and authenticated**, because the gate is the flag and not the caller: the route takes no credentials, so a valid session must not make it appear. A 401 or 403 would be a different — and worse — answer: it would confirm the endpoint exists and is merely locked. `identity.repository.ts` gained the one call (`devSession()`); nothing else in the layer moved, and no testid changed (`docs/TESTID_REGISTRY.md` records why the frontend's probe adds none).
 
-Note the coupling this creates on purpose: **a backend booted with `TRACEO_DEV_AUTOLOGIN=1` fails this test.** That is the intent — the flag is a local convenience, and CI is not local. It is also why the login specs stay honest: with the flag off the frontend's dev-session probe 404s and the login page renders exactly as before.
+Note the coupling this creates on purpose: **a backend booted with `TRACEO_DEV_AUTOLOGIN=1` fails this test.** That is the intent — the flag is a local convenience, and CI is not local. It also keeps `auth.spec.ts` honest: its assertions are about routes that must not exist, so they hold with the flag off, and nothing in the suite depends on a session being handed out for free.
 
 ---
 
@@ -982,3 +982,120 @@ Two API-only capabilities landed together (`docs/SECURITY_TESTING_PLAN.md` §14)
 - **`constants/states.ts`** — `security` joins `TEST_TECHNIQUES`, plus `RUN_KINDS`, `WEAKNESS_SEVERITIES`, `WEAKNESS_ACTIVITIES` and `COMPONENT_SOURCES`, all copied verbatim from the backend (§5: one vocabulary, no parallel list).
 - **`api/types.ts`** — `TestCase.weakness_id`, `Run.kind`, and the wire types of both surfaces, each documented with the contract line it comes from.
 - **`helpers/component-manifests.ts`** (new) — the independent oracle described above. Pure functions, no assertions, no API calls (§8, §11).
+
+---
+
+## Addendum — Web targets: testing a capability whose input is a running page
+
+`docs/WEB_TARGETS.md` added the first Traceo importer whose source is not a file: a URL, rendered by
+a Node/Playwright sidecar, from which requirements, endpoints, design facts and cases are written.
+It is covered by **one new spec**, `tests/web-target.spec.ts` (`@critical @regression`, with
+`@negative` and `@permission` sections inside it, exactly like the insight and security specs), plus
+one page object. No new lane and **no workflow edit** — the tag choice places the spec, and the
+existing `--grep-invert "@regression"` keeps the heavy discovery test out of the PR lane.
+
+### The hermeticity problem, and how it is solved
+
+The feature exists because of a public URL (the OrangeHRM demo login), and pointing the suite at
+that URL would have been the obvious thing to do. It is also disqualifying: a suite that browses a
+third-party host fails when a stranger deploys, leaks its timing into someone else's logs, and
+cannot run on a build node without egress. §8 and §10 leave no room for that.
+
+So the spec **serves its own target**. `helpers/local-web-target.ts` starts a Node HTTP server on
+loopback (ports 8010–8030 — 3002/8002 belong to the owner's live stack and 9000 to the demo SUT)
+serving `test-data/web-target-page.html` and three fixed JSON routes. The page has the one property
+that actually matters: **its markup is built with DOM calls**, so the served bytes contain no
+`form`, `input` or `button` tag text at all. A plain GET of it discovers nothing — measured in the
+same terms as the real target (3453 bytes, 0 forms) — which makes "the inventory contains a form" a
+proof that a browser rendered the page rather than an assumption that one did.
+
+The same server is the **safety oracle**. The contract says discovery navigates and reads and never
+submits a form or clicks a destructive control; that is a negative about the outside world, and the
+discovery report cannot be its own witness for it. The server therefore records every request it
+receives, and the spec asserts against *its* log: no non-GET request ever arrived, the destructive
+control's endpoint was never called, and the help link was never followed.
+
+### The three legitimate endings, none of them silent
+
+Loopback is exactly what the SSRF guard blocks, and a build node may have no browser. Rather than
+pretend either is impossible, `WebTargetRepository.createAndSettle` returns a discriminated union
+and the spec asserts the contract of whichever ending occurred:
+
+| Ending | What is asserted | Then |
+|---|---|---|
+| `refused` | the create was refused with `ssrf_blocked`/`invalid_url` at 422 and **no target row was created** — the guard applies to browser discovery, not only to spec URLs | the discovery battery is skipped with that reason printed |
+| `failed` | the job failed with `browser_discovery_unavailable`, the message names Node/Playwright, the target row survives with `status: "failed"` and its reason, and **no endpoint or case was persisted** | as above |
+| `completed` | the full battery below | — |
+
+A job that fails with any *other* code fails the test: this union exists to keep the interesting
+failure modes visible, never to turn a red run green. `test.skip()` is called **after** the
+assertions, so the run output states which ending happened and why.
+
+### What `web-target.spec.ts` proves
+
+1. **A browser really rendered the page.** The result reports ≥1 form on a document whose bytes
+   contain none, the page title is exact, and the controls and captured requests are there.
+2. **Every selected type is accounted for.** `cases_by_type` carries one key per requested type, and
+   a type with zero cases must appear in `skipped` **with a non-empty reason** — with exactly one
+   documented exception: `api`, whose product is the endpoint inventory rather than cases, is
+   accounted for by the endpoints it wrote. A silent empty track is indistinguishable from a broken
+   one, which is the whole reason `skipped` exists.
+3. **The counts are the truth.** `endpoints` equals the number of `source="dom"` rows in the
+   inventory and never exceeds the captured request count; `requirements` equals the project's
+   requirement count and sits between "one per form" and "one per form plus performance, design and
+   API"; the per-type case counts sum to the queue the run left behind; and the target's stored
+   `counts` agree with the job result — two views of one discovery.
+4. **Captured traffic is templated by the same rule as every other import.** No persisted path keeps
+   the concrete `1042` or the UUID the page fetched, at least one ends in `{id}`, and every
+   discovered method is `GET` — a `POST` or `DELETE` in the inventory would mean the discovery
+   submitted the form or clicked the destructive control, which is the safety rule observed from the
+   persisted side.
+5. **Grounding, adversarially (BO-07).** The oracle is built from the target's own inventory —
+   selectors, design fact ids, endpoint keys, the page URL — and is proved non-vacuous **and
+   fallible** before use: a synthetic case citing only fabricated artefacts must anchor to nothing.
+   Then every persisted case must cite ≥1 discovered artefact, every HTTP-shaped step must name a
+   discovered endpoint or the page itself (a selector match may not excuse an invented endpoint),
+   no requirement link may point outside the project, and a case with no link at all must be
+   grounded in a design fact.
+   Matching is textual over the case's steps on purpose: `TestStep` has fixed columns
+   (`method/path/request/assertions`), so a UI or functional case necessarily carries its selector
+   or fact id *inside* `request`. What matters is not where the token sits but that the discovery
+   produced it.
+6. **The design box is real.** The palette entries are hex colours with shares in (0,1]; every
+   contrast finding carries its `contrast:` fact id and measured ratio; and every failing,
+   achievable finding's suggested colour must itself reach 4.5:1 and be better than the original —
+   a suggestion that does not pass is worse than no suggestion.
+7. **The refusals are typed and name what is legal.** An unknown test type is `422
+   invalid_test_type` whose `errors` list names **all five** legal types; an empty list is refused
+   too (selecting nothing is not "discover everything"); an out-of-range viewport is
+   `invalid_viewport`; a `data:` URL is `invalid_url`. Because the server validates url → viewport →
+   test types, the body-shape refusals are requested with a literal **public IP** that is never
+   contacted — no DNS, no packet, no dependency on the node's SSRF policy.
+8. **The server is the gate.** A viewer's create is `403 forbidden`, nothing is persisted, and
+   **nothing reached the target server** — the capability check runs before the browser. The same
+   viewer can list web targets, because `view` and `import_spec` are different capabilities.
+
+### Layer changes
+
+- **`api/webtarget.repository.ts`** (new, `api.webTargets`) — `create()`, `list()`, `get()`,
+  `screenshot()`, `createAndWait()` and `createAndSettle()` (the union above), plus the pure readers
+  the grounding oracle is assembled from (`inventoryOf`, `designOf`, `discoveredSelectors`,
+  `designFactIds`, `capturedKeys`, `caseAnchors`, `apiStepKeys`, `failureCode`).
+- **`helpers/local-web-target.ts`** (new) + **`test-data/web-target-page.html`** — the hermetic
+  target and the safety oracle described above.
+- **`pages/target.page.ts`** (new) — the target screen. The five checkboxes are addressed by TYPE
+  (`target-type-{type}`), never by their explanatory copy; palette swatches by `data-colour` and
+  contrast rows by `data-fact-id`, never by rendered text.
+- **`pages/project-shell.page.ts`** — `target` joins `PROJECT_SECTIONS`, so the navigation and a11y
+  loops cover the new page for free (`a11y-baseline.json` gains an empty `project:target` entry).
+- **`api/http.ts`** — `getBinary()`, so the screenshot route can be asserted as **PNG magic bytes**
+  rather than as a mangled string; failures still surface as the same typed `ApiError`.
+- **`api/job-poller.ts`** — the `discover` budget (240s: a browser launch, a navigation, a
+  network-idle wait and a full-page screenshot happen *before* any builder runs). The kind selects a
+  budget, not an assertion.
+- **`constants/states.ts`** — `WEB_TARGET_TEST_TYPES` (the same five strings the UI checkboxes and
+  the 422's legal list use), `WEB_TARGET_STATUSES`, the `discover` job kind, and `design`/`a11y`/
+  `performance`/`localisation` joining `TEST_TECHNIQUES` in step with `backend/app/models.py`.
+- **`api/types.ts`** — the web-target wire types (`WebTarget`, `WebTargetDetail`, `WebTargetDesign`,
+  `WebTargetJobResult`, …) and `Job.error_code`, which is what makes a job failure branchable
+  instead of a sentence to regex.

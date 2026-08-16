@@ -365,12 +365,42 @@ type Component struct {
 	Status         string  `gorm:"default:active" json:"status"` // active|removed
 }
 
+// WebTarget — a URL this project tests (web target contract §2). The row is
+// created by the POST and updated by the discovery job, so a target is visible
+// (status "pending") while the browser is still rendering: a job that dies never
+// leaves the user with nothing.
+//
+// One row per (project, url, viewport): pointing Traceo at the same page again
+// RE-discovers that target instead of accumulating duplicates, which is what
+// keeps the requirements and cases derived from it stable.
+type WebTarget struct {
+	Base
+	OrganisationID string     `gorm:"index" json:"organisation_id"`
+	ProjectID      string     `gorm:"index;uniqueIndex:idx_web_target_identity" json:"project_id"`
+	URL            string     `gorm:"size:1000;uniqueIndex:idx_web_target_identity" json:"url"`
+	Viewport       string     `gorm:"size:20;default:1280x800;uniqueIndex:idx_web_target_identity" json:"viewport"`
+	Status         string     `gorm:"size:20;default:pending" json:"status"` // pending|discovered|failed
+	Title          string     `gorm:"size:500" json:"title"`
+	FinalURL       string     `gorm:"size:1000" json:"final_url"`
+	LastDiscovered *time.Time `gorm:"column:last_discovered_at" json:"last_discovered_at"`
+	ScreenshotKey  string     `gorm:"size:300" json:"screenshot_key"`
+	// Inventory is what the render actually found: the counts, the form/control/
+	// request digests and the design summary. Stored rather than recomputed —
+	// analysing a full-page raster costs seconds, and the detail route must
+	// answer from what THIS discovery saw, not from a re-render of a page that
+	// has since moved.
+	Inventory JSONMap `gorm:"type:text" json:"inventory"`
+	// LastError states why Status is "failed". A failed target with no reason is
+	// indistinguishable from one nobody ever looked at.
+	LastError *string `gorm:"type:text" json:"last_error"`
+}
+
 func All() []any {
 	return []any{
 		&Organisation{}, &User{}, &Project{}, &Environment{}, &SourceDocument{},
 		&Requirement{}, &ApiSpec{}, &Endpoint{}, &TestCase{}, &TestStep{},
 		&RequirementTestCase{}, &Run{}, &TestResult{}, &AuditEntry{},
-		&ApiKey{}, &Schedule{}, &Webhook{}, &Component{},
+		&ApiKey{}, &Schedule{}, &Webhook{}, &Component{}, &WebTarget{},
 	}
 }
 

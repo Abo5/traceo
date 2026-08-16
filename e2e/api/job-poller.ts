@@ -27,6 +27,11 @@ const KIND_TIMEOUTS_MS: Record<JobKind, number> = {
   security: 120_000,
   // parsing one uploaded manifest: no fan-out, no model, no network.
   components: 60_000,
+  // browser discovery: a real navigation, a network-idle wait, a font wait and
+  // a full-page screenshot BEFORE any builder runs — then up to five tracks of
+  // persistence over what was found. The widest budget in the suite, and the
+  // only one that includes launching a browser process.
+  discover: 240_000,
 };
 
 const DEFAULT_TIMEOUT_MS = 60_000;

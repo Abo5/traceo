@@ -65,6 +65,13 @@ export interface Job {
   message: string;
   result: unknown;
   error: string | null;
+  /**
+   * Machine-readable failure code, set only when the job raised a JobError
+   * (jobs.py). A bare error string cannot be branched on: "node: command not
+   * found" and "the page timed out" need different sentences in front of a
+   * user, and only the code knows which is which. Null on every other job.
+   */
+  error_code?: string | null;
   created_at: string;
 }
 
@@ -399,6 +406,222 @@ export interface ComponentImportResult {
   /** Declarations recorded with `version: null` because they were not pinned. */
   unpinned: number;
   total: number;
+}
+
+// --- web targets (modules/webtarget.py + tools/web-discovery/discover.mjs) ----
+// Point Traceo at a URL, tick the test types, and let a real browser render the
+// page. Everything below describes ONE discovery: what the browser found, what
+// was persisted from it, and what was deliberately not.
+//
+// The shapes are read defensively on purpose. The job result (§2 of the fixed
+// contract) is a closed, fully specified object and is typed as such; the
+// INVENTORY echoed by `GET /web-targets/{id}` is a summary whose nesting the
+// backend owns, so the optional aliases below let the suite read it without
+// pinning a key the contract never fixed. What the specs assert is the
+// grounding relation, never the spelling.
+
+/** One field of a discovered form — the selector is what a UI case must carry. */
+export interface WebTargetField {
+  /** CSS selector of the field, verbatim from the discovery. */
+  selector: string;
+  name?: string | null;
+  id?: string | null;
+  /** input type attribute (text, password, checkbox …). */
+  type?: string | null;
+  required?: boolean;
+  placeholder?: string | null;
+  /** Associated <label> text, when the page has one. */
+  label?: string | null;
+  maxlength?: number | null;
+  pattern?: string | null;
+}
+
+/** One discovered form. `fields` is the inventory a functional case grounds in. */
+export interface WebTargetForm {
+  selector: string;
+  name?: string | null;
+  id?: string | null;
+  action?: string | null;
+  method?: string | null;
+  fields: WebTargetField[];
+}
+
+/** A button or link the page exposes — never clicked by discovery, only read. */
+export interface WebTargetControl {
+  selector: string;
+  /** button | link | … as the discovery reports it. */
+  role?: string | null;
+  /** Accessible name; `accessible_name` is tolerated as an alias. */
+  name?: string | null;
+  accessible_name?: string | null;
+  href?: string | null;
+}
+
+/** One captured network request — the XHR/fetch inventory the api track uses. */
+export interface WebTargetRequest {
+  method: string;
+  /** Absolute URL as the page requested it. */
+  url: string;
+  /** Normalised Playwright resourceType (`xhr`, `fetch`, `document`, …). */
+  resource_type?: string | null;
+  /** Raw camelCase spelling, tolerated when reading a sidecar document directly. */
+  resourceType?: string | null;
+  status?: number | null;
+}
+
+/** One operation the api track derived from the captured traffic. */
+export interface WebTargetOperation {
+  method: string;
+  /** Templated path — concrete ids become `{id}` (collections.template_segment). */
+  path: string;
+  observed_count?: number;
+  origins?: string[];
+  statuses?: number[];
+}
+
+/** One palette entry of the design box: a surface colour and its share. */
+export interface WebTargetPaletteEntry {
+  hex: string;
+  rgb?: number[];
+  /** Fraction of the analysed raster this colour covers (0…1). */
+  share: number;
+  role?: string;
+}
+
+/**
+ * One WCAG contrast finding, with the fix. `suggested` is
+ * visual.nearest_accessible's colour — same hue and chroma, lightness only —
+ * so it is recognisably the designer's colour rather than a different one that
+ * happens to pass. `achievable: false` means the SURFACE has to change.
+ */
+export interface WebTargetContrastFinding {
+  /** design.py `Fact.id` — "contrast:#INK_on_#SURFACE". */
+  fact_id: string;
+  ink: string;
+  surface: string;
+  ratio: number;
+  passes_aa: boolean | null;
+  passes_aa_large?: boolean | null;
+  suggested: string;
+  ratio_after: number;
+  delta_e: number;
+  achievable: boolean;
+}
+
+/** A design fact extracted from the screenshot (design.py `Fact.id` = kind:subject). */
+export interface WebTargetDesignFact {
+  id: string;
+  kind?: string;
+  statement?: string;
+}
+
+/** The design box — palette, contrast findings and the facts behind them. */
+export interface WebTargetDesign {
+  /** How the raster was derived (crop to viewport, subsample step, sizes). */
+  raster?: Record<string, unknown>;
+  palette?: WebTargetPaletteEntry[];
+  contrast?: WebTargetContrastFinding[];
+  facts?: WebTargetDesignFact[];
+  fact_count?: number;
+  failing_contrast?: number;
+}
+
+/** The discovered inventory summary of one target (detail responses only). */
+export interface WebTargetInventory {
+  forms?: WebTargetForm[];
+  controls?: WebTargetControl[];
+  requests?: WebTargetRequest[];
+  /** The operations the api track derived — method + TEMPLATED path. */
+  endpoints?: WebTargetOperation[];
+  console_errors?: string[];
+  /** Milliseconds the discovery render took — the performance baseline. */
+  elapsed_ms?: number | null;
+  skipped?: WebTargetSkip[];
+}
+
+/** A web target as listed by GET /projects/{id}/web-targets. */
+export interface WebTarget {
+  id: string;
+  project_id: string;
+  url: string;
+  /** e.g. "1280x800" — the viewport the screenshot was taken at. */
+  viewport: string;
+  /** discovered | failed | pending (constants/states.ts WEB_TARGET_STATUSES). */
+  status: string;
+  title: string | null;
+  /** Where the navigation actually ended up (redirects included). */
+  final_url: string | null;
+  last_discovered_at: string | null;
+  /** Whether a screenshot is stored — the bytes come from the screenshot route. */
+  has_screenshot?: boolean;
+  /** Why the status is "failed" (`code: message`), null otherwise. */
+  error?: string | null;
+  /** The types this target was last discovered with. */
+  test_types?: string[];
+  /** forms / controls / requests / api_requests / endpoints of that discovery. */
+  counts?: Record<string, number>;
+  created_at?: string | null;
+}
+
+/** GET /web-targets/{id} — the target plus its inventory summary and design box. */
+export interface WebTargetDetail extends WebTarget {
+  inventory?: WebTargetInventory;
+  design?: WebTargetDesign;
+}
+
+/** POST /projects/{id}/web-targets. */
+export interface NewWebTarget {
+  url: string;
+  viewport?: string;
+  /**
+   * Subset of WEB_TARGET_TEST_TYPES. Typed as `string[]`, deliberately: the
+   * refusal path has to be able to send an illegal value without fighting the
+   * type system (same rationale as InsightGenerateBody.categories).
+   */
+  test_types: string[];
+}
+
+/**
+ * 202 body of POST /projects/{id}/web-targets. The target row exists (status
+ * "pending") the moment the job is accepted, so a job that dies never leaves
+ * the user with nothing to look at — hence `target_id` alongside `job_id`.
+ */
+export interface WebTargetAccepted {
+  job_id: string;
+  target_id: string;
+  /** The normalised, de-duplicated, canonically ordered type list. */
+  test_types: string[];
+}
+
+/**
+ * One test type the job did NOT produce anything for. `reason` is the whole
+ * point of the entry — a track that silently produces nothing is
+ * indistinguishable from a track that is broken.
+ */
+export interface WebTargetSkip {
+  type: string;
+  reason: string;
+}
+
+/** Job.result of a completed web-target discovery job (§2 of the contract). */
+export interface WebTargetJobResult {
+  target_id: string;
+  title: string | null;
+  /** What the browser found. */
+  forms: number;
+  controls: number;
+  requests: number;
+  /** What was persisted from it. */
+  endpoints: number;
+  requirements: number;
+  /** Cases per selected test type — one key per REQUESTED type, zero included. */
+  cases_by_type: Record<string, number>;
+  /** Types that produced nothing, each with the reason why. */
+  skipped: WebTargetSkip[];
+  /** Candidates the grounding gate refused — counted, never persisted (BO-07). */
+  discarded?: number;
+  /** Planned cases that already existed — deduplicated, not persisted. */
+  duplicates?: number;
 }
 
 // --- insight — the sixth engine (QA Insight Agent) ---------------------------

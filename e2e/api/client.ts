@@ -21,6 +21,7 @@ import { JobPoller } from './job-poller';
 import { ProjectsRepository } from './projects.repository';
 import { ReviewRepository } from './review.repository';
 import { SecurityRepository } from './security.repository';
+import { WebTargetRepository } from './webtarget.repository';
 
 export class ApiClient {
   readonly http: TraceoHttp;
@@ -36,6 +37,8 @@ export class ApiClient {
   readonly security: SecurityRepository;
   /** SBOM / lockfile inventory (S2) — the precondition of the CVE track. */
   readonly components: ComponentsRepository;
+  /** Browser discovery of a URL — the web-target surface (webtarget.repository.ts). */
+  readonly webTargets: WebTargetRepository;
   readonly review: ReviewRepository;
   readonly runs: RunsRepository;
 
@@ -60,6 +63,7 @@ export class ApiClient {
     this.insights = new InsightRepository(this.http, this.jobs);
     this.security = new SecurityRepository(this.http, this.jobs);
     this.components = new ComponentsRepository(this.http, this.jobs);
+    this.webTargets = new WebTargetRepository(this.http, this.jobs);
     this.review = new ReviewRepository(this.http);
     this.runs = new RunsRepository(this.http, this.jobs);
   }

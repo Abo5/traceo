@@ -1,0 +1,151 @@
+{
+  "url": "https://opensource-demo.orangehrmlive.com/web/index.php/auth/login",
+  "final_url": "https://opensource-demo.orangehrmlive.com/web/index.php/auth/login",
+  "title": "OrangeHRM",
+  "viewport": "1280x800",
+  "elapsed_ms": 2410,
+  "screenshot": "screen.png",
+  "engine": "chromium",
+  "forms": [
+    {
+      "selector": "form.oxd-form",
+      "name": "login",
+      "id": "",
+      "action": "/web/index.php/auth/validate",
+      "method": "post",
+      "submit": "form.oxd-form button[type=submit]",
+      "novalidate": true,
+      "fields": [
+        {
+          "selector": "input[name=username]",
+          "name": "username",
+          "id": "",
+          "type": "text",
+          "required": true,
+          "placeholder": "Username",
+          "label": "Username",
+          "maxlength": 64,
+          "pattern": "",
+          "autocomplete": "username"
+        },
+        {
+          "selector": "input[name=password]",
+          "name": "password",
+          "id": "",
+          "type": "password",
+          "required": true,
+          "placeholder": "Password",
+          "label": "Password",
+          "maxlength": null,
+          "pattern": ""
+        },
+        {
+          "selector": "input[name=_token]",
+          "name": "_token",
+          "id": "",
+          "type": "hidden",
+          "required": false,
+          "placeholder": "",
+          "label": "",
+          "maxlength": null,
+          "pattern": ""
+        }
+      ]
+    },
+    {
+      "selector": "form#search",
+      "name": "",
+      "id": "search",
+      "action": "",
+      "method": "get",
+      "fields": [
+        {
+          "selector": "form#search input[type=search]",
+          "name": "q",
+          "id": "",
+          "type": "search",
+          "required": false,
+          "placeholder": "Search",
+          "label": "Search",
+          "maxlength": 120,
+          "pattern": "^[\\w ]+$"
+        }
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "selector": "form.oxd-form button[type=submit]",
+      "role": "button",
+      "name": "Login",
+      "href": ""
+    },
+    {
+      "selector": "p.oxd-text--p.orangehrm-login-forgot-header",
+      "role": "button",
+      "name": "Forgot your password?",
+      "href": ""
+    },
+    {
+      "selector": "a[href='https://www.linkedin.com/company/orangehrm']",
+      "role": "link",
+      "accessible_name": "LinkedIn",
+      "href": "https://www.linkedin.com/company/orangehrm"
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "url": "https://opensource-demo.orangehrmlive.com/web/index.php/auth/login",
+      "resourceType": "document",
+      "status": 200,
+      "timing": {"duration_ms": 412}
+    },
+    {
+      "method": "GET",
+      "url": "https://opensource-demo.orangehrmlive.com/web/dist/js/chunk-vendors.js",
+      "resourceType": "script",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "url": "https://opensource-demo.orangehrmlive.com/web/index.php/api/v2/admin/validation/user-name?userName=Admin",
+      "resourceType": "xhr",
+      "status": 200,
+      "fromCache": false
+    },
+    {
+      "method": "GET",
+      "url": "https://opensource-demo.orangehrmlive.com/web/index.php/api/v2/pim/employees/7",
+      "resourceType": "xhr",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "url": "https://opensource-demo.orangehrmlive.com/web/index.php/api/v2/pim/employees/512",
+      "resourceType": "xhr",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "url": "https://opensource-demo.orangehrmlive.com/web/index.php/api/v2/auth/session?remember=false",
+      "resourceType": "fetch",
+      "status": 201
+    },
+    {
+      "method": "GET",
+      "url": "https://cdn.orangehrm.example/web/index.php/api/v2/core/i18n/messages",
+      "resourceType": "fetch",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "url": "https://opensource-demo.orangehrmlive.com/web/images/logo.png",
+      "resourceType": "image",
+      "status": 200
+    }
+  ],
+  "console_errors": [
+    "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ]
+}

@@ -36,6 +36,30 @@ class Settings:
     RUN_CONCURRENCY = int(os.getenv("TRACEO_RUN_CONCURRENCY", "8"))
     EVIDENCE_MAX_BYTES = int(os.getenv("TRACEO_EVIDENCE_MAX_BYTES", "16384"))
 
+    # --- Web target discovery (browser sidecar) --------------------------------
+    # The target page is rendered by a Node/Playwright sidecar shared by both
+    # backends; a plain HTTP GET of a SPA returns a shell with zero forms, so
+    # server-side HTML parsing would discover nothing at all.
+    WEB_DISCOVERY_SCRIPT = os.getenv(
+        "TRACEO_WEB_DISCOVERY_SCRIPT",
+        str(BASE_DIR.parent / "tools" / "web-discovery" / "discover.mjs"))
+    NODE_BIN = os.getenv("TRACEO_NODE_BIN", "node")
+    WEB_DISCOVERY_TIMEOUT_S = float(os.getenv("TRACEO_WEB_DISCOVERY_TIMEOUT_S", "30"))
+    # Same SSRF rule the spec fetcher applies; "1" allows private/loopback hosts
+    # so the stack can be pointed at a local application under test.
+    ALLOW_PRIVATE_TARGETS = os.getenv("TRACEO_ALLOW_PRIVATE_TARGETS", "0") == "1"
+    # The stated page-load budget the performance track asserts. The observed
+    # elapsed_ms is recorded as the baseline beside it; when the baseline is
+    # already over budget the case fails on its first run, which is the honest
+    # outcome — the page is the defect, not the assertion.
+    PAGE_LOAD_BUDGET_MS = int(os.getenv("TRACEO_PAGE_LOAD_BUDGET_MS", "3000"))
+    # Design extraction is exact integer arithmetic over every pixel, so its cost
+    # is linear in the raster. A full-page screenshot can be several megapixels;
+    # above this budget the analysed raster is subsampled by an integer step
+    # (nearest neighbour, so every analysed colour is still a colour the page
+    # actually painted) and the step is reported with the facts.
+    DESIGN_MAX_PIXELS = int(os.getenv("TRACEO_DESIGN_MAX_PIXELS", "1200000"))
+
     CORS_ORIGINS = os.getenv("TRACEO_CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
 
     SEED_DEMO = os.getenv("TRACEO_SEED_DEMO", "1") == "1"
