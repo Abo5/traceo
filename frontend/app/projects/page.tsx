@@ -34,7 +34,7 @@ export default function ProjectsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [form, setForm] = useState({ name: "" });
+  const [form, setForm] = useState({ name: "", url: "" });
   // A new project is for every kind of testing until its owner narrows it —
   // the same default the backend applies when the field is omitted.
   const [types, setTypes] = useState<TestType[]>([...TEST_TYPES]);
@@ -67,6 +67,7 @@ export default function ProjectsPage() {
   function openCreate() {
     setCreateError(null);
     setTypes([...TEST_TYPES]);
+    setForm({ name: "", url: "" });
     setCreateOpen(true);
   }
 
@@ -87,9 +88,18 @@ export default function ProjectsPage() {
         body: { name: form.name.trim(), test_types: types },
       });
       setCreateOpen(false);
-      setForm({ name: "" });
+      const target = form.url.trim();
+      setForm({ name: "", url: "" });
       setTypes([...TEST_TYPES]);
-      router.push(`/projects/${p.id}`);
+      // A URL was given, so go straight to the screen that runs it and let that
+      // screen start the discovery. Starting it from here would be a second
+      // place that launches a job — and the error handling, the progress bar
+      // and the result card all already live there.
+      router.push(
+        target
+          ? `/projects/${p.id}/target?url=${encodeURIComponent(target)}&start=1`
+          : `/projects/${p.id}`,
+      );
     } catch (err: any) {
       setCreateError(err?.message || String(err));
     } finally {
@@ -290,12 +300,39 @@ export default function ProjectsPage() {
               </div>
             )}
           </div>
+          <Field
+            label="Page URL (optional)"
+            hint="Give a URL and Traceo opens it in a browser and starts testing it right away. You can add one later instead."
+            testId="projects-create-url-input"
+          >
+            <Input
+              type="url"
+              maxLength={1000}
+              placeholder="https://example.com/login"
+              value={form.url}
+              onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
+            />
+          </Field>
+          {form.url.trim() !== "" && !/^https?:\/\/\S+$/i.test(form.url.trim()) && (
+            <div
+              data-testid="projects-create-url-hint"
+              style={{ fontSize: 12, color: "var(--warning)" }}
+            >
+              Enter an absolute http:// or https:// URL, or leave it empty.
+            </div>
+          )}
           {createError && <div className="error-text" data-testid="projects-create-error-text">{createError}</div>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <Button variant="ghost" testId="projects-create-cancel-button" onClick={() => setCreateOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" testId="projects-create-submit-button" disabled={creating || !form.name.trim() || types.length === 0}>
+            <Button type="submit" variant="primary" testId="projects-create-submit-button" disabled={
+                creating ||
+                !form.name.trim() ||
+                types.length === 0 ||
+                (form.url.trim() !== "" && !/^https?:\/\/\S+$/i.test(form.url.trim()))
+              }
+            >
               {creating ? "Creating…" : "Create project"}
             </Button>
           </div>

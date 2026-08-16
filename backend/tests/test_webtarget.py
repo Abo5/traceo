@@ -45,8 +45,11 @@ def recorded_payload():
 
 @pytest.fixture()
 def project(client, register_org, create_project):
+    """automation="manual" on purpose: these tests are about the tracks, and the
+    autopilot chain would confirm their requirements out from under them. The
+    handover itself is tested separately, in auto mode."""
     headers = register_org("Web Target Org")
-    return headers, create_project(headers, "Web Target Project")
+    return headers, create_project(headers, "Web Target Project", automation="manual")
 
 
 @pytest.fixture(autouse=True)
@@ -661,3 +664,51 @@ def test_endpoints_from_requests_ignores_non_api_resources(recorded_payload):
     assert {op["source"] for op in ops} == {"dom"}
     assert all(op["path"].startswith("/") for op in ops)
     assert not any("logo" in op["path"] for op in ops)
+
+
+def test_discovery_hands_over_to_the_autopilot_in_auto_mode(client, register_org,
+                                                            create_project, sidecar):
+    """A crawl's requirements must not stop at "extracted".
+
+    The whole point of pointing Traceo at a URL and walking away is that the
+    chain continues: confirm what the crawl extracted, then run the generator
+    over it. Without this the URL path silently ends at the deterministic
+    builders and the model-assisted cases are never produced — a difference the
+    counts alone would not reveal, since the deterministic ones are still there.
+    It still stops at DRAFT cases: approval and runs stay manual (BO-07).
+    """
+    headers = register_org("Autopilot Org")
+    pid = create_project(headers, "Auto Project", automation="auto")
+
+    job, _accepted = run(client, headers, pid, list(TEST_TYPES))
+    assert job["status"] == "completed", job.get("error")
+    assert job["result"]["auto_confirmed"] >= 1
+
+    states = {r["state"] for r in client.get(
+        f"/v1/projects/{pid}/requirements", headers=headers).json()}
+    assert states == {"confirmed"}, f"the crawl's requirements were left at {states}"
+
+    entries = client.get("/v1/audit", headers=headers).json()["items"]
+    actions = {e["action"]: e["detail"] for e in entries}
+    assert "auto.requirements.confirm_all" in actions
+    assert actions["auto.requirements.confirm_all"]["source"] == "web_target"
+
+    cases = client.get(f"/v1/projects/{pid}/test-cases?limit=500",
+                       headers=headers).json()["test_cases"]
+    assert cases and all(c["state"] == "draft" for c in cases), \
+        "the autopilot must stop at draft — approval stays manual"
+
+
+def test_manual_mode_leaves_the_crawls_requirements_alone(client, register_org,
+                                                          create_project, sidecar):
+    """automation="manual" means manual: nothing is confirmed on the user's behalf."""
+    headers = register_org("Manual Org")
+    pid = create_project(headers, "Manual Project", automation="manual")
+
+    job, _accepted = run(client, headers, pid, list(TEST_TYPES))
+    assert job["status"] == "completed", job.get("error")
+    assert "auto_confirmed" not in job["result"]
+
+    states = {r["state"] for r in client.get(
+        f"/v1/projects/{pid}/requirements", headers=headers).json()}
+    assert states == {"extracted"}

@@ -45,6 +45,7 @@ import (
 	"traceo/internal/httpx"
 	"traceo/internal/jobs"
 	"traceo/internal/models"
+	"traceo/internal/modules/autopilot"
 	"traceo/internal/modules/design"
 	"traceo/internal/modules/discovery"
 	"traceo/internal/modules/generation"
@@ -928,6 +929,12 @@ func RunDiscovery(job *jobs.Job, orgID, userID, projectID, targetID, target, vie
 		"url": target, "viewport": viewport, "test_types": testTypes,
 		"endpoints": endpointCount, "requirements": requirementCount,
 		"cases": totalCases, "discarded": discarded})
+	// Autopilot chain (automation contract 4a/4b) — auto mode only. Without it
+	// the crawl's requirements stay "extracted" and the model-assisted generator
+	// never runs. It still stops at DRAFT cases: approval and runs stay manual.
+	job.Set(0.99, "Autopilot: confirming extracted requirements")
+	autopilot.AfterWebTarget(projectID, orgID, userID)
+
 	job.Set(0.99, fmt.Sprintf("%d cases from %d forms, %d endpoints",
 		totalCases, len(inv.Forms), endpointCount))
 	return result, nil

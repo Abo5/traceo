@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, HTMLAttributes, ReactNode } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { API, ApiError, api, getToken, pollJob } from "@/lib/api";
 import { useCan } from "@/lib/permissions";
 import { useProject } from "@/lib/project-context";
@@ -240,6 +240,8 @@ const VIEWPORTS = ["1280x800", "1440x900", "1920x1080", "1024x768", "390x844"];
 
 export default function TargetPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
+  const search = useSearchParams();
   const canDo = useCan();
 
   const L = {
@@ -299,6 +301,10 @@ export default function TargetPage() {
   // refuses a type the project is not set up for, so offering it here would be
   // offering a control that always fails.
   const { project } = useProject();
+  // Until the project has loaded there is no declaration to read, and assuming
+  // one would be a guess: projectTestTypes(null) answers "all five", which a
+  // narrowed project would rightly refuse. So nothing starts until it is known.
+  const projectLoaded = project != null;
   const declaredTypes = projectTestTypes(project);
   const [types, setTypes] = useState<Set<TestType> | null>(null);
   const selected = types ?? new Set<TestType>(declaredTypes);
@@ -416,7 +422,35 @@ export default function TargetPage() {
 
   const trimmed = url.trim();
   const urlOk = /^https?:\/\/\S+$/i.test(trimmed);
-  const canStart = urlOk && selected.size > 0 && !job;
+  const canStart = urlOk && selected.size > 0 && !job && projectLoaded;
+
+  // Arriving from the New Project dialog with ?url=…&start=1: prefill and run.
+  // The query is cleared first so a refresh does not launch a second discovery,
+  // and the guard is a ref rather than state because two renders inside one
+  // navigation would otherwise both pass the check.
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (autoStarted.current) return;
+    const wanted = (search?.get("url") ?? "").trim();
+    if (!wanted) return;
+    autoStarted.current = true;
+    setUrl(wanted);
+    if (search?.get("start") === "1") {
+      router.replace(`/projects/${id}/target`);
+      setPendingAutoStart(wanted);
+    }
+  }, [search, router, id]);
+
+  // The start itself waits for the URL to be in state, so the request body and
+  // the field the user sees can never disagree.
+  const [pendingAutoStart, setPendingAutoStart] = useState<string | null>(null);
+  useEffect(() => {
+    if (!pendingAutoStart || url.trim() !== pendingAutoStart) return;
+    if (!projectLoaded) return; // wait for the declaration, then start
+    setPendingAutoStart(null);
+    if (selected.size > 0) void start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAutoStart, url, projectLoaded]);
 
   async function start() {
     setStartError(null);

@@ -175,6 +175,45 @@ test.describe('project test types — UI @regression', () => {
     await expect(asQaLead.getByTestId('target-types-scope-hint')).toBeVisible();
   });
 
+  test('a URL given at creation lands on Target and runs by itself', async ({
+    asQaLead,
+    api,
+  }) => {
+    // The point of the field: a project and its first discovery in one action,
+    // with no hunt through the sidebar for where a URL goes.
+    const projects = new ProjectsPage(asQaLead);
+    const name = `tt-oneshot-${uniqueSuffix()}`;
+
+    await projects.goto();
+    await expect(projects.root).toBeVisible({ timeout: 20_000 });
+    await asQaLead.getByTestId('projects-list-create-button').click();
+    await asQaLead.getByTestId('projects-create-name-input').fill(name);
+    await asQaLead
+      .getByTestId('projects-create-url-input')
+      .fill('https://traceo-unreached.invalid/page');
+    await asQaLead.getByTestId('projects-create-submit-button').click();
+
+    // it lands on the discovery screen with the URL already in the field
+    await asQaLead.waitForURL(/\/projects\/[0-9a-f-]{36}\/target/, { timeout: 20_000 });
+    await expect(asQaLead.getByTestId('target-url-input'))
+      .toHaveValue('https://traceo-unreached.invalid/page', { timeout: 20_000 });
+
+    // and it really started one: the target row exists without anyone pressing
+    // Start. (The host does not resolve, so the JOB fails — that is the target's
+    // problem, not the flow's, and the row is the evidence the flow ran.)
+    const created = (await api.as('qa_lead').projects.list()).find((p) => p.name === name);
+    expect(created, 'the project must exist').toBeTruthy();
+    await expect
+      .poll(async () => (await api.as('qa_lead').webTargets.list(created!.id)).length, {
+        timeout: 30_000,
+        message: 'the discovery must start without a second click',
+      })
+      .toBe(1);
+
+    // the query string is cleared, so a refresh cannot launch a second discovery
+    expect(new URL(asQaLead.url()).search).toBe('');
+  });
+
   test('a viewer sees the declaration but cannot change it @permission', async ({
     asViewer,
     api,

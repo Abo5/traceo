@@ -79,7 +79,30 @@ produces nothing is indistinguishable from a track that is broken.
 inventory is therefore a correct outcome, not a silent failure — `e2e/tests/web-target.spec.ts`
 encodes exactly that exception and requires a stated reason from every other track.
 
-## 4. The API surface
+## 4. Starting from the New Project dialog
+
+The dialog takes an optional **Page URL**. Given one, creating the project
+navigates to `/projects/{id}/target?url=…&start=1`, and that screen prefills the
+field and starts the discovery itself — one place launches a job, so the error
+handling, the progress and the result card stay in one implementation. The query
+string is cleared before the start, so a refresh cannot launch a second run, and
+nothing starts until the project has loaded: its declared test types are what the
+request carries, and guessing them would send types a narrowed project refuses.
+
+## 5. After the discovery: the autopilot
+
+A crawl leaves its requirements in `extracted`. On a project with
+`automation: "auto"` (the default) the discovery then runs the same chain the
+document and spec paths run — confirm every extracted requirement
+(`auto.requirements.confirm_all`, audit detail `source: "web_target"`), then the
+generation trigger (`auto.generate`) over the confirmed set. Without it the URL
+path would stop at the deterministic builders and the model-assisted cases would
+never be produced.
+
+It stops at **draft** cases. Approval and runs stay manual (BO-07), and
+`automation: "manual"` skips the chain entirely.
+
+## 6. The API surface
 
 | Route | Capability | Returns |
 |---|---|---|
@@ -127,7 +150,7 @@ target instead of accumulating duplicates, which is what keeps the requirements 
 from it stable. The row is created by the POST (status `pending`), so a job that dies still leaves
 something on screen that explains itself — `status: "failed"` with the reason in `error`.
 
-## 5. The browser requirement — and what happens without it
+## 7. The browser requirement — and what happens without it
 
 Discovery runs `node tools/web-discovery/discover.mjs --url <url> --out <dir>`. Both backends shell
 out to the **same** script: parity is about the API surface and the persistence, not about porting a
@@ -156,7 +179,7 @@ important error in the feature: an empty success would report "this page has not
 is the single most misleading thing the product could say. Any of these conditions produces it: no
 `node` on `PATH`, no `playwright` module, no Chromium binary, or a missing sidecar script.
 
-## 6. Discovery is read-only
+## 8. Discovery is read-only
 
 The sidecar navigates, waits for network idle and fonts, disables animation, reads the DOM and takes
 one full-page screenshot. It **never** submits a form, clicks a control, types, or follows a link.
@@ -170,7 +193,7 @@ public URL cannot redirect the browser onto an internal host. A guard that lived
 would be bypassed by every other caller of the module; a guard that lived only in the parent would
 be bypassed by a redirect.
 
-## 7. The design box
+## 9. The design box
 
 With `ui` selected, the stored target carries a `design` payload derived from the screenshot — the
 same facts the UI cases assert, so what the screen shows and what the suite checks cannot drift:
@@ -187,7 +210,7 @@ same facts the UI cases assert, so what the screen shows and what the suite chec
 The UI renders this as `target-design-section`; colours are addressed on `data-colour` and contrast
 rows on `data-fact-id` (the design fact id), never on rendered copy.
 
-## 8. How this is verified
+## 10. How this is verified
 
 `e2e/tests/web-target.spec.ts` (`@critical @regression`) is **hermetic**: it serves its own page from
 `e2e/test-data/web-target-page.html` on loopback (ports 8010–8030) and never touches the public
@@ -208,7 +231,7 @@ Two environment notes:
 - without Node/Playwright it asserts the `browser_discovery_unavailable` path instead — including
   that the failed target row keeps its reason and that nothing partial was persisted.
 
-## 9. The honest limits
+## 11. The honest limits
 
 - **A rendered page is one state.** Discovery sees the page as it loads, not what happens after a
   login, a tab switch or a modal. Multi-state discovery would require driving the application, and

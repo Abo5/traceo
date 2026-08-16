@@ -55,12 +55,13 @@ from ..config import settings
 from ..db import SessionLocal, get_db
 from ..deps import audit, get_project_scoped, require
 from ..jobs import JobError
-from ..models import (Endpoint, Requirement, RequirementTestCase, TestCase, TestStep, User,
-                      WebTarget)
+from ..models import (Endpoint, Project, Requirement, RequirementTestCase, TestCase,
+                      TestStep, User, WebTarget)
 from . import design, security as securitymod
 from . import generation
 from .collections import _param, _path_params, template_segment
 from .discovery import FIDELITY, _assert_public_host
+from .ingestion import confirm_all_extracted
 from ..testtypes import (TEST_TYPES, project_test_types,  # noqa: F401  (re-exported)
                          validate_test_types)
 from .imageio import PngError, read_png
@@ -1198,7 +1199,27 @@ def run_discovery_job(job, org_id: str, user_id: str, project_id: str, target_id
               {"url": url, "viewport": viewport, "test_types": list(test_types),
                "endpoints": endpoint_count, "requirements": requirement_count,
                "cases": sum(cases_by_type.values()), "discarded": discarded})
+
+        # -- autopilot chain (contract 4a/4b), the same one the document and spec
+        #    paths run. A crawl leaves requirements in "extracted"; without this
+        #    the model-assisted generator never sees them and the URL path stops
+        #    at whatever the deterministic builders produced. Auto still stops at
+        #    DRAFT cases — approval and runs stay manual (BO-07).
+        db.flush()
+        project = db.get(Project, project_id)
+        automation_on = project is not None and project.automation == "auto"
+        if automation_on:
+            job.message = "Autopilot: confirming extracted requirements"
+            confirmed = confirm_all_extracted(db, org_id, project_id)
+            audit(db, org_id, user_id, "auto.requirements.confirm_all", "project",
+                  project_id, {"count": confirmed, "source": "web_target"})
+            result["auto_confirmed"] = confirmed
         db.commit()
+
+        if automation_on:
+            gen_job_id = generation.try_autopilot_generation(db, org_id, user_id, project_id)
+            if gen_job_id:
+                result["generation_job_id"] = gen_job_id
         job.progress, job.message = 0.99, (
             f"{sum(cases_by_type.values())} cases from {len(inv['forms'])} forms, "
             f"{endpoint_count} endpoints")

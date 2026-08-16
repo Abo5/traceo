@@ -58,6 +58,8 @@ sessions from them.
 | `projects-create-type-{functional,api,ui,performance,security}` | checkbox | Toggle a type — all five on by default |
 | `projects-create-type-{type}-hint` | text | What picking that type commits the project to |
 | `projects-create-types-hint` | text | Shown when every type is cleared (submit is disabled) |
+| `projects-create-url-input` | Input | Optional page URL — creating with one lands on Target and starts the discovery |
+| `projects-create-url-hint` | text | Shown when the URL is not absolute http(s) (submit is disabled) |
 | `projects-create-error-text` | text | Creation failure message |
 | `projects-create-cancel-button` | Button | Close the dialog |
 | `projects-create-submit-button` | Button | Create the project |

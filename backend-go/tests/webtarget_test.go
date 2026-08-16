@@ -931,3 +931,78 @@ func uuidLike() string {
 	uuidCounter++
 	return fmt.Sprintf("%d%d", time.Now().UnixNano(), uuidCounter)
 }
+
+// TestWebTargetHandsOverToTheAutopilotInAutoMode: a crawl's requirements must
+// not stop at "extracted". The point of pointing Traceo at a URL and walking
+// away is that the chain continues — confirm what the crawl extracted, then run
+// the generator over it. Without this the URL path silently ends at the
+// deterministic builders, a difference the case counts alone would not reveal.
+// It still stops at DRAFT cases: approval and runs stay manual (BO-07).
+func TestWebTargetHandsOverToTheAutopilotInAutoMode(t *testing.T) {
+	withSidecar(t, recordedPayload(t))
+	headers := registerOrg(t, "Autopilot Org")
+	w := do(t, "POST", "/v1/projects", M{"name": "Auto Project", "automation": "auto"}, headers)
+	if w.Code != 201 && w.Code != 200 {
+		t.Fatalf("create project: %d %s", w.Code, w.Body.String())
+	}
+	pid, _ := jsonMap(t, w)["id"].(string)
+
+	job, _ := runTarget(t, headers, pid, webtarget.TestTypes)
+	if job["status"] != "completed" {
+		t.Fatalf("job = %v", job)
+	}
+
+	var requirements []models.Requirement
+	db.DB.Where("project_id = ?", pid).Find(&requirements)
+	if len(requirements) == 0 {
+		t.Fatal("the crawl produced no requirements")
+	}
+	for _, r := range requirements {
+		if r.State != "confirmed" {
+			t.Fatalf("requirement %s left at %q — the autopilot did not run",
+				r.ExternalID, r.State)
+		}
+	}
+
+	var entries []models.AuditEntry
+	db.DB.Where("action = ? AND object_id = ?", "auto.requirements.confirm_all", pid).
+		Find(&entries)
+	if len(entries) == 0 {
+		t.Fatal("the auto confirm step left no audit entry")
+	}
+	if entries[0].Detail["source"] != "web_target" {
+		t.Fatalf("audit detail = %v", entries[0].Detail)
+	}
+
+	var cases []models.TestCase
+	db.DB.Where("project_id = ?", pid).Find(&cases)
+	if len(cases) == 0 {
+		t.Fatal("no cases were written")
+	}
+	for _, c := range cases {
+		if c.State != "draft" {
+			t.Fatalf("case %q is %q — the autopilot must stop at draft", c.Title, c.State)
+		}
+	}
+}
+
+// TestWebTargetManualModeLeavesTheCrawlsRequirementsAlone: manual means manual.
+func TestWebTargetManualModeLeavesTheCrawlsRequirementsAlone(t *testing.T) {
+	withSidecar(t, recordedPayload(t))
+	headers, pid := webTargetProject(t) // createProject pins automation "manual"
+
+	if job, _ := runTarget(t, headers, pid, webtarget.TestTypes); job["status"] != "completed" {
+		t.Fatalf("job = %v", job)
+	}
+
+	var requirements []models.Requirement
+	db.DB.Where("project_id = ?", pid).Find(&requirements)
+	if len(requirements) == 0 {
+		t.Fatal("the crawl produced no requirements")
+	}
+	for _, r := range requirements {
+		if r.State != "extracted" {
+			t.Fatalf("manual mode confirmed %s on the user's behalf", r.ExternalID)
+		}
+	}
+}
