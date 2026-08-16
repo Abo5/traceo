@@ -61,14 +61,15 @@ from . import design, security as securitymod
 from . import generation
 from .collections import _param, _path_params, template_segment
 from .discovery import FIDELITY, _assert_public_host
+from ..testtypes import (TEST_TYPES, project_test_types,  # noqa: F401  (re-exported)
+                         validate_test_types)
 from .imageio import PngError, read_png
 from .visual import Image, nearest_accessible
 
 router = APIRouter()
 
-# The five test types the owner asked for, in the order the UI shows them.
-TEST_TYPES: tuple[str, ...] = ("functional", "api", "ui", "performance", "security")
-DEFAULT_TEST_TYPES: tuple[str, ...] = ("functional", "ui")
+# The five test types are declared per project in app.testtypes and re-exported
+# here, where the discovery job and its tests have always read them.
 DEFAULT_VIEWPORT = "1280x800"
 _VIEWPORT_RE = re.compile(r"^(\d{3,5})x(\d{3,5})$")
 _MIN_VIEWPORT = (320, 240)
@@ -117,28 +118,6 @@ class WebTargetCreate(BaseModel):
     url: str
     viewport: str | None = None
     test_types: list[str] | None = None
-
-
-def validate_test_types(requested: list[str] | None) -> list[str]:
-    """Normalise the requested types, or raise 422 naming the legal list.
-
-    An unknown type is rejected rather than ignored: silently dropping
-    "perfomance" would run four tracks and report success for five."""
-    values = [str(t).strip().lower() for t in (requested or []) if str(t).strip()]
-    unknown = [t for t in values if t not in TEST_TYPES]
-    if unknown:
-        raise HTTPException(422, detail={
-            "code": "invalid_test_type",
-            "message": f"Unknown test type(s): {', '.join(sorted(set(unknown)))}.",
-            "errors": list(TEST_TYPES)})
-    if not values:
-        raise HTTPException(422, detail={
-            "code": "invalid_test_type",
-            "message": "Select at least one test type.",
-            "errors": list(TEST_TYPES)})
-    # de-duplicate, keep the canonical order so the job runs the tracks in a
-    # stable sequence whatever order the client listed them in
-    return [t for t in TEST_TYPES if t in set(values)]
 
 
 def validate_viewport(raw: str | None) -> str:
@@ -1272,10 +1251,22 @@ def _target_scoped(target_id: str, user: User, db: Session) -> WebTarget:
 def create_web_target(project_id: str, body: WebTargetCreate,
                       user: User = Depends(require("import_spec")),
                       db: Session = Depends(get_db)):
-    get_project_scoped(project_id, user, db)
+    project = get_project_scoped(project_id, user, db)
     url = validate_target_url(body.url)
     viewport = validate_viewport(body.viewport)
-    test_types = validate_test_types(body.test_types)
+    declared = project_test_types(project)
+    # Omitting the types runs what the project declared it is for; asking for a
+    # type it excluded is refused, not quietly dropped. Silently narrowing would
+    # report success for a track that never ran.
+    test_types = validate_test_types(body.test_types) if body.test_types is not None \
+        else list(declared)
+    outside = [t for t in test_types if t not in declared]
+    if outside:
+        raise HTTPException(422, detail={
+            "code": "test_type_not_in_project",
+            "message": (f"This project is not set up for: {', '.join(outside)}. "
+                        "Change its test types first."),
+            "errors": declared})
 
     target = db.scalars(select(WebTarget).where(
         WebTarget.project_id == project_id,

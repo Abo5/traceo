@@ -47,6 +47,13 @@ class Project(TimestampMixin, Base):
     # (BO-07).
     automation: Mapped[str] = mapped_column(String(10), default="auto",
                                             server_default="auto")  # auto|manual
+    # Which of the five kinds of testing this project is for (app/testtypes.py).
+    # Declared when the project is created and editable afterwards; the engines
+    # that produce cases read it, so narrowing it narrows what the project does.
+    # An empty list means the same as all five — a project that had nothing said
+    # about it predates the field, and reading that as "test nothing" would
+    # silently disable every existing project.
+    test_types: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
     status: Mapped[str] = mapped_column(String(20), default="active")  # active|archived
 
 

@@ -17,6 +17,7 @@ import type {
   RunState,
   SpecFormat,
   TestCaseState,
+  WebTargetTestType,
   WeaknessActivity,
   WeaknessSeverity,
 } from '../constants/states';
@@ -82,6 +83,12 @@ export interface Project {
   name: string;
   /** Autopilot mode — "auto" chains confirm_all→generate; "manual" changes nothing. */
   automation: 'auto' | 'manual';
+  /**
+   * Which of the five kinds of testing this project is for. Always returned
+   * non-empty and in canonical order; a project that declared nothing reads as
+   * all five (backend/app/testtypes.py::project_test_types).
+   */
+  test_types: WebTargetTestType[];
   status: 'active' | 'archived';
   created_at: string | null;
   updated_at: string | null;
@@ -91,6 +98,8 @@ export interface NewProject {
   name: string;
   /** Optional — server default is "auto"; test fixtures pin "manual" (see project.factory.ts). */
   automation?: 'auto' | 'manual';
+  /** Optional — omitted means all five. */
+  test_types?: string[];
 }
 
 export interface Environment {
@@ -577,8 +586,11 @@ export interface NewWebTarget {
    * Subset of WEB_TARGET_TEST_TYPES. Typed as `string[]`, deliberately: the
    * refusal path has to be able to send an illegal value without fighting the
    * type system (same rationale as InsightGenerateBody.categories).
+   *
+   * OPTIONAL since a project declares its own types: omitting it runs exactly
+   * what the project is for.
    */
-  test_types: string[];
+  test_types?: string[];
 }
 
 /**

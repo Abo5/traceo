@@ -42,6 +42,24 @@ func (l *JSONList) Scan(v any) error {
 	return scanJSON(v, l)
 }
 
+// StringList is a JSON array of strings. JSONList would store the same bytes,
+// but every reader would then have to assert each element back to a string;
+// the columns that hold a fixed vocabulary use this instead so the type says
+// what is in them.
+type StringList []string
+
+func (l StringList) Value() (driver.Value, error) {
+	if l == nil {
+		l = StringList{}
+	}
+	b, err := json.Marshal(l)
+	return string(b), err
+}
+
+func (l *StringList) Scan(v any) error {
+	return scanJSON(v, l)
+}
+
 func scanJSON(v, dst any) error {
 	switch t := v.(type) {
 	case nil:
@@ -103,6 +121,13 @@ type Project struct {
 	// extracted requirements -> enqueue generation); "manual" preserves the
 	// hand-driven flow. Approval and runs stay manual either way (BO-07).
 	Automation string `gorm:"not null;default:auto" json:"automation"`
+	// TestTypes: which of the five kinds of testing this project is for
+	// (internal/testtypes). Declared when the project is created and editable
+	// afterwards; the engines that produce cases read it, so narrowing it
+	// narrows what the project does. An empty list means the same as all five —
+	// a project that had nothing said about it predates the field, and reading
+	// that as "test nothing" would silently disable every existing project.
+	TestTypes StringList `gorm:"type:json;not null;default:'[]'" json:"test_types"`
 }
 
 type Environment struct {

@@ -49,10 +49,17 @@ import (
 	"traceo/internal/modules/discovery"
 	"traceo/internal/modules/generation"
 	secmod "traceo/internal/modules/security"
+	"traceo/internal/testtypes"
 )
 
-// TestTypes are the five the owner asked for, in the order the UI shows them.
-var TestTypes = []string{"functional", "api", "ui", "performance", "security"}
+// TestTypes are declared per project in internal/testtypes and aliased here,
+// where the discovery job and its tests have always read them.
+var TestTypes = testtypes.All
+
+// ValidateTestTypes normalises the requested types; see testtypes.Validate.
+func ValidateTestTypes(requested []string) ([]string, string, string) {
+	return testtypes.Validate(requested, false)
+}
 
 const (
 	defaultViewport = "1280x800"
@@ -98,42 +105,6 @@ type createRequest struct {
 	URL       string   `json:"url"`
 	Viewport  string   `json:"viewport"`
 	TestTypes []string `json:"test_types"`
-}
-
-// ValidateTestTypes normalises the requested types. An unknown type is REFUSED
-// rather than ignored: silently dropping "perfomance" would run four tracks and
-// report success for five.
-func ValidateTestTypes(requested []string) ([]string, string, string) {
-	wanted := map[string]bool{}
-	var unknown []string
-	for _, raw := range requested {
-		value := strings.ToLower(strings.TrimSpace(raw))
-		if value == "" {
-			continue
-		}
-		if !contains(TestTypes, value) {
-			if !contains(unknown, value) {
-				unknown = append(unknown, value)
-			}
-			continue
-		}
-		wanted[value] = true
-	}
-	if len(unknown) > 0 {
-		sort.Strings(unknown)
-		return nil, "invalid_test_type",
-			"Unknown test type(s): " + strings.Join(unknown, ", ") + "."
-	}
-	if len(wanted) == 0 {
-		return nil, "invalid_test_type", "Select at least one test type."
-	}
-	out := make([]string, 0, len(wanted))
-	for _, t := range TestTypes {
-		if wanted[t] {
-			out = append(out, t)
-		}
-	}
-	return out, "", ""
 }
 
 // ValidateViewport returns the canonical WIDTHxHEIGHT, or ok=false.
@@ -187,7 +158,8 @@ func validateTargetURL(raw string) (string, string, string) {
 func createWebTarget(c *gin.Context) {
 	u := httpx.User(c)
 	projectID := c.Param("project_id")
-	if _, ok := httpx.ProjectScoped(c, projectID); !ok {
+	project, ok := httpx.ProjectScoped(c, projectID)
+	if !ok {
 		return
 	}
 	var body createRequest
@@ -198,18 +170,38 @@ func createWebTarget(c *gin.Context) {
 		httpx.Err(c, http.StatusUnprocessableEntity, code, message)
 		return
 	}
-	viewport, ok := ValidateViewport(body.Viewport)
-	if !ok {
+	viewport, okViewport := ValidateViewport(body.Viewport)
+	if !okViewport {
 		errWith(c, http.StatusUnprocessableEntity, "invalid_viewport",
 			fmt.Sprintf("viewport must be WIDTHxHEIGHT within %dx%d–%dx%d (e.g. %s).",
 				minViewport[0], minViewport[1], maxViewport[0], maxViewport[1], defaultViewport),
 			[]string{defaultViewport, "1440x900", "390x844"})
 		return
 	}
-	testTypes, tcode, tmessage := ValidateTestTypes(body.TestTypes)
-	if tcode != "" {
-		errWith(c, http.StatusUnprocessableEntity, tcode, tmessage, TestTypes)
-		return
+	// Omitting the types runs what the project declared it is for; asking for a
+	// type it excluded is refused, not quietly dropped. Silently narrowing would
+	// report success for a track that never ran.
+	declared := testtypes.OfProject(project.TestTypes)
+	testTypes := declared
+	if body.TestTypes != nil {
+		chosen, tcode, tmessage := ValidateTestTypes(body.TestTypes)
+		if tcode != "" {
+			errWith(c, http.StatusUnprocessableEntity, tcode, tmessage, TestTypes)
+			return
+		}
+		var outside []string
+		for _, t := range chosen {
+			if !contains(declared, t) {
+				outside = append(outside, t)
+			}
+		}
+		if len(outside) > 0 {
+			errWith(c, http.StatusUnprocessableEntity, "test_type_not_in_project",
+				"This project is not set up for: "+strings.Join(outside, ", ")+
+					". Change its test types first.", declared)
+			return
+		}
+		testTypes = chosen
 	}
 
 	var row models.WebTarget

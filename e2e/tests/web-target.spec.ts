@@ -752,8 +752,11 @@ test.describe('target page @regression', () => {
       ).toBeVisible();
     }
 
-    // functional + ui are the documented default selection.
-    expect([...(await targetPage.checkedTypes(ALL_TYPES))].sort()).toEqual(['functional', 'ui']);
+    // The default selection is what the PROJECT declared it is for — not a
+    // fixed pair. This fixture's project names no types, which every reader
+    // treats as all five, so all five come up ticked.
+    expect([...(await targetPage.checkedTypes(ALL_TYPES))].sort())
+      .toEqual([...ALL_TYPES].sort());
 
     await expect(targetPage.startControl).toBeVisible();
     // The design box is part of the page, not a consequence of a discovery:

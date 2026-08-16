@@ -6,6 +6,9 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { API, ApiError, api, getToken, pollJob } from "@/lib/api";
 import { useCan } from "@/lib/permissions";
+import { useProject } from "@/lib/project-context";
+import { TEST_TYPES, TEST_TYPE_META, projectTestTypes, type TestType } from "@/lib/test-types";
+import { TestTypePicker } from "@/components/test-type-picker";
 import {
   Badge,
   Button,
@@ -229,36 +232,9 @@ function targetOf(detail: any): any {
 }
 
 // ---------- the five test types ----------
-
-type TestType = "functional" | "api" | "ui" | "performance" | "security";
-
-const TEST_TYPES: { v: TestType; label: string; hint: string }[] = [
-  {
-    v: "functional",
-    label: "Functional",
-    hint: "Writes one requirement per form found on the page, plus cases carrying that form's field selectors verbatim.",
-  },
-  {
-    v: "api",
-    label: "API",
-    hint: "Turns every XHR/fetch the page issued into an endpoint, with concrete ids templated the way spec imports are.",
-  },
-  {
-    v: "ui",
-    label: "UI",
-    hint: "Reads the screenshot for palette, surface and contrast facts, then writes UI cases bound to those fact ids.",
-  },
-  {
-    v: "performance",
-    label: "Performance",
-    hint: "Uses the measured load time as the baseline and asserts the page keeps loading inside that budget.",
-  },
-  {
-    v: "security",
-    label: "Security",
-    hint: "Runs the S0 security builders over the endpoints discovered from the captured requests.",
-  },
-];
+// The vocabulary, the descriptions and the control all come from one place, so
+// this screen and the project's own declaration can never disagree about what
+// the five types are.
 
 const VIEWPORTS = ["1280x800", "1440x900", "1920x1080", "1024x768", "390x844"];
 
@@ -319,7 +295,13 @@ export default function TargetPage() {
   // ---- launcher state ----
   const [url, setUrl] = useState("");
   const [viewport, setViewport] = useState(VIEWPORTS[0]);
-  const [types, setTypes] = useState<Set<TestType>>(new Set<TestType>(["functional", "ui"]));
+  // The project's declaration is the default AND the ceiling: the backend
+  // refuses a type the project is not set up for, so offering it here would be
+  // offering a control that always fails.
+  const { project } = useProject();
+  const declaredTypes = projectTestTypes(project);
+  const [types, setTypes] = useState<Set<TestType> | null>(null);
+  const selected = types ?? new Set<TestType>(declaredTypes);
   const [job, setJob] = useState<{ msg: string; pct: number } | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
   const [startErrorCode, setStartErrorCode] = useState<string | null>(null);
@@ -420,8 +402,12 @@ export default function TargetPage() {
   );
 
   function toggleType(t: TestType) {
+    // A type the project excluded is not selectable, so it can never enter the
+    // set — the picker disables it and this guard makes that true of the state
+    // as well, not only of the control.
+    if (!declaredTypes.includes(t)) return;
     setTypes((prev) => {
-      const n = new Set(prev);
+      const n = new Set(prev ?? declaredTypes);
       if (n.has(t)) n.delete(t);
       else n.add(t);
       return n;
@@ -430,7 +416,7 @@ export default function TargetPage() {
 
   const trimmed = url.trim();
   const urlOk = /^https?:\/\/\S+$/i.test(trimmed);
-  const canStart = urlOk && types.size > 0 && !job;
+  const canStart = urlOk && selected.size > 0 && !job;
 
   async function start() {
     setStartError(null);
@@ -444,7 +430,7 @@ export default function TargetPage() {
           url: trimmed,
           viewport,
           // Sent in the canonical order so the request is stable to read.
-          test_types: TEST_TYPES.filter((t) => types.has(t.v)).map((t) => t.v),
+          test_types: TEST_TYPES.filter((t) => selected.has(t)),
         },
       });
       const out = await pollJob(res.job_id, (j) =>
@@ -527,54 +513,21 @@ export default function TargetPage() {
               <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 10 }}>
                 {L.typesHint}
               </div>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-                  gap: 8,
-                }}
-              >
-                {TEST_TYPES.map((tt) => {
-                  const on = types.has(tt.v);
-                  return (
-                    <label
-                      key={tt.v}
-                      data-testid="target-type-row"
-                      style={{
-                        display: "flex",
-                        gap: 10,
-                        alignItems: "flex-start",
-                        padding: "12px 14px",
-                        borderRadius: 12,
-                        cursor: "pointer",
-                        border: on ? "1px solid var(--accent)" : "1px solid var(--border)",
-                        background: on ? "var(--accent-subtle)" : "var(--surface-2)",
-                        transition: "border-color 120ms, background 120ms",
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        data-testid={`target-type-${tt.v}`}
-                        checked={on}
-                        onChange={() => toggleType(tt.v)}
-                        style={{ marginTop: 3, accentColor: "var(--accent)" }}
-                      />
-                      <span style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                        <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
-                          {tt.label}{" "}
-                          <M style={{ color: "var(--text-secondary)", fontSize: 11 }}>{tt.v}</M>
-                        </span>
-                        <span
-                          data-testid={`target-type-${tt.v}-hint`}
-                          style={{ fontSize: 12, lineHeight: 1.6, color: "var(--text-secondary)" }}
-                        >
-                          {tt.hint}
-                        </span>
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
+              <TestTypePicker
+                selected={TEST_TYPES.filter((t) => selected.has(t))}
+                onToggle={toggleType}
+                testIdPrefix="target-type"
+                description="hint"
+                limitTo={declaredTypes}
+              />
+              {declaredTypes.length < TEST_TYPES.length && (
+                <div
+                  data-testid="target-types-scope-hint"
+                  style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 8 }}
+                >
+                  Greyed-out types are off for this project. Change them on Overview.
+                </div>
+              )}
             </div>
 
             <div
@@ -607,7 +560,7 @@ export default function TargetPage() {
                     {L.badUrl}
                   </span>
                 )}
-                {types.size === 0 && (
+                {selected.size === 0 && (
                   <span style={{ fontSize: 12, color: "var(--warning)" }} data-testid="target-types-hint">
                     {L.noneChecked}
                   </span>

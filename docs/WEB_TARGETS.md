@@ -62,7 +62,7 @@ inventory, and it is the only reason to trust cases generated from a URL nobody 
 
 ## 3. The five test types
 
-Each is optional; `functional` and `ui` are checked by default. Every type that produces nothing
+The list is optional: omitting it runs exactly what the **project** declared it is for (`POST /v1/projects` `test_types`, editable on Overview), and naming a type the project excluded is refused with `422 test_type_not_in_project` rather than quietly dropped. A project that declared nothing is for all five. Every type that produces nothing
 must say why — the job result carries `skipped: [{type, reason}]`, because a track that silently
 produces nothing is indistinguishable from a track that is broken.
 
@@ -96,6 +96,7 @@ Body: `{url, viewport?, test_types[]}`. Refusals are typed and name what is lega
 | `ssrf_blocked` / `unresolvable_host` | 422 | private, loopback, link-local, multicast, reserved or metadata address (unless `TRACEO_ALLOW_PRIVATE_TARGETS=1`) |
 | `invalid_viewport` | 422 | not `WIDTHxHEIGHT` within 320x240–3840x4320; `errors` lists usable examples |
 | `invalid_test_type` | 422 | an unknown type, or an empty list; `errors` carries **the legal list** |
+| `test_type_not_in_project` | 422 | a type the project is not set up for; `errors` carries **what it IS set up for** |
 | `forbidden` | 403 | the caller lacks `import_spec` (a viewer) |
 | `no_screenshot` | 404 | the target has no stored screenshot |
 

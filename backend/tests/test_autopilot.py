@@ -99,7 +99,8 @@ def test_ingestion_exposes_no_language_detector():
 
 # ------------------------------------------------------------------ project schema
 
-PROJECT_FIELDS = {"id", "name", "automation", "status", "created_at", "updated_at"}
+PROJECT_FIELDS = {"id", "name", "automation", "test_types", "status",
+                  "created_at", "updated_at"}
 
 
 def test_create_project_defaults_to_auto_and_carries_no_language(client, register_org):

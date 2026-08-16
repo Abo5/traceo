@@ -23,6 +23,7 @@ import (
 	"traceo/internal/httpx"
 	"traceo/internal/models"
 	"traceo/internal/security"
+	"traceo/internal/testtypes"
 )
 
 var (
@@ -53,6 +54,7 @@ func isoPtr(t *time.Time) any {
 func projectPayload(p *models.Project) gin.H {
 	return gin.H{"id": p.ID, "name": p.Name,
 		"automation": p.Automation, "status": p.Status,
+		"test_types": testtypes.OfProject(p.TestTypes),
 		"created_at": iso(p.CreatedAt), "updated_at": iso(p.UpdatedAt)}
 }
 
@@ -139,6 +141,13 @@ func Register(r *gin.RouterGroup) {
 	g.POST("/projects/:project_id/environments/:env_id/check", httpx.Require("trigger_run"), checkEnvironment)
 }
 
+// errWithList refuses with the legal vocabulary attached, so a caller that sent
+// a wrong value is told what the right ones are instead of having to guess.
+func errWithList(c *gin.Context, code, message string, allowed []string) {
+	c.AbortWithStatusJSON(http.StatusUnprocessableEntity, gin.H{"detail": gin.H{
+		"code": code, "message": message, "errors": allowed}})
+}
+
 // --- projects ----------------------------------------------------------------
 
 func createProject(c *gin.Context) {
@@ -146,6 +155,9 @@ func createProject(c *gin.Context) {
 	var body struct {
 		Name       string  `json:"name"`
 		Automation *string `json:"automation"` // optional; "auto" (default) | "manual"
+		// Omitted means all five (internal/testtypes): a project narrows its
+		// scope by saying so, never by staying silent.
+		TestTypes []string `json:"test_types"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		httpx.Err(c, http.StatusUnprocessableEntity, "validation_error", "Invalid request body")
@@ -162,14 +174,24 @@ func createProject(c *gin.Context) {
 	if !validAutomation(c, automation) {
 		return
 	}
+	chosen := testtypes.DefaultForProject()
+	if body.TestTypes != nil {
+		valid, code, message := testtypes.Validate(body.TestTypes, false)
+		if code != "" {
+			errWithList(c, code, message, testtypes.All)
+			return
+		}
+		chosen = valid
+	}
 	project := models.Project{OrganisationID: u.OrganisationID,
-		Name: strings.TrimSpace(body.Name), Automation: automation}
+		Name: strings.TrimSpace(body.Name), Automation: automation, TestTypes: chosen}
 	if err := db.DB.Create(&project).Error; err != nil {
 		httpx.Err(c, http.StatusInternalServerError, "internal_error", "Could not create project")
 		return
 	}
 	httpx.Audit(u.OrganisationID, &u.ID, "project.create", "project", project.ID,
-		models.JSONMap{"name": project.Name})
+		models.JSONMap{"name": project.Name, "automation": project.Automation,
+			"test_types": chosen})
 	c.JSON(http.StatusCreated, projectPayload(&project))
 }
 
@@ -199,9 +221,10 @@ func getProject(c *gin.Context) {
 func updateProject(c *gin.Context) {
 	u := httpx.User(c)
 	var body struct {
-		Name       *string `json:"name"`
-		Automation *string `json:"automation"`
-		Status     *string `json:"status"`
+		Name       *string  `json:"name"`
+		Automation *string  `json:"automation"`
+		TestTypes  []string `json:"test_types"`
+		Status     *string  `json:"status"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		httpx.Err(c, http.StatusUnprocessableEntity, "validation_error", "Invalid request body")
@@ -227,6 +250,16 @@ func updateProject(c *gin.Context) {
 		}
 		changes["automation"] = map[string]any{"from": project.Automation, "to": *body.Automation}
 		project.Automation = *body.Automation
+	}
+	if body.TestTypes != nil {
+		chosen, code, message := testtypes.Validate(body.TestTypes, false)
+		if code != "" {
+			errWithList(c, code, message, testtypes.All)
+			return
+		}
+		changes["test_types"] = map[string]any{
+			"from": testtypes.OfProject(project.TestTypes), "to": chosen}
+		project.TestTypes = chosen
 	}
 	if body.Status != nil {
 		if *body.Status != "active" && *body.Status != "archived" {

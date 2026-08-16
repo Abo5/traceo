@@ -53,6 +53,11 @@ sessions from them.
 | `projects-card-delete-button` | Button | Delete (opens confirm modal) |
 | `projects-create-modal` | Modal | Create-project dialog — name only (automation defaults to `auto` server-side) |
 | `projects-create-name-input` | Input | New project name |
+| `projects-create-type-picker` | container | The five test types in the create dialog |
+| `projects-create-type-row` | label ×5 | One row per type |
+| `projects-create-type-{functional,api,ui,performance,security}` | checkbox | Toggle a type — all five on by default |
+| `projects-create-type-{type}-hint` | text | What picking that type commits the project to |
+| `projects-create-types-hint` | text | Shown when every type is cleared (submit is disabled) |
 | `projects-create-error-text` | text | Creation failure message |
 | `projects-create-cancel-button` | Button | Close the dialog |
 | `projects-create-submit-button` | Button | Create the project |
@@ -131,6 +136,27 @@ sessions from them.
 | `nav-link-reference` | Link | Sidebar → reference catalog |
 
 ## /projects/[id] (overview) — `frontend/app/projects/[id]/page.tsx`
+
+### Test types
+
+The declaration made at creation, editable here. One component
+(`components/test-type-picker.tsx`) renders it everywhere, so `project-type-*`,
+`projects-create-type-*` and `target-type-*` are the same control under three
+prefixes.
+
+| data-testid | Element | Purpose |
+|---|---|---|
+| `project-types-card` | Card | "Test types" on Overview |
+| `project-type-picker` | container | The five toggles |
+| `project-type-row` | label ×5 | One row per type |
+| `project-type-{functional,api,ui,performance,security}` | checkbox | Toggle — disabled without `manage_projects` |
+| `project-type-{type}-hint` | text | What that type covers |
+| `project-types-save-button` | Button | Save the change (only while dirty) |
+| `project-types-cancel-button` | Button | Discard the change |
+| `project-types-error-text` | text | Refusal from the server |
+| `project-types-readonly-hint` | text | Shown to a role that cannot change it |
+| `project-types-empty-hint` | text | Shown when every type is cleared |
+
 
 | data-testid | Element | Purpose |
 |---|---|---|
@@ -258,7 +284,7 @@ sessions from them.
 
 The **web target** screen: a URL plus a subset of the five test types, discovered by the browser sidecar (`tools/web-discovery/discover.mjs`) through `POST /v1/projects/{id}/web-targets` (202 + `job_id`, polled like any other job). The page reads `GET /v1/projects/{id}/web-targets` for the stored list, `GET /v1/web-targets/{id}` for one target's inventory and design payload, and `GET /v1/web-targets/{id}/screenshot` for the PNG — fetched with the bearer token and rendered from an object URL, so `target-design-screenshot` never carries the API path in `src`.
 
-**The five type checkboxes are always rendered**, in the canonical order `functional | api | ui | performance | security`, each with its own one-line explanation id (`target-type-{type}-hint`). `functional` and `ui` are checked on first paint. The launcher card (`target-form-card`) and everything inside it is gated on capability `import_spec`; the list, the inventory and the design box are `view`-level and render for every role.
+**The five type checkboxes are always rendered**, in the canonical order `functional | api | ui | performance | security`, each with its own one-line explanation id (`target-type-{type}-hint`). The checked set on first paint is **what the project declared it is for** (see Test types on Overview); a type the project excluded is rendered disabled, because the server would refuse it. The launcher card (`target-form-card`) and everything inside it is gated on capability `import_spec`; the list, the inventory and the design box are `view`-level and render for every role.
 
 | data-testid | Element | Purpose |
 |---|---|---|
@@ -268,8 +294,10 @@ The **web target** screen: a URL plus a subset of the five test types, discovere
 | `target-url-input` | Input | Target page URL (absolute http/https) |
 | `target-url-hint` | text | Shown while the typed URL is not an absolute http(s) URL |
 | `target-viewport-select` | Select | Render viewport, `WIDTHxHEIGHT` (default `1280x800`) |
+| `target-type-picker` | container | The five toggles |
 | `target-type-row` | row (repeated) | One test-type choice — identified by its checkbox id |
-| `target-type-functional` | checkbox | Test type: functional (checked by default) |
+| `target-types-scope-hint` | text | Shown when the project excludes some types |
+| `target-type-functional` | checkbox | Test type: functional |
 | `target-type-api` | checkbox | Test type: api |
 | `target-type-ui` | checkbox | Test type: ui (checked by default) |
 | `target-type-performance` | checkbox | Test type: performance |

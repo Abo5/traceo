@@ -20,6 +20,8 @@ import {
   stateTone,
 } from "@/components/ui";
 import { useProject } from "@/lib/project-context";
+import { TEST_TYPES, projectTestTypes, type TestType } from "@/lib/test-types";
+import { TestTypePicker } from "@/components/test-type-picker";
 
 type Dashboard = {
   requirement_count: number;
@@ -72,7 +74,7 @@ const TC_STATES = ["draft", "approved", "rejected", "stale", "archived"] as cons
 
 export default function ProjectDashboardPage() {
   const { id } = useParams<{ id: string }>();
-  const { project } = useProject();
+  const { project, refresh } = useProject();
   const canDo = useCan();
 
   const L = {
@@ -136,6 +138,40 @@ export default function ProjectDashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // ---- test types: what this project is for ----
+  const declared = projectTestTypes(project);
+  const [draftTypes, setDraftTypes] = useState<TestType[] | null>(null);
+  const [savingTypes, setSavingTypes] = useState(false);
+  const [typesError, setTypesError] = useState<string | null>(null);
+  const shownTypes = draftTypes ?? declared;
+  const typesDirty =
+    draftTypes !== null && draftTypes.join(",") !== declared.join(",");
+
+  function toggleType(type: TestType) {
+    setTypesError(null);
+    setDraftTypes((current) => {
+      const base = current ?? declared;
+      return base.includes(type)
+        ? base.filter((t) => t !== type)
+        : TEST_TYPES.filter((t) => t === type || base.includes(t));
+    });
+  }
+
+  async function saveTypes() {
+    if (!draftTypes) return;
+    setSavingTypes(true);
+    setTypesError(null);
+    try {
+      await api(`/projects/${id}`, { method: "PATCH", body: { test_types: draftTypes } });
+      await refresh();
+      setDraftTypes(null);
+    } catch (e: any) {
+      setTypesError(e?.message || String(e));
+    } finally {
+      setSavingTypes(false);
+    }
+  }
+
   async function load() {
     setLoading(true);
     setError(null);
@@ -170,6 +206,63 @@ export default function ProjectDashboardPage() {
   return (
     <div className="stack" data-testid="dashboard-page-root">
       <PageHeader title={project?.name ?? L.title} sub={L.sub} testId="dashboard-page-header" />
+
+      {/* What this project is for — the five test types, editable here. */}
+      <Card title="Test types" testId="project-types-card">
+        <div className="stack" style={{ gap: 12 }}>
+          <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+            The kinds of testing this project runs. Narrowing it narrows what every
+            engine here produces — a type that is off is refused, not silently skipped.
+          </div>
+          <TestTypePicker
+            selected={shownTypes}
+            onToggle={toggleType}
+            disabled={!canDo("manage_projects") || savingTypes}
+            testIdPrefix="project-type"
+          />
+          {typesError && (
+            <div className="error-text" data-testid="project-types-error-text">
+              {typesError}
+            </div>
+          )}
+          {!canDo("manage_projects") ? (
+            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}
+                 data-testid="project-types-readonly-hint">
+              Changing this needs the manage_projects capability.
+            </div>
+          ) : typesDirty ? (
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <Button
+                variant="primary"
+                size="sm"
+                testId="project-types-save-button"
+                disabled={savingTypes || shownTypes.length === 0}
+                onClick={saveTypes}
+              >
+                {savingTypes ? "Saving…" : "Save test types"}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                testId="project-types-cancel-button"
+                disabled={savingTypes}
+                onClick={() => {
+                  setDraftTypes(null);
+                  setTypesError(null);
+                }}
+              >
+                Cancel
+              </Button>
+              {shownTypes.length === 0 && (
+                <span style={{ fontSize: 12, color: "var(--warning)" }}
+                      data-testid="project-types-empty-hint">
+                  Pick at least one.
+                </span>
+              )}
+            </div>
+          ) : null}
+        </div>
+      </Card>
 
       {error ? (
         <Card testId="dashboard-error-card">

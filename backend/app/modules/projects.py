@@ -24,6 +24,8 @@ from ..models import (ApiSpec, Endpoint, Environment, Project, Requirement,
                       RequirementTestCase, Run, SourceDocument, TestCase,
                       TestResult, TestStep, User)
 from ..security import decrypt_secret, encrypt_secret, redact
+from ..testtypes import (DEFAULT_PROJECT_TEST_TYPES, TEST_TYPES, project_test_types,
+                         validate_test_types)
 from .traceability import (GAP_NEXT_ACTIONS, derive_severity, gap_reason,
                            is_high_priority, run_display_ids)
 
@@ -43,6 +45,7 @@ def _iso(dt):
 def _project_payload(p: Project) -> dict:
     return {"id": p.id, "name": p.name,
             "automation": p.automation, "status": p.status,
+            "test_types": project_test_types(p),
             "created_at": _iso(p.created_at), "updated_at": _iso(p.updated_at)}
 
 
@@ -84,11 +87,15 @@ def _validate_auth_type(auth_type: str) -> str:
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     automation: str = "auto"  # auto|manual
+    # Omitted means all five (app/testtypes.py): a project narrows its scope by
+    # saying so, never by staying silent.
+    test_types: list[str] | None = None
 
 
 class ProjectUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     automation: str | None = None  # auto|manual
+    test_types: list[str] | None = None
     status: str | None = None  # active|archived
 
 
@@ -118,12 +125,15 @@ def create_project(body: ProjectCreate, user: User = Depends(require("manage_pro
     if body.automation not in _AUTOMATIONS:
         raise HTTPException(422, detail={"code": "invalid_automation",
                                          "message": "Automation must be 'auto' or 'manual'"})
+    test_types = (validate_test_types(body.test_types) if body.test_types is not None
+                  else list(DEFAULT_PROJECT_TEST_TYPES))
     project = Project(organisation_id=user.organisation_id, name=body.name.strip(),
-                      automation=body.automation)
+                      automation=body.automation, test_types=test_types)
     db.add(project)
     db.flush()
     audit(db, user.organisation_id, user.id, "project.create", "project", project.id,
-          {"name": project.name, "automation": project.automation})
+          {"name": project.name, "automation": project.automation,
+           "test_types": test_types})
     db.commit()
     return _project_payload(project)
 
@@ -158,6 +168,10 @@ def update_project(project_id: str, body: ProjectUpdate,
                                              "message": "Automation must be 'auto' or 'manual'"})
         changes["automation"] = {"from": project.automation, "to": body.automation}
         project.automation = body.automation
+    if body.test_types is not None:
+        chosen = validate_test_types(body.test_types)
+        changes["test_types"] = {"from": project_test_types(project), "to": chosen}
+        project.test_types = chosen
     if body.status is not None:
         if body.status not in ("active", "archived"):
             raise HTTPException(422, detail={"code": "invalid_status",
