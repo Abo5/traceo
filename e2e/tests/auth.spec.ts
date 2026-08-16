@@ -46,6 +46,37 @@ test.describe('no-login build @smoke', () => {
     ).toHaveCount(0);
   });
 
+  test('a token the backend rejects is discarded, not kept forever', async ({ page }) => {
+    /**
+     * With no sign-out control and no login screen there is no manual way to
+     * clear a bad session, so a token minted before the database was recreated
+     * (or under a different signing key) would pin every screen to "Invalid or
+     * expired token" permanently. lib/api.ts throws such a token away on the
+     * first 401 `invalid_token`.
+     *
+     * On a backend that offers dev-session it then retries and the screen
+     * loads; on this suite's backend (flag off, by design) there is nothing to
+     * retry with — but the token must still be gone, which is the part that
+     * holds either way.
+     */
+    await page.addInitScript(() => {
+      window.localStorage.setItem('traceo_token', 'stale.token.value');
+      window.localStorage.setItem(
+        'traceo_user',
+        JSON.stringify({ id: 'gone', name: 'Old Session', role: 'admin' }),
+      );
+    });
+
+    await page.goto(routes.projects, { waitUntil: 'domcontentloaded' });
+    // the page issues its first API call on mount; wait for the rejection to land
+    await expect
+      .poll(() => page.evaluate(() => window.localStorage.getItem('traceo_token')), {
+        timeout: 20_000,
+        message: 'the rejected token must not survive the 401',
+      })
+      .not.toBe('stale.token.value');
+  });
+
   test('the application shell carries no sign-out control', async ({ asQaLead }) => {
     // Sign-out existed only to return the user to a login screen; with that
     // screen gone the control would lead nowhere, so it is gone too.

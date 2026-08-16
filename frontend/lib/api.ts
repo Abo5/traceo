@@ -99,9 +99,25 @@ export function ensureSession(): Promise<boolean> {
   return sessionBootstrap;
 }
 
+/**
+ * Discard the stored session so the next call bootstraps a fresh one.
+ *
+ * This build has no sign-out control and no login screen, so a stored token
+ * that the backend rejects — minted before the database was recreated, or
+ * against a different signing key — would otherwise be permanent: every screen
+ * shows "Invalid or expired token" forever and the user has no way to clear it.
+ * Recovery has to be automatic because there is no manual path left.
+ */
+export function resetSession(): void {
+  sessionBootstrap = null;
+  setToken(null);
+  setUser(null);
+}
+
 export async function api<T = any>(
   path: string,
-  opts?: { method?: string; body?: any; form?: FormData }
+  opts?: { method?: string; body?: any; form?: FormData },
+  retriedAfterReset = false
 ): Promise<T> {
   const headers: Record<string, string> = {};
   if (!getToken()) await ensureSession();
@@ -132,6 +148,19 @@ export async function api<T = any>(
       data = JSON.parse(text);
     } catch {
       data = text;
+    }
+  }
+
+  // A rejected token is thrown away and the request retried once with a fresh
+  // session. Once only, and only for this code: a second 401 is a real refusal
+  // and must surface, not loop. A FormData body cannot be replayed after the
+  // fetch consumed it, so an upload reports the failure instead — the next
+  // call, made with the cleared session, succeeds.
+  if (res.status === 401 && !retriedAfterReset && !opts?.form) {
+    const code = data?.detail?.code ?? data?.code;
+    if (code === "invalid_token" && getToken()) {
+      resetSession();
+      if (await ensureSession()) return api<T>(path, opts, true);
     }
   }
 
