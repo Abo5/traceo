@@ -96,7 +96,7 @@ from ..jobs import JobError
 from ..models import (Endpoint, Project, Requirement, RequirementTestCase, TestCase,
                       TestStep, User, WebTarget)
 from ..security import decrypt_secret, encrypt_secret
-from . import design, security as securitymod
+from . import design, pageintel, security as securitymod
 from . import generation
 from .collections import _param, _path_params, template_segment
 from .discovery import FIDELITY, _assert_public_host
@@ -1548,10 +1548,15 @@ def run_discovery_job(job, org_id: str, user_id: str, project_id: str, target_id
         existing_keys = _existing_case_keys(db, org_id, project_id)
         short = target_id[:8]
 
-        def emit(req: Requirement, case: dict, kind: str, artefacts: set[str]) -> None:
+        def emit(req: Requirement, case: dict, kind: str, artefacts: set[str],
+                 model_name: str = MODEL_NAME) -> None:
             """One case through the grounding gate and the duplicate index, or
             not at all. A discarded case is counted, never repaired, never shown
-            (BO-07)."""
+            (BO-07).
+
+            `model_name` records WHO wrote the case. A reviewer reading a plan
+            that mixes deterministic builders with model proposals needs to know
+            which is which, and the case row is the only place that survives."""
             nonlocal discarded, duplicates
             if grounding_violations(case, artefacts):
                 discarded += 1
@@ -1560,7 +1565,7 @@ def run_discovery_job(job, org_id: str, user_id: str, project_id: str, target_id
             if key in existing_keys:
                 duplicates += 1
                 return
-            persist_case(db, org_id, project_id, req, case)
+            persist_case(db, org_id, project_id, req, case, model_name)
             existing_keys.add(key)
             cases_by_type[kind] += 1
 
@@ -1719,6 +1724,35 @@ def run_discovery_job(job, org_id: str, user_id: str, project_id: str, target_id
                     requirement_count += 1
                     for case in form_cases(form, page):
                         emit(req, case, "functional", page_artefacts)
+
+                # The deterministic builders above assert what the page CONTAINS.
+                # What it is FOR is the one thing a model reads better than a
+                # rule, so it is asked — over a closed list of this page's own
+                # artefacts, and anything citing something else is discarded here
+                # exactly as a fabricated endpoint is (BO-07). The track is
+                # additive: a provider that is unavailable, slow or unhelpful
+                # costs behaviours, never the crawl.
+                behaviours, rejected, notes = pageintel.propose(page, page_path(page))
+                discarded += rejected
+                if behaviours:
+                    breq, _created = upsert_requirement(
+                        db, org_id, project_id,
+                        f"WEB-{short}{tokens[index]}-BEH",
+                        (f"The screen '{page.get('title') or page.get('final_url')}' "
+                         f"behaves as its {len(behaviours)} stated cases require."),
+                        [c["title"] for c in behaviours][:200],
+                        "functional",
+                        {"url": page.get("final_url")},
+                        json.dumps(sorted(c["title"] for c in behaviours))[:4000],
+                        priority="high")
+                    requirement_count += 1
+                    for case in behaviours:
+                        emit(breq, case, "functional", page_artefacts,
+                             model_name=pageintel.model_name())
+                for note in notes:
+                    entry = {"type": "functional", "reason": note}
+                    if entry not in skipped:
+                        skipped.append(entry)
             db.commit()
 
         # --- performance: every page carries its OWN baseline ------------------

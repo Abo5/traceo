@@ -93,6 +93,8 @@ func (m *mockProvider) CompleteJSON(promptID, prompt string, _ map[string]any) (
 		data = m.mapReq(prompt)
 	case strings.HasPrefix(promptID, "enrich_endpoints"):
 		data = m.enrichEndpoints(prompt)
+	case strings.HasPrefix(promptID, "pageintel"):
+		data = m.pageBehaviours(prompt)
 	default:
 		data = map[string]any{}
 	}
@@ -231,6 +233,158 @@ func (m *mockProvider) mapReq(prompt string) map[string]any {
 // annotations on both engines (contract item 5).
 //
 // Existing mock behaviours are untouched; this is a new promptID branch only.
+// pageBehaviours: behaviours for one crawled screen.
+//
+// The real value of this track is a model's reading of a screen, which a mock
+// cannot have. What it CAN do is exercise the whole path honestly: propose cases
+// that cite real ids from the payload, so the caller's grounding gate, the
+// persistence and the tests all run against the shape they will see in
+// production — and produce them deterministically, so an offline suite is
+// reproducible. Nothing here pretends to understand the domain.
+//
+// Byte-for-byte the same proposals as the Python mock (app/llm/mock.py).
+func (m *mockProvider) pageBehaviours(prompt string) map[string]any {
+	i := strings.Index(prompt, "PAYLOAD:\n")
+	if i < 0 {
+		return map[string]any{"cases": []any{}}
+	}
+	body := strings.TrimSpace(cutUntrusted(prompt[i+len("PAYLOAD:\n"):]))
+	body = strings.TrimPrefix(body, UntrustedOpen)
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(body)), &payload); err != nil {
+		return map[string]any{"cases": []any{}}
+	}
+
+	cases := []any{}
+	add := func(title, expected, kind, priority string, fieldIDs, controlIDs []string) {
+		cases = append(cases, map[string]any{
+			"title": title, "expected": expected, "type": kind, "priority": priority,
+			"field_ids": toAnyList(fieldIDs), "control_ids": toAnyList(controlIDs),
+		})
+	}
+
+	forms, _ := payload["forms"].([]any)
+	for _, rawForm := range forms {
+		form, _ := rawForm.(map[string]any)
+		rawFields, _ := form["fields"].([]any)
+		var usable []map[string]any
+		for _, rawField := range rawFields {
+			field, ok := rawField.(map[string]any)
+			if !ok {
+				continue
+			}
+			if id, _ := field["id"].(string); id == "" {
+				continue
+			}
+			// A hidden field is not something a person fills in, so a behaviour
+			// about one would be noise on every screen carrying a CSRF token.
+			if kind, _ := field["type"].(string); kind == "hidden" {
+				continue
+			}
+			usable = append(usable, field)
+		}
+		if len(usable) == 0 {
+			continue
+		}
+		name, _ := form["name"].(string)
+		if name == "" {
+			name = "the form"
+		}
+		label := func(f map[string]any) string {
+			for _, key := range []string{"label", "placeholder", "id"} {
+				if v, _ := f[key].(string); v != "" {
+					return v
+				}
+			}
+			return "the field"
+		}
+		all := make([]string, 0, len(usable))
+		for _, f := range usable {
+			id, _ := f["id"].(string)
+			all = append(all, id)
+		}
+
+		// Required flags are the page's own statement, and plenty of real forms
+		// carry none: the OrangeHRM demo marks nothing required and still refuses
+		// an empty submission. So the empty-submission case is written from the
+		// FIELDS, and the per-field ones only when the page claims a field is
+		// required.
+		add(fmt.Sprintf("Submitting %s with every field empty is refused", name),
+			"The submission does not succeed and the screen says what is missing.",
+			"negative", "high", all, nil)
+		add(fmt.Sprintf("Submitting %s with a valid value in every field is accepted", name),
+			"The submission is accepted and the screen moves on rather than reporting an error.",
+			"positive", "high", all, nil)
+
+		required := 0
+		for _, f := range usable {
+			if need, _ := f["required"].(bool); !need || required >= 4 {
+				continue
+			}
+			required++
+			id, _ := f["id"].(string)
+			add(fmt.Sprintf("Submitting %s without %s is refused", name, label(f)),
+				fmt.Sprintf("The submission is refused and %s is reported as required.", label(f)),
+				"negative", "medium", []string{id}, nil)
+		}
+		for _, f := range usable {
+			if max, ok := f["maxlength"].(float64); ok && max > 0 {
+				id, _ := f["id"].(string)
+				add(fmt.Sprintf("%s refuses more than %d characters", label(f), int(max)),
+					fmt.Sprintf("Input longer than %d characters is refused or truncated, "+
+						"never stored whole.", int(max)),
+					"negative", "low", []string{id}, nil)
+				break
+			}
+		}
+		for _, f := range usable {
+			if pattern, _ := f["pattern"].(string); pattern != "" {
+				id, _ := f["id"].(string)
+				add(fmt.Sprintf("%s refuses a value its format rule forbids", label(f)),
+					fmt.Sprintf("A value not matching %s is refused with a message naming "+
+						"the field.", pattern),
+					"negative", "medium", []string{id}, nil)
+				break
+			}
+		}
+	}
+
+	// A screen with no form still has actions, and whether they lead anywhere is
+	// a real behaviour. Only named controls are described, so only named ones can
+	// be cited.
+	if len(cases) == 0 {
+		controls, _ := payload["controls"].([]any)
+		for i, rawControl := range controls {
+			if i >= 5 {
+				break
+			}
+			control, _ := rawControl.(map[string]any)
+			id, _ := control["id"].(string)
+			name, _ := control["name"].(string)
+			if id == "" || name == "" {
+				continue
+			}
+			add(fmt.Sprintf("'%s' leads somewhere and reports failure when it cannot", name),
+				fmt.Sprintf("Activating '%s' reaches its destination, or says why it could "+
+					"not — it never fails silently.", name),
+				"positive", "low", nil, []string{id})
+		}
+	}
+
+	if len(cases) > 12 {
+		cases = cases[:12]
+	}
+	return map[string]any{"cases": cases}
+}
+
+func toAnyList(values []string) []any {
+	out := make([]any, 0, len(values))
+	for _, v := range values {
+		out = append(out, v)
+	}
+	return out
+}
+
 func (m *mockProvider) enrichEndpoints(prompt string) map[string]any {
 	i := strings.Index(prompt, "INVENTORY:\n")
 	if i < 0 {

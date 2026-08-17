@@ -49,6 +49,7 @@ import (
 	"traceo/internal/modules/design"
 	"traceo/internal/modules/discovery"
 	"traceo/internal/modules/generation"
+	"traceo/internal/modules/pageintel"
 	secmod "traceo/internal/modules/security"
 	"traceo/internal/security"
 	"traceo/internal/testtypes"
@@ -502,6 +503,11 @@ func casePreconditions(kase Case) string {
 }
 
 func persistCase(orgID, projectID string, req *models.Requirement, kase Case) {
+	persistCaseAs(orgID, projectID, req, kase, modelName)
+}
+
+func persistCaseAs(orgID, projectID string, req *models.Requirement, kase Case,
+	author string) {
 	steps := make([]models.TestStep, 0, len(kase.Steps))
 	for i, s := range kase.Steps {
 		assertions := models.JSONList(s.Assertions)
@@ -518,7 +524,7 @@ func persistCase(orgID, projectID string, req *models.Requirement, kase Case) {
 		OrganisationID: orgID, ProjectID: projectID,
 		Title: trunc(kase.Title, 500), Description: kase.Description,
 		Preconditions: casePreconditions(kase), Type: kase.Type, Priority: kase.Priority,
-		State: "draft", Generated: true, Model: modelName,
+		State: "draft", Generated: true, Model: author,
 		PromptVersion: config.C.PromptVer, Technique: kase.Technique,
 		Version: 1, Steps: steps,
 	}
@@ -527,6 +533,80 @@ func persistCase(orgID, projectID string, req *models.Requirement, kase Case) {
 		RequirementID: req.ID, TestCaseID: tc.ID,
 		LinkSource: "generated", RequirementVersionAtLink: req.Version,
 	})
+}
+
+// intelPage translates a crawled page into the shape the model track reads. The
+// two packages keep separate types on purpose: pageintel must not depend on the
+// crawl's payload structs, or the closed list it builds would drift with them.
+func intelPage(page Inventory) pageintel.Page {
+	out := pageintel.Page{URL: firstNonEmpty(page.FinalURL, page.URL), Title: page.Title,
+		Path: page.PagePath()}
+	for _, form := range page.Forms {
+		f := pageintel.Form{Selector: form.Selector, Name: form.Name, Heading: form.Heading,
+			SubmitName: form.SubmitName, Method: form.Method, Action: form.Action}
+		for _, field := range form.Fields {
+			f.Fields = append(f.Fields, pageintel.Field{
+				Selector: field.Selector, Name: field.Name, ID: field.ID,
+				Label: field.Label, Type: field.Type, Required: field.Required,
+				Placeholder: field.Placeholder, Pattern: field.Pattern,
+				MaxLength: field.MaxLength,
+			})
+		}
+		out.Forms = append(out.Forms, f)
+	}
+	for _, control := range page.Controls {
+		out.Controls = append(out.Controls, pageintel.Control{
+			Selector: control.Selector, Name: control.Name, Role: control.Role})
+	}
+	for _, req := range page.Requests {
+		out.Requests = append(out.Requests, pageintel.Request{
+			Method: req.Method, URL: req.URL, ResourceType: req.ResourceType})
+	}
+	return out
+}
+
+// behaviourCase turns an admissible proposal into this module's case shape. The
+// step addresses the page's own selectors, resolved by pageintel from the ids the
+// model cited — never from anything it wrote.
+func behaviourCase(b pageintel.Case) Case {
+	fields := b.Fields
+	if fields == nil {
+		fields = []string{}
+	}
+	controls := b.Controls
+	if controls == nil {
+		controls = []string{}
+	}
+	return Case{
+		Title: b.Title, Description: b.Description, Preconditions: b.Preconditions,
+		Type: b.Type, Priority: b.Priority, Technique: b.Technique,
+		Grounds: b.Grounds,
+		Steps: []Step{{
+			Method: "GET", Path: b.Path,
+			Request: map[string]any{"url": b.URL, "screen": b.Screen,
+				"check": "behaviour", "fields": fields, "controls": controls},
+			Assertions: []any{map[string]any{
+				"type": "expected_outcome", "statement": b.Expected}},
+		}},
+	}
+}
+
+func containsEntry(list []map[string]any, want map[string]any) bool {
+	for _, item := range list {
+		if len(item) == len(want) {
+			same := true
+			for k, v := range want {
+				if item[k] != v {
+					same = false
+					break
+				}
+			}
+			if same {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // existingCaseKeys is (technique|title) of every live case — the duplicate key
@@ -750,7 +830,11 @@ func RunDiscovery(job *jobs.Job, orgID, userID, projectID, targetID, target, vie
 		short = short[:8]
 	}
 
-	emit := func(req *models.Requirement, kase Case, kind string, artefacts map[string]bool) {
+	// modelName records WHO wrote a case. A reviewer reading a plan that mixes
+	// deterministic builders with model proposals needs to know which is which,
+	// and the case row is the only place that survives.
+	emitAs := func(req *models.Requirement, kase Case, kind string,
+		artefacts map[string]bool, author string) {
 		if len(GroundingViolations(kase.Grounds, artefacts)) > 0 {
 			discarded++
 			return
@@ -760,9 +844,12 @@ func RunDiscovery(job *jobs.Job, orgID, userID, projectID, targetID, target, vie
 			duplicates++
 			return
 		}
-		persistCase(orgID, projectID, req, kase)
+		persistCaseAs(orgID, projectID, req, kase, author)
 		existing[key] = true
 		casesByType[kind]++
+	}
+	emit := func(req *models.Requirement, kase Case, kind string, artefacts map[string]bool) {
+		emitAs(req, kase, kind, artefacts, modelName)
 	}
 
 	// The API surface is a property of the CRAWL, not of one page: an endpoint
@@ -989,6 +1076,42 @@ func RunDiscovery(job *jobs.Job, orgID, userID, projectID, targetID, target, vie
 				requirementCount++
 				for _, kase := range FormCases(form, page) {
 					emit(req, kase, "functional", pageArtefacts)
+				}
+			}
+
+			// The deterministic builders above assert what the page CONTAINS.
+			// What it is FOR is the one thing a model reads better than a rule,
+			// so it is asked — over a closed list of this page's own artefacts,
+			// and anything citing something else is discarded here exactly as a
+			// fabricated endpoint is (BO-07). The track is additive: a provider
+			// that is unavailable, slow or unhelpful costs behaviours, never the
+			// crawl.
+			behaviours, rejected, notes := pageintel.Propose(intelPage(page), nil)
+			discarded += rejected
+			if len(behaviours) > 0 {
+				titles := make([]string, 0, len(behaviours))
+				for _, b := range behaviours {
+					titles = append(titles, b.Title)
+				}
+				sorted := append([]string{}, titles...)
+				sort.Strings(sorted)
+				breq, _ := upsertRequirement(orgID, projectID,
+					fmt.Sprintf("WEB-%s%s-BEH", short, tokens[index]),
+					fmt.Sprintf("The screen '%s' behaves as its %d stated cases require.",
+						firstNonEmpty(page.Title, page.FinalURL), len(behaviours)),
+					titles, "functional",
+					map[string]any{"url": page.FinalURL},
+					trunc(jsonString(sorted), 4000), "high")
+				requirementCount++
+				author := pageintel.ModelName(nil)
+				for _, b := range behaviours {
+					emitAs(breq, behaviourCase(b), "functional", pageArtefacts, author)
+				}
+			}
+			for _, note := range notes {
+				entry := map[string]any{"type": "functional", "reason": note}
+				if !containsEntry(skipped, entry) {
+					skipped = append(skipped, entry)
 				}
 			}
 		}

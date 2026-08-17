@@ -162,6 +162,11 @@ class Endpoint(TimestampMixin, Base):
 TECHNIQUES: tuple[str, ...] = (
     "ep", "bva", "decision_table", "negative", "manual", "localisation", "edge_case",
     "security", "design", "a11y", "performance",
+    # A behaviour a model proposed for a crawled screen and the grounding gate
+    # admitted (modules/pageintel.py). Kept apart from the deterministic
+    # techniques because it is the one kind whose EXPECTATION nothing verified —
+    # only its targets were checked — and a reviewer needs to see that.
+    "scenario",
 )
 
 # Legal Run.kind values (SECURITY_TESTING_PLAN §8). A run carries exactly one

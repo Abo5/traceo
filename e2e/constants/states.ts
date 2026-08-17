@@ -75,6 +75,10 @@ export const TEST_TECHNIQUES = [
   'design',
   'a11y',
   'performance',
+  // A behaviour the model proposed for a crawled screen and the grounding gate
+  // admitted. Apart from the deterministic techniques on purpose: it is the one
+  // kind whose EXPECTATION nothing verified — only its targets were checked.
+  'scenario',
 ] as const;
 export type TestTechnique = (typeof TEST_TECHNIQUES)[number];
 

@@ -103,7 +103,49 @@ never be produced.
 It stops at **draft** cases. Approval and runs stay manual (BO-07), and
 `automation: "manual"` skips the chain entirely.
 
-## 6. The API surface
+## 6. What the screen is FOR — the model track
+
+The deterministic tracks assert what a page CONTAINS. Measured on a 22-page crawl
+of the OrangeHRM demo they produced 1649 cases, of which 987 read "Design:
+surface #FFFFFF is present" and 15 were functional: structurally true, and nearly
+silent about the product. Nothing said "submitting Add Employee without a first
+name must be refused", because nothing in the pipeline knows what an employee is.
+
+That is the one job a model does better than a rule. For every crawled page with
+a form or a named control, `pageintel` sends a CLOSED description of that page —
+its URL and title, its forms with each field's label, type, required flag,
+pattern and maxlength, its named controls, and the calls it made — and asks for
+the behaviours a competent tester would write.
+
+**What the model may and may not decide.** It may decide intent: which flows
+matter, what a sensible value looks like, what the product should do. It may NOT
+decide what exists. Every proposal addresses artefacts by ids from that closed
+list (`f0.2` is form 0, field 2), and a proposal naming anything else is
+discarded and counted, never repaired — the same rule that governs a fabricated
+endpoint (BO-07). The ids are resolved back into the page's own selectors here,
+so a case is runnable against the screen and auditable back to the render.
+
+The cases land as `technique: "scenario"`, as DRAFTS, and the case row records
+which author wrote it — a reviewer reading a plan that mixes deterministic
+builders with model proposals needs to know which is which.
+
+**Honest limits.**
+* The track is additive. A provider that is unavailable, slow or unhelpful costs
+  behaviours, never the crawl: the page is reported with its reason and the
+  deterministic tracks are unaffected.
+* Without an `ANTHROPIC_API_KEY` the provider is the deterministic mock, which
+  cannot read a screen. It exercises the whole path honestly — real ids, the same
+  gate, the same persistence — and writes only what the page itself declares
+  (empty-submission and per-field rules from the page's own required, maxlength
+  and pattern attributes; for a page with no form, whether each named action
+  leads anywhere). Useful, and not the same thing as a model reading the screen.
+* A hallucinated EXPECTATION is not caught by the gate — only a hallucinated
+  element is. That is what the review step is for, and why nothing here is
+  approved automatically.
+* The model never sees a credential: the payload is built from the inventory,
+  and the inventory never carried one.
+
+## 7. The API surface
 
 | Route | Capability | Returns |
 |---|---|---|
@@ -169,7 +211,7 @@ target instead of accumulating duplicates, which is what keeps the requirements 
 from it stable. The row is created by the POST (status `pending`), so a job that dies still leaves
 something on screen that explains itself — `status: "failed"` with the reason in `error`.
 
-## 7. The browser requirement — and what happens without it
+## 8. The browser requirement — and what happens without it
 
 Discovery runs `node tools/web-discovery/discover.mjs --url <url> --out <dir>`. Both backends shell
 out to the **same** script: parity is about the API surface and the persistence, not about porting a
@@ -198,7 +240,7 @@ important error in the feature: an empty success would report "this page has not
 is the single most misleading thing the product could say. Any of these conditions produces it: no
 `node` on `PATH`, no `playwright` module, no Chromium binary, or a missing sidecar script.
 
-## 8. The authenticated crawl — the one form that is ever submitted
+## 9. The authenticated crawl — the one form that is ever submitted
 
 Most of a product is behind its login. A discovery that only ever sees the logged-out page reports
 on a shell, and its counts read as *"this application is nearly empty"* — which is worse than
@@ -286,7 +328,7 @@ URL cannot redirect the browser onto an internal host. A guard that lived only i
 bypassed by every other caller of the module; a guard that lived only in the parent would be
 bypassed by a redirect.
 
-## 9. The design box
+## 10. The design box
 
 With `ui` selected, the stored target carries a `design` payload derived from the screenshot — the
 same facts the UI cases assert, so what the screen shows and what the suite checks cannot drift:
@@ -303,7 +345,7 @@ same facts the UI cases assert, so what the screen shows and what the suite chec
 The UI renders this as `target-design-section`; colours are addressed on `data-colour` and contrast
 rows on `data-fact-id` (the design fact id), never on rendered copy.
 
-## 10. How this is verified
+## 11. How this is verified
 
 `e2e/tests/web-target.spec.ts` (`@critical @regression`) is **hermetic**: it serves its own page from
 `e2e/test-data/web-target-page.html` on loopback (ports 8010–8030) and never touches the public
@@ -372,7 +414,7 @@ Two environment notes:
 - without Node/Playwright it asserts the `browser_discovery_unavailable` path instead — including
   that the failed target row keeps its reason and that nothing partial was persisted.
 
-## 11. The honest limits
+## 12. The honest limits
 
 - **A rendered page is one state.** The crawl sees each page as it loads — not what happens after a
   tab switch, a modal, a filter or a form submission. Reaching those states means driving the

@@ -237,6 +237,11 @@ type TestCase struct {
 	Model          string `json:"model"`
 	PromptVersion  string `json:"prompt_version"`
 	// ep|bva|decision_table|negative|manual|localisation|edge_case|security
+	// |design|a11y|performance|scenario — the canonical list is
+	// backend/app/models.py TECHNIQUES. "scenario" is a behaviour a model
+	// proposed for a crawled screen and the grounding gate admitted; it is kept
+	// apart from the deterministic techniques because it is the one kind whose
+	// EXPECTATION nothing verified, only its targets.
 	Technique string `json:"technique"`
 	// EdgeCategory is set ONLY by the insight engine (technique "edge_case") and
 	// carries one of insight's 9 canonical category ids. NULL for every other

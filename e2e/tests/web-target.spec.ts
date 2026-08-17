@@ -381,9 +381,17 @@ test.describe('web target discovery @critical @regression', () => {
         // must be free of catalogued weaknesses), so each owns its own
         // requirement. Nothing else may appear in a project from pointing it at
         // a URL.
-        const NON_FORM_REQUIREMENTS = 4; // api, security, ui, performance
+        // …plus at most one BEHAVIOUR requirement per crawled page, holding the
+        // cases the model proposed for that screen. That one is per page rather
+        // than per crawl because it is a statement about a single screen, so the
+        // bound has to count pages — a fixed number here would have to be raised
+        // every time a crawl got wider, which is how a bound stops bounding.
+        const CRAWL_WIDE_REQUIREMENTS = 4; // api, security, ui, performance
+        const pages = Math.max(1, result.pages_visited ?? 1);
         expect(result.requirements).toBeGreaterThanOrEqual(result.forms);
-        expect(result.requirements).toBeLessThanOrEqual(result.forms + NON_FORM_REQUIREMENTS);
+        expect(result.requirements).toBeLessThanOrEqual(
+          result.forms + CRAWL_WIDE_REQUIREMENTS + pages,
+        );
         for (const requirement of requirements) {
           expect(
             requirement.external_id.startsWith('WEB-'),

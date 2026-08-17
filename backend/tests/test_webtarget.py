@@ -422,7 +422,16 @@ def test_the_functional_track_makes_a_requirement_per_form(client, project, side
     assert "form.oxd-form" in login[0]["description"]
     assert "input[name=username]" in login[0]["description"]
     assert "Required: Username, Password" in login[0]["description"]
-    assert len(reqs) == 2                            # one per discovered form
+    # One requirement per discovered form, PLUS one per page for the behaviours
+    # the model proposes about that screen (external id ...-BEH). They are
+    # counted apart on purpose: the form requirements are what the page declares,
+    # the behaviour requirement is what it is for, and conflating them would hide
+    # a track disappearing.
+    from_forms = [r for r in reqs if not (r["external_id"] or "").endswith("-BEH")]
+    behaviours = [r for r in reqs if (r["external_id"] or "").endswith("-BEH")]
+    assert len(from_forms) == 2
+    assert len(behaviours) == 1
+    assert behaviours[0]["state"] == "extracted"
 
 
 def test_functional_cases_carry_the_form_selectors_verbatim(client, project, sidecar):
@@ -435,8 +444,16 @@ def test_functional_cases_carry_the_form_selectors_verbatim(client, project, sid
                  .join(models.TestCase, models.TestCase.id == models.TestStep.test_case_id)
                  .filter(models.TestCase.project_id == pid).all())
         assert steps
+        # The form-derived cases carry their form's selector; the model-proposed
+        # ones address the fields directly and carry none, so they are checked on
+        # their own terms rather than being exempted from checking.
         for step in steps:
-            assert step.request.get("form", "").startswith(("form.", "form#"))
+            form = step.request.get("form", "")
+            if form:
+                assert form.startswith(("form.", "form#"))
+            else:
+                cited = (step.request.get("fields") or []) + (step.request.get("controls") or [])
+                assert cited, "a model-proposed case cited no element of the page"
         payloads = json.dumps([s.request for s in steps])
         assert "input[name=username]" in payloads
         assert "input[name=password]" in payloads

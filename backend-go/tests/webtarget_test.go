@@ -522,8 +522,22 @@ func TestWebTargetFunctionalTrackMakesARequirementPerForm(t *testing.T) {
 
 	var reqs []models.Requirement
 	db.DB.Where("project_id = ?", pid).Find(&reqs)
-	if len(reqs) != 2 {
-		t.Fatalf("one requirement per discovered form, got %d", len(reqs))
+	// One requirement per discovered form, PLUS one per page for the behaviours
+	// the model proposes about that screen (external id ...-BEH). They are
+	// counted apart on purpose: the form requirements are what the page declares,
+	// the behaviour requirement is what it is for, and conflating them would hide
+	// a track disappearing.
+	fromForms, behaviours := 0, 0
+	for _, r := range reqs {
+		if strings.HasSuffix(r.ExternalID, "-BEH") {
+			behaviours++
+		} else {
+			fromForms++
+		}
+	}
+	if fromForms != 2 || behaviours != 1 {
+		t.Fatalf("want 2 form requirements and 1 behaviour requirement, got %d and %d",
+			fromForms, behaviours)
 	}
 	var login *models.Requirement
 	for i := range reqs {
@@ -558,9 +572,20 @@ func TestWebTargetFunctionalCasesCarryTheFormSelectorsVerbatim(t *testing.T) {
 	for _, c := range cases {
 		titles = append(titles, c.Title)
 		for _, s := range c.Steps {
+			// The form-derived cases carry their form's selector; the
+			// model-proposed ones address the fields directly and carry none, so
+			// they are checked on their own terms rather than being exempted.
 			form, _ := s.Request["form"].(string)
-			if !strings.HasPrefix(form, "form.") && !strings.HasPrefix(form, "form#") {
-				t.Fatalf("a case step does not name its form: %v", s.Request)
+			if form != "" {
+				if !strings.HasPrefix(form, "form.") && !strings.HasPrefix(form, "form#") {
+					t.Fatalf("a case step does not name its form: %v", s.Request)
+				}
+			} else {
+				fields, _ := s.Request["fields"].([]any)
+				controls, _ := s.Request["controls"].([]any)
+				if len(fields)+len(controls) == 0 {
+					t.Fatalf("a model-proposed case cited no element of the page: %v", s.Request)
+				}
 			}
 			payloads = append(payloads, jsonOf(t, s.Request))
 		}
