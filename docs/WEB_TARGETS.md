@@ -5,7 +5,8 @@
 >
 > Status: shipped. Backend `backend/app/modules/webtarget.py` (Go parity: the same routes and job),
 > sidecar `tools/web-discovery/discover.mjs`, UI `frontend/app/projects/[id]/target/page.tsx`,
-> suite `e2e/tests/web-target.spec.ts`.
+> suites `e2e/tests/web-target.spec.ts` (one page) and `e2e/tests/web-target-crawl.spec.ts`
+> (signed in, many pages).
 
 ## 1. Why this exists, and the measurement that shaped it
 
@@ -111,7 +112,14 @@ It stops at **draft** cases. Approval and runs stay manual (BO-07), and
 | `GET /v1/web-targets/{id}` | `view` | the target + its inventory summary + the design box |
 | `GET /v1/web-targets/{id}/screenshot` | `view` | `image/png` |
 
-Body: `{url, viewport?, test_types[]}`. Refusals are typed and name what is legal:
+Body: `{url, viewport?, test_types[], auth?, max_pages?}`.
+
+- `auth: {username, password}` — optional, and **write-only**. It is stored encrypted and the
+  payload answers `auth_configured: true|false`; nothing ever reads the pair back out.
+- `max_pages` — 1…50, **default 25**. The default explores on purpose: somebody who hands Traceo a
+  URL is asking about the product, not about one screen.
+
+Refusals are typed and name what is legal:
 
 | Code | Status | When |
 |---|---|---|
@@ -120,11 +128,17 @@ Body: `{url, viewport?, test_types[]}`. Refusals are typed and name what is lega
 | `invalid_viewport` | 422 | not `WIDTHxHEIGHT` within 320x240–3840x4320; `errors` lists usable examples |
 | `invalid_test_type` | 422 | an unknown type, or an empty list; `errors` carries **the legal list** |
 | `test_type_not_in_project` | 422 | a type the project is not set up for; `errors` carries **what it IS set up for** |
+| `invalid_max_pages` | 422 | a page budget outside 1…50; `errors` carries `["1","50"]` |
+| `invalid_credentials` | 422 | `auth` with a blank username or a blank password — half a credential is a mistake worth naming, and the refusal never repeats what was sent |
 | `forbidden` | 403 | the caller lacks `import_spec` (a viewer) |
 | `no_screenshot` | 404 | the target has no stored screenshot |
 
-Validation order is **url → viewport → test types**, which matters to anything asserting a refusal:
-a body-shape refusal must be requested with a URL that passes the guard.
+`login_failed` is **not** in this table: it is a JOB failure, not a request refusal. The site is the
+only thing that can reject a credential, and it is not asked until the browser is running.
+
+Validation order is **url → viewport → test types → credentials → page budget**, which matters to
+anything asserting a refusal: a body-shape refusal must be requested with a URL that passes the
+guard.
 
 The job result:
 
@@ -134,7 +148,12 @@ The job result:
  "endpoints": 1, "requirements": 5,
  "cases_by_type": {"functional": 1, "api": 1, "ui": 77, "performance": 1, "security": 3},
  "skipped": [{"type": "…", "reason": "…"}],
- "discarded": 0, "duplicates": 0}
+ "discarded": 0, "duplicates": 0,
+ "pages_visited": 4,
+ "pages_skipped": [{"url": "…/logout", "reason": "forbidden_control"}],
+ "login": {"succeeded": true, "strategy": "url_left_login"},
+ "credentials_source": "user",
+ "login_required": null}
 ```
 
 Those are the measured numbers for the login page of the OrangeHRM demo at 1280x800 — both
@@ -179,19 +198,74 @@ important error in the feature: an empty success would report "this page has not
 is the single most misleading thing the product could say. Any of these conditions produces it: no
 `node` on `PATH`, no `playwright` module, no Chromium binary, or a missing sidecar script.
 
-## 8. Discovery is read-only
+## 8. The authenticated crawl — the one form that is ever submitted
 
-The sidecar navigates, waits for network idle and fonts, disables animation, reads the DOM and takes
-one full-page screenshot. It **never** submits a form, clicks a control, types, or follows a link.
-The only traffic the target receives is the traffic its own page load generates. Request **bodies**
-are never recorded — a page can POST credentials during boot — only method, URL, resource type,
-status and whether a body existed.
+Most of a product is behind its login. A discovery that only ever sees the logged-out page reports
+on a shell, and its counts read as *"this application is nearly empty"* — which is worse than
+failing, because it looks like an answer.
 
-The SSRF rule of the spec fetcher applies here twice: in `webtarget.validate_target_url` before the
-job is queued, and inside the sidecar itself on the URL **and on every main-frame navigation**, so a
-public URL cannot redirect the browser onto an internal host. A guard that lived only in the child
-would be bypassed by every other caller of the module; a guard that lived only in the parent would
-be bypassed by a redirect.
+**Nobody has to tell Traceo that a page needs a sign-in.** There is no "needs login" flag in the
+API and there must never be one: a visible form containing an `input[type=password]` **is** a login
+page, and the crawl acts on that by itself. A page reached mid-crawl that redirects back to the
+login page is a lost session — it re-authenticates once and continues.
+
+Reaching what is behind the login costs exactly one submitted form. That is the only exception this
+product makes to "discovery is read-only", and it is fenced by one rule, stated identically in
+`tools/web-discovery/discover.mjs`, `backend/app/modules/webtarget.py`,
+`e2e/helpers/local-web-target.ts` and here:
+
+> The crawler submits **THE LOGIN FORM ONLY**, once, with the credentials the user supplied. It
+> submits no other form, ever. It clicks no control whose accessible name or href matches
+> logout / sign out / delete / remove / destroy / reset / deactivate / terminate. It stays on the
+> login URL's origin. It follows links only.
+
+Everything else is unchanged: the sidecar navigates, waits for network idle and fonts, disables
+animation, reads the DOM and takes one full-page screenshot per page. It types nowhere but into the
+two credential fields. Request **bodies** are never recorded — a page can POST credentials during
+boot — only method, URL, resource type, status and whether a body existed.
+
+### What is skipped, and why
+
+| Skipped | Reason | Why it is a rule and not a preference |
+|---|---|---|
+| a link whose accessible name or href matches the forbidden list | `forbidden_control` | The crawl runs against **somebody else's running system**. "Log out" ends the session mid-crawl; "Delete", "Reset" and "Deactivate" destroy data that nobody agreed to lose. |
+| a link to another origin | `cross_origin` | Credentials were given for one origin. Following a link off it turns a scoped crawl into an unscoped scan of the internet. |
+| a non-`http(s)` scheme (`mailto:`, `tel:`, `javascript:`) | `unsupported_scheme` | Nothing there is a page. |
+| anything that triggers a download | `download` | A file is not a page, and fetching one is a transfer nobody asked for. |
+| a page beyond `max_pages` / `max_depth` | `budget_exhausted` | The budget is a **cap**, not a wish. What it left out is reported with this reason, so a short crawl is never mistaken for a small product. |
+
+Every skipped URL is reported with its reason: `pages_skipped: [{url, reason}]`. A skip with no
+reason is indistinguishable from a page the crawl failed to reach.
+
+### Where the credentials come from — in this order
+
+| Source | What it is | What may be said about it |
+|---|---|---|
+| `user` | What the operator supplied. | **A secret.** Sealed with `security.encrypt_secret`, write-only on the wire (the payload answers `auth_configured: true`), passed to the browser through the **child process environment** — never argv, where `ps` shows it to every user on the host. It appears in no payload, no log, no audit entry and no error message. |
+| `page` | What the login screen **publishes about itself**. Demo and sandbox environments routinely print `Username : Admin` / `Password : admin123` next to the form. | **A fact about the page**, read off the rendered screen like every other artefact. It is therefore reportable, and it must be: a run that signed itself in with an account nobody handed it has to be auditable. |
+| `null` | Neither. | Not a failure, and not a licence to crawl the logged-out product and call it the product. The public surface is reported for what it is, together with `login_required` and **the login form's own selectors** — the thing that would unlock the rest. |
+
+The result carries `credentials_source: "user" | "page" | null`. Something read off a page and
+something an operator typed are never conflated.
+
+**A sign-in the site rejects fails the job** with `error_code: "login_failed"`, saying the
+credentials were rejected — without saying *which* half was wrong (the same reason `identity.py`
+answers a bad sign-in with one generic 401) and without containing either value. That applies to
+`user` credentials, where the operator stated something that turned out to be wrong and has to hear
+it. A page-published credential that turns out to be stale is the **page** being wrong, not the
+operator, so the crawl degrades to the public surface and says so.
+
+Success is never assumed. It is proved, and the run says which proof fired: the URL left the login
+page, a sign-out control appeared, or the password field is gone. A crawl that cannot prove it
+signed in does not crawl.
+
+### SSRF, twice
+
+The SSRF rule of the spec fetcher applies in `webtarget.validate_target_url` before the job is
+queued, and inside the sidecar itself on the URL **and on every main-frame navigation**, so a public
+URL cannot redirect the browser onto an internal host. A guard that lived only in the child would be
+bypassed by every other caller of the module; a guard that lived only in the parent would be
+bypassed by a redirect.
 
 ## 9. The design box
 
@@ -223,6 +297,54 @@ artefact (with a fabricated case run through the same matcher to prove the oracl
 concrete ids were templated, that the refusals are typed, that a viewer is refused — and, against
 the target server's own request log, that **nothing was ever submitted or clicked**.
 
+### The authenticated crawl — `e2e/tests/web-target-crawl.spec.ts`
+
+The crawl is verified against a **second** hermetic fixture (`e2e/helpers/local-web-target.ts`
+`startAuthenticatedWebTarget`, page `e2e/test-data/web-target-crawl-page.html`): a client-rendered
+login page, a session cookie issued only on the correct credentials, four linked pages behind it
+**each with its own form and its own field ids**, a "Log out" link, a "Reset password" link, a
+"Delete this account permanently" button and an off-origin link — the forbidden controls on *every*
+page, login included. One shell serves every route, so a plain GET of **any** page contains no
+`form`, `input` or `button`: an inventory with four forms in it is proof that a browser rendered
+four pages.
+
+The fixture is the **safety oracle**, because every clause of the rule in §8 is a negative about the
+outside world and a discovery report cannot be its own witness for a negative. The server records
+every request with the session cookie it carried and the FIELD NAMES of anything submitted (never
+the values — one of them is the password), and the spec asserts against that log:
+
+- the login form was submitted **exactly once**, carrying both credential fields, and accepted;
+- **no other form was ever submitted** — by body keys or by query keys, so a `GET`-method form
+  cannot pass as a navigation;
+- `/logout`, `/reset-password` and the Delete button's `DELETE /api/account` were **never**
+  activated, and no non-`GET` request other than the single sign-in ever arrived;
+- **every page behind the login was fetched with the session cookie** — the difference between
+  crawling the application and crawling the login wall four times;
+- with the credentials rejected: the job fails `login_failed`, the message contains neither half of
+  the pair and does not say which of the two was wrong, nothing behind the login was requested, and
+  no requirement or case was persisted;
+- with nothing supplied and nothing published: nothing is submitted, nothing behind the login is
+  requested, and the run reports `login_required` **with the login form's selectors**;
+- the password appears in no payload — the 202, the target detail, the list, the job, the
+  requirements and the cases are each searched literally, percent-encoded and base64'd;
+- `max_pages` `0` and `51` are refused `422 invalid_max_pages` with `errors: ["1","50"]`, and a
+  blank half of the pair `422 invalid_credentials`;
+- every persisted case cites an artefact from a page the crawl **actually visited**, with a
+  fabricated case (fabricated selector, fabricated fact, fabricated `page:` URL) run through the
+  same matcher first to prove the oracle can fail;
+- one requirement per form **per page**, with page-scoped ids: four forms on four pages must not
+  collapse into one requirement because every page's first form is "form 1";
+- the endpoint every page fetches is persisted **once**, not once per page.
+
+Measured against the real sidecar on that fixture (`--max-pages 4`, credentials supplied): 4 pages
+visited at depths 0/1/1/1, 1 form each, 18 requests reaching the server, **1** submission in total,
+**0** forbidden activations, **0** requests behind the login without a session, and 3 links skipped
+— `/logout` (`forbidden_control`, matched `logout`), `/reset-password` (`forbidden_control`, matched
+`reset`) and `http://127.0.0.1:9/offsite` (`cross_origin`). With **nothing** supplied against the
+same fixture started with `publishCredentials`, the sidecar read `Username : Admin` /
+`Password : admin123` off the rendered page and signed in by itself: `credentials_source: "page"`,
+4 pages visited, evidence recorded as `["Username : Admin", "Password : [redacted]"]`.
+
 Two environment notes:
 
 - loopback is exactly what the SSRF guard blocks, so the backend under test needs
@@ -233,9 +355,24 @@ Two environment notes:
 
 ## 11. The honest limits
 
-- **A rendered page is one state.** Discovery sees the page as it loads, not what happens after a
-  login, a tab switch or a modal. Multi-state discovery would require driving the application, and
-  driving it means submitting forms — which this feature deliberately does not do.
+- **A rendered page is one state.** The crawl sees each page as it loads — not what happens after a
+  tab switch, a modal, a filter or a form submission. Reaching those states means driving the
+  application, and driving it means submitting forms, which the safety rule forbids everywhere
+  except the login. **The login is the only door this product will open.** Whatever is reachable
+  only by pressing "Search" or "Save" is not discovered, and no case is written about it.
+- **The crawl is bounded, and the boundary is arbitrary.** 25 pages by default, 50 at most, depth
+  first-come-first-served in breadth-first order. A large application is sampled, not covered.
+  `pages_skipped` says what was left out and why, so a short crawl is never mistaken for a small
+  product — but "not visited" is not "not there".
+- **A page-published credential is a fact, not a promise.** Reading `Username : Admin` off a demo
+  screen is grounding; the account still being valid is the page's claim, not Traceo's. When it is
+  stale the crawl degrades to the public surface and says so, exactly as if nothing had been
+  published.
+- **The suite does not test session recovery.** The hermetic fixture keeps its session for the whole
+  crawl, so "a page that bounces back to the login mid-crawl re-authenticates once and continues" is
+  implemented and documented but not covered by an e2e assertion — a fixture that expired the
+  session would make "the login form was submitted exactly once" untestable, which is the sharper
+  property of the two.
 - **A captured request is not a contract.** The endpoint inventory it produces sits below `spec` and
   `traffic` on the fidelity ladder for exactly that reason: it states what the page *did* call once,
   not what the API *promises*.

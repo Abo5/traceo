@@ -50,6 +50,7 @@ import (
 	"traceo/internal/modules/discovery"
 	"traceo/internal/modules/generation"
 	secmod "traceo/internal/modules/security"
+	"traceo/internal/security"
 	"traceo/internal/testtypes"
 )
 
@@ -106,6 +107,11 @@ type createRequest struct {
 	URL       string   `json:"url"`
 	Viewport  string   `json:"viewport"`
 	TestTypes []string `json:"test_types"`
+	// Auth and MaxPages are decoded as `any` and validated by hand, so a bad
+	// value gets the coded refusal this contract states rather than a silently
+	// dropped field — and gets the SAME refusal the Python engine gives.
+	Auth     any `json:"auth"`
+	MaxPages any `json:"max_pages"`
 }
 
 // ValidateViewport returns the canonical WIDTHxHEIGHT, or ok=false.
@@ -179,6 +185,15 @@ func createWebTarget(c *gin.Context) {
 			[]string{defaultViewport, "1440x900", "390x844"})
 		return
 	}
+	// Refused before anything is written: a target that was rejected must leave
+	// no row, no credentials and no job behind.
+	username, password, hasAuth, okAuth := ValidateAuth(body.Auth)
+	if !okAuth {
+		errWith(c, http.StatusUnprocessableEntity, "invalid_credentials",
+			"Signing in needs both a username and a password. Neither may be blank.",
+			[]string{"username", "password"})
+		return
+	}
 	// Omitting the types runs what the project declared it is for; asking for a
 	// type it excluded is refused, not quietly dropped. Silently narrowing would
 	// report success for a track that never ran.
@@ -208,28 +223,61 @@ func createWebTarget(c *gin.Context) {
 	var row models.WebTarget
 	found := db.DB.Where("project_id = ? AND organisation_id = ? AND url = ? AND viewport = ?",
 		projectID, u.OrganisationID, target, viewport).First(&row).Error == nil
+	current := DefaultMaxPages
+	if found && row.MaxPages > 0 {
+		current = row.MaxPages
+	}
+	maxPages, okPages := ValidateMaxPages(body.MaxPages, current)
+	if !okPages {
+		errWith(c, http.StatusUnprocessableEntity, "invalid_max_pages",
+			fmt.Sprintf("max_pages must be a whole number between %d and %d.",
+				MinPages, MaxPages),
+			[]string{strconv.Itoa(MinPages), strconv.Itoa(MaxPages)})
+		return
+	}
 	if found {
-		db.DB.Model(&models.WebTarget{}).Where("id = ?", row.ID).
-			Updates(map[string]any{"status": "pending", "last_error": nil,
-				"updated_at": time.Now().UTC()})
+		update := map[string]any{"status": "pending", "last_error": nil,
+			"max_pages": maxPages, "updated_at": time.Now().UTC()}
+		if hasAuth {
+			// Sealed immediately and never read back. Credentials sent once keep
+			// working on a re-run: the write-only rule means the caller CANNOT
+			// resend what it can no longer read.
+			update["auth_config_encrypted"] = security.Encrypt(
+				map[string]any{"username": username, "password": password})
+		}
+		db.DB.Model(&models.WebTarget{}).Where("id = ?", row.ID).Updates(update)
+		if hasAuth {
+			row.AuthConfigEncrypted = update["auth_config_encrypted"].([]byte)
+		}
+		row.MaxPages = maxPages
 	} else {
 		row = models.WebTarget{OrganisationID: u.OrganisationID, ProjectID: projectID,
-			URL: target, Viewport: viewport, Status: "pending", Inventory: models.JSONMap{}}
+			URL: target, Viewport: viewport, Status: "pending", Inventory: models.JSONMap{},
+			MaxPages: maxPages}
+		if hasAuth {
+			row.AuthConfigEncrypted = security.Encrypt(
+				map[string]any{"username": username, "password": password})
+		}
 		if err := db.DB.Create(&row).Error; err != nil {
 			httpx.Err(c, http.StatusUnprocessableEntity, "invalid_request",
 				"The web target could not be recorded.")
 			return
 		}
 	}
+	authConfigured := len(row.AuthConfigEncrypted) > 0
 	httpx.Audit(u.OrganisationID, &u.ID, "web_target.requested", "web_target", row.ID,
-		models.JSONMap{"url": target, "viewport": viewport, "test_types": testTypes})
+		models.JSONMap{"url": target, "viewport": viewport, "test_types": testTypes,
+			"max_pages": maxPages,
+			// Provenance, never a value.
+			"auth_configured": authConfigured})
 
 	orgID, userID, targetID := u.OrganisationID, u.ID, row.ID
 	job := jobs.SubmitForProject("discover", projectID, func(j *jobs.Job) (any, error) {
 		return RunDiscovery(j, orgID, userID, projectID, targetID, target, viewport, testTypes)
 	})
 	c.JSON(http.StatusAccepted, gin.H{"job_id": job.ID, "target_id": targetID,
-		"test_types": testTypes})
+		"test_types": testTypes, "max_pages": maxPages,
+		"auth_configured": authConfigured})
 }
 
 func webTargetDict(t *models.WebTarget, detail bool) gin.H {
@@ -258,6 +306,10 @@ func webTargetDict(t *models.WebTarget, detail bool) gin.H {
 		"test_types":         testTypes,
 		"counts":             counts,
 		"created_at":         t.CreatedAt.UTC().Format(time.RFC3339),
+		// WRITE-ONLY: whether credentials are stored, never what they are. There
+		// is no route anywhere that returns the username or the password.
+		"auth_configured": len(t.AuthConfigEncrypted) > 0,
+		"max_pages":       t.MaxPages,
 	}
 	if detail {
 		listOr := func(key string) any {
@@ -272,6 +324,15 @@ func webTargetDict(t *models.WebTarget, detail bool) gin.H {
 			"console_errors": listOr("console_errors"),
 			"elapsed_ms":     inv["elapsed_ms"],
 			"skipped":        listOr("skipped"),
+			"pages":          listOr("pages"),
+			"crawl": func() any {
+				if m := asMap(inv["crawl"]); m != nil {
+					return m
+				}
+				return gin.H{}
+			}(),
+			"login":   inv["login"],
+			"outcome": str(inv["outcome"]),
 		}
 		if d := asMap(inv["design"]); d != nil {
 			out["design"] = d
@@ -417,6 +478,29 @@ func caseFromMap(data map[string]any, grounds []string) Case {
 	return kase
 }
 
+// casePreconditions is the case's preconditions with its page reference written
+// into them. Until this ran, `page:<final_url>` existed only inside the
+// grounding gate: it decided which cases were admitted and was then dropped, so
+// a persisted case could not answer "which page is this about" without
+// re-deriving it from the selectors. Mirrors webtarget.py::case_preconditions
+// exactly — the two engines must store the same text.
+func casePreconditions(kase Case) string {
+	ref := ""
+	for _, g := range kase.Grounds {
+		if strings.HasPrefix(g, "page:") {
+			ref = g
+			break
+		}
+	}
+	if ref == "" || strings.Contains(kase.Preconditions, ref) {
+		return kase.Preconditions
+	}
+	if kase.Preconditions == "" {
+		return ref
+	}
+	return kase.Preconditions + "\n" + ref
+}
+
 func persistCase(orgID, projectID string, req *models.Requirement, kase Case) {
 	steps := make([]models.TestStep, 0, len(kase.Steps))
 	for i, s := range kase.Steps {
@@ -433,7 +517,7 @@ func persistCase(orgID, projectID string, req *models.Requirement, kase Case) {
 	tc := models.TestCase{
 		OrganisationID: orgID, ProjectID: projectID,
 		Title: trunc(kase.Title, 500), Description: kase.Description,
-		Preconditions: kase.Preconditions, Type: kase.Type, Priority: kase.Priority,
+		Preconditions: casePreconditions(kase), Type: kase.Type, Priority: kase.Priority,
 		State: "draft", Generated: true, Model: modelName,
 		PromptVersion: config.C.PromptVer, Technique: kase.Technique,
 		Version: 1, Steps: steps,
@@ -491,6 +575,7 @@ func persistEndpoints(orgID, projectID string, ops []Operation) (int, int) {
 			}
 			prior.Summary = op.Summary
 			prior.Parameters = models.JSONList(op.Parameters)
+			prior.RequestSchema = models.JSONMap(op.RequestSchema)
 			prior.Source = "dom"
 			prior.ObservedCount = op.ObservedCount
 			db.DB.Save(prior)
@@ -501,7 +586,7 @@ func persistEndpoints(orgID, projectID string, ops []Operation) (int, int) {
 			OrganisationID: orgID, ProjectID: projectID,
 			Method: op.Method, Path: op.Path, Summary: op.Summary,
 			Parameters:      models.JSONList(op.Parameters),
-			RequestSchema:   nil,
+			RequestSchema:   models.JSONMap(op.RequestSchema),
 			ResponseSchemas: models.JSONMap{}, Security: models.JSONList{},
 			Tags: models.JSONList{}, Source: "dom", ObservedCount: op.ObservedCount,
 		}
@@ -545,6 +630,33 @@ func storeScreenshot(targetID string, inv Inventory, outDir string) string {
 	return screenshotDir + "/" + targetID + ".png"
 }
 
+// planFor is what this target asks the browser to do, read from its own row.
+//
+// The credentials are decrypted HERE, inside the job, rather than being handed
+// to it by the HTTP handler: the shorter the distance a password travels, the
+// fewer places it can be logged from. The row is clamped rather than trusted — a
+// value written before the ceiling existed must not make the crawl unbounded.
+func planFor(targetID string) *CrawlPlan {
+	plan := &CrawlPlan{MaxPages: DefaultMaxPages, MaxDepth: DefaultMaxDepth}
+	var row models.WebTarget
+	if err := db.DB.First(&row, "id = ?", targetID).Error; err != nil {
+		return plan
+	}
+	if row.MaxPages > 0 {
+		plan.MaxPages = row.MaxPages
+	}
+	if plan.MaxPages < MinPages {
+		plan.MaxPages = MinPages
+	}
+	if plan.MaxPages > MaxPages {
+		plan.MaxPages = MaxPages
+	}
+	auth := security.Decrypt(row.AuthConfigEncrypted)
+	plan.Username = str(auth["username"])
+	plan.Password = str(auth["password"])
+	return plan
+}
+
 // RunDiscovery renders, persists and generates — the job body behind
 // POST /web-targets.
 func RunDiscovery(job *jobs.Job, orgID, userID, projectID, targetID, target, viewport string,
@@ -555,8 +667,24 @@ func RunDiscovery(job *jobs.Job, orgID, userID, projectID, targetID, target, vie
 	}
 	defer os.RemoveAll(outDir)
 
-	job.Set(0.05, "Rendering "+target)
-	payload, runErr := SidecarRunner(target, viewport, outDir, config.C.WebDiscoveryTimeout)
+	plan := planFor(targetID)
+	if plan.SignsIn() {
+		job.Set(0.05, "Signing in and crawling "+target)
+	} else {
+		job.Set(0.05, "Rendering "+target)
+	}
+	payload, runErr := SidecarRunner(target, viewport, outDir, config.C.WebDiscoveryTimeout,
+		plan)
+	login := NormaliseLogin(payload, plan.SignsIn())
+	// A crawl asked to sign in with the OPERATOR's credentials and unable to
+	// PROVE it did must fail. Continuing would crawl the logged-out product and
+	// report it as the real one — the failure mode that produces confident,
+	// completely wrong test cases. Credentials the PAGE published are a different
+	// matter: the page being wrong is not the operator being wrong, and that
+	// degrades to the public surface further down instead.
+	if runErr == nil && plan.SignsIn() && (login == nil || !login.Succeeded) {
+		runErr = jobs.Fail(LoginFailed, LoginFailedMessage)
+	}
 	if runErr != nil {
 		code, message := "discovery_failed", runErr.Error()
 		var coded *jobs.Error
@@ -570,9 +698,41 @@ func RunDiscovery(job *jobs.Job, orgID, userID, projectID, targetID, target, vie
 		return nil, runErr
 	}
 
-	inv := NormalisePayload(payload)
-	job.Set(0.35, "Reading the rendered page")
-	screenshotKey := storeScreenshot(targetID, inv, outDir)
+	pages := NormalisePages(payload)
+	crawl := NormaliseCrawl(payload)
+	// `visited` is the number of pages THIS module normalised, not the sidecar's
+	// own count: the number a user is shown has to be the number of pages that
+	// actually produced requirements.
+	crawl["visited"] = len(pages)
+	if crawl["requested_max_pages"] == nil {
+		crawl["requested_max_pages"] = plan.MaxPages
+	}
+	crawlSkipped := asList(crawl["skipped"])
+	// The first crawled page IS the top-level page: everything that spoke about
+	// "the page" before the crawl existed still speaks about this one.
+	inv := pages[0]
+	multi := len(pages) > 1
+	if multi {
+		job.Set(0.35, fmt.Sprintf("Reading %d pages", len(pages)))
+	} else {
+		job.Set(0.35, "Reading the rendered page")
+	}
+	tokens := make([]string, len(pages))
+	screenshotKeys := make([]string, len(pages))
+	for i, page := range pages {
+		tokens[i] = PageToken(page, i)
+		screenshotKeys[i] = storeScreenshot(targetID+tokens[i], page, outDir)
+	}
+	screenshotKey := screenshotKeys[0]
+
+	// where names a skip's page only when there is more than one — a single-page
+	// target reads exactly as it always has.
+	where := func(page Inventory, reason string) string {
+		if !multi {
+			return reason
+		}
+		return reason + " (" + page.pageURL() + ")"
+	}
 
 	skipped := []map[string]any{}
 	casesByType := map[string]int{}
@@ -605,15 +765,70 @@ func RunDiscovery(job *jobs.Job, orgID, userID, projectID, targetID, target, vie
 		casesByType[kind]++
 	}
 
+	// The API surface is a property of the CRAWL, not of one page: an endpoint
+	// two pages both call is one endpoint. Everything else is a statement about a
+	// single page and is derived per page below.
+	requests := CrawlRequests(pages)
+
 	// --- api / security: the captured request inventory ---------------------
 	var ops []Operation
 	var domEndpoints []models.Endpoint
 	if selected["api"] || selected["security"] {
 		job.Set(0.45, "Recording the captured requests")
-		ops = EndpointsFromRequests(inv.Requests)
+		// The origins the crawl actually visited — every page it opened, not
+		// merely the URL it was given, because a login can legitimately redirect
+		// to an SSO host and that host is then part of the target.
+		visitedOrigins := map[string]bool{}
+		for _, pg := range pages {
+			target := pg.FinalURL
+			if target == "" {
+				target = pg.URL
+			}
+			if parsed, err := url.Parse(target); err == nil && parsed.Host != "" {
+				visitedOrigins[parsed.Scheme+"://"+parsed.Host] = true
+			}
+		}
+		var foreignReasons []string
+		ops, foreignReasons = EndpointsFromRequests(requests, visitedOrigins)
+		for _, reason := range foreignReasons {
+			if selected["api"] {
+				skipped = append(skipped, map[string]any{"type": "api", "reason": reason})
+			}
+		}
+		// A page that talks to its server through a classic form POST makes no
+		// XHR at all. Its markup still DECLARES the operation, and a crawl that
+		// only reads the network reports zero endpoints for it.
+		observed := map[string]bool{}
+		for _, op := range ops {
+			observed[op.Method+" "+op.Path] = true
+		}
+		declared, declined := EndpointsFromForms(pages)
+		// A captured request beats a declaration for the same operation: one is
+		// what the page did, the other is what it says it would do.
+		for _, op := range declared {
+			if !observed[op.Method+" "+op.Path] {
+				ops = append(ops, op)
+			}
+		}
+		sort.Slice(ops, func(i, j int) bool {
+			if ops[i].Method != ops[j].Method {
+				return ops[i].Method < ops[j].Method
+			}
+			return ops[i].Path < ops[j].Path
+		})
+		if selected["api"] {
+			for _, reason := range declined {
+				skipped = append(skipped, map[string]any{"type": "api", "reason": reason})
+			}
+		}
 		if len(ops) == 0 {
-			reason := "the page made no XHR/fetch request while it was rendered, so " +
-				"there is no API surface to record"
+			reason := "the page made no XHR/fetch request and declares no form action, " +
+				"so there is no API surface to record"
+			if multi {
+				reason = fmt.Sprintf("none of the %d pages the crawl visited made an "+
+					"XHR/fetch request or declared a form action, so there is no API "+
+					"surface to record", len(pages))
+			}
 			for _, t := range []string{"api", "security"} {
 				if selected[t] {
 					skipped = append(skipped, map[string]any{"type": t, "reason": reason})
@@ -642,7 +857,10 @@ func RunDiscovery(job *jobs.Job, orgID, userID, projectID, targetID, target, vie
 		}
 	}
 
-	artefacts := ArtefactIDs(inv, nil)
+	// The api and security tracks are checked against the whole crawl; the
+	// per-page tracks are checked against their own page's set, which is what
+	// stops a form case citing a selector from a different page.
+	artefacts := CrawlArtefactIDs(pages, nil)
 	// The artefact an endpoint-derived case stands on is the REQUEST the browser
 	// was seen to make; the endpoint row is a derivation of it, so citing the
 	// capture keeps the chain back to observed evidence.
@@ -651,6 +869,46 @@ func RunDiscovery(job *jobs.Job, orgID, userID, projectID, targetID, target, vie
 		if len(op.URLs) > 0 {
 			capturedByKey[op.Method+" "+op.Path] = op.URLs[0]
 		}
+	}
+	// Which page a capture was made from, so an endpoint case can say which page
+	// it belongs to. First writer wins: the earliest page in breadth-first order
+	// is the one the crawl reached that request from.
+	pageOfRequest := map[string]string{}
+	for _, page := range pages {
+		ref := PageRef(page)
+		for _, req := range page.Requests {
+			key := "request:" + req.Method + " " + req.URL
+			if _, present := pageOfRequest[key]; !present {
+				pageOfRequest[key] = ref
+			}
+		}
+	}
+	// An endpoint the markup declared has no captured request to cite; what it
+	// stands on is the form element itself and the page that rendered it.
+	declaredByKey := map[string]*Declaration{}
+	for i := range ops {
+		if ops[i].DeclaredBy != nil {
+			declaredByKey[ops[i].Method+" "+ops[i].Path] = ops[i].DeclaredBy
+		}
+	}
+	// endpointGrounds is what a case built on this endpoint may cite, or nil when
+	// nothing the discovery found supports it — in which case no case is built.
+	endpointGrounds := func(method, path string) []string {
+		if captured, present := capturedByKey[method+" "+path]; present {
+			ground := "request:" + method + " " + captured
+			if ref := pageOfRequest[ground]; ref != "" {
+				return []string{ground, ref}
+			}
+			return []string{ground}
+		}
+		if declared, present := declaredByKey[method+" "+path]; present {
+			refs := []string{"selector:" + declared.Selector}
+			if declared.Page != "" {
+				refs = append(refs, declared.Page)
+			}
+			return refs
+		}
+		return nil
 	}
 
 	// --- api: the generator's builders over the observed endpoints ---------
@@ -685,11 +943,10 @@ func RunDiscovery(job *jobs.Job, orgID, userID, projectID, targetID, target, vie
 			requirementCount++
 			for i := range domEndpoints {
 				ep := &domEndpoints[i]
-				captured, present := capturedByKey[strings.ToUpper(ep.Method)+" "+ep.Path]
-				if !present {
+				grounds := endpointGrounds(strings.ToUpper(ep.Method), ep.Path)
+				if len(grounds) == 0 {
 					continue
 				}
-				ground := "request:" + strings.ToUpper(ep.Method) + " " + captured
 				for _, kase := range generation.GenerateCases(apiReq, ep, "standard") {
 					// Same second gate the API generator applies: a case may not
 					// cite a parameter or status the endpoint never declared.
@@ -697,79 +954,118 @@ func RunDiscovery(job *jobs.Job, orgID, userID, projectID, targetID, target, vie
 						discarded++
 						continue
 					}
-					emit(apiReq, caseFromMap(kase, []string{ground}), "api", artefacts)
+					emit(apiReq, caseFromMap(kase, grounds), "api", artefacts)
 				}
 			}
 		}
 	}
 
-	// --- functional: one requirement per form ------------------------------
+	// --- functional: one requirement per form, on every page ---------------
 	if selected["functional"] {
 		job.Set(0.55, "Extracting the forms")
-		if len(inv.Forms) == 0 {
-			skipped = append(skipped, map[string]any{"type": "functional",
-				"reason": "the rendered page contains no form"})
+		anyForm := false
+		for _, page := range pages {
+			if len(page.Forms) > 0 {
+				anyForm = true
+			}
 		}
-		for _, form := range inv.Forms {
-			description, criteria, sourceText := FormRequirementText(form, inv)
-			req, _ := upsertRequirement(orgID, projectID,
-				fmt.Sprintf("WEB-%s-F%d", short, form.Index+1),
-				description, criteria, "functional",
-				map[string]any{"url": inv.FinalURL, "selector": form.Selector},
-				sourceText, "high")
-			requirementCount++
-			for _, kase := range FormCases(form, inv) {
-				emit(req, kase, "functional", artefacts)
+		if !anyForm {
+			reason := "the rendered page contains no form"
+			if multi {
+				reason = fmt.Sprintf("none of the %d pages the crawl visited contains a form",
+					len(pages))
+			}
+			skipped = append(skipped, map[string]any{"type": "functional", "reason": reason})
+		}
+		for index, page := range pages {
+			pageArtefacts := ArtefactIDs(page, nil)
+			for _, form := range page.Forms {
+				description, criteria, sourceText := FormRequirementText(form, page)
+				req, _ := upsertRequirement(orgID, projectID,
+					fmt.Sprintf("WEB-%s%s-F%d", short, tokens[index], form.Index+1),
+					description, criteria, "functional",
+					map[string]any{"url": page.FinalURL, "selector": form.Selector},
+					sourceText, "high")
+				requirementCount++
+				for _, kase := range FormCases(form, page) {
+					emit(req, kase, "functional", pageArtefacts)
+				}
 			}
 		}
 	}
 
-	// --- performance -------------------------------------------------------
+	// --- performance: every page carries its OWN baseline ------------------
 	if selected["performance"] {
 		job.Set(0.62, "Recording the load baseline")
-		if inv.ElapsedMS == nil {
-			skipped = append(skipped, map[string]any{"type": "performance",
-				"reason": "the sidecar reported no elapsed_ms baseline"})
-		} else {
-			budget := config.C.PageLoadBudgetMS
-			observed := *inv.ElapsedMS
+		timed := 0
+		budget := config.C.PageLoadBudgetMS
+		for index, page := range pages {
+			if page.ElapsedMS == nil {
+				continue
+			}
+			timed++
+			observed := *page.ElapsedMS
 			priority := "medium"
 			if observed > budget {
 				priority = "high"
 			}
-			req, _ := upsertRequirement(orgID, projectID, "WEB-"+short+"-PERF",
+			req, _ := upsertRequirement(orgID, projectID,
+				"WEB-"+short+tokens[index]+"-PERF",
 				fmt.Sprintf("The page %s must finish loading within %dms. The observed "+
-					"baseline at discovery was %dms.", inv.FinalURL, budget, observed),
+					"baseline at discovery was %dms.", page.FinalURL, budget, observed),
 				[]string{fmt.Sprintf("Page load completes in %dms or less", budget)},
-				"non_functional", map[string]any{"url": inv.FinalURL},
+				"non_functional", map[string]any{"url": page.FinalURL},
 				jsonString(map[string]any{"budget_ms": budget, "observed_ms": observed}),
 				priority)
 			requirementCount++
-			emit(req, PerformanceCase(inv, budget), "performance", artefacts)
+			emit(req, PerformanceCase(page, budget), "performance", ArtefactIDs(page, nil))
+		}
+		if timed == 0 {
+			skipped = append(skipped, map[string]any{"type": "performance",
+				"reason": "the sidecar reported no elapsed_ms baseline"})
 		}
 	}
 
-	// --- ui: design facts from the screenshot ------------------------------
+	// --- ui: design facts from each page's own screenshot ------------------
 	designPayload := map[string]any{}
+	pageDesigns := make([]map[string]any, len(pages))
+	for i := range pageDesigns {
+		pageDesigns[i] = map[string]any{}
+	}
 	if selected["ui"] {
 		job.Set(0.70, "Extracting design facts")
-		switch {
-		case screenshotKey == "":
+		anyShot := false
+		for _, key := range screenshotKeys {
+			if key != "" {
+				anyShot = true
+			}
+		}
+		if !anyShot {
 			skipped = append(skipped, map[string]any{"type": "ui",
 				"reason": "the sidecar produced no screenshot"})
-		default:
+		}
+		for index, page := range pages {
+			key := screenshotKeys[index]
+			if key == "" {
+				if anyShot {
+					skipped = append(skipped, map[string]any{"type": "ui",
+						"reason": where(page, "the sidecar produced no screenshot")})
+				}
+				continue
+			}
 			img, decodeErr := design.DecodePNG(
-				filepath.Join(config.C.StorageDir, filepath.FromSlash(screenshotKey)),
+				filepath.Join(config.C.StorageDir, filepath.FromSlash(key)),
 				design.RGB{255, 255, 255})
 			if decodeErr != nil {
 				skipped = append(skipped, map[string]any{"type": "ui",
-					"reason": "the screenshot could not be decoded: " + decodeErr.Error()})
-				break
+					"reason": where(page,
+						"the screenshot could not be decoded: "+decodeErr.Error())})
+				continue
 			}
 			analysed, note := design.FitForAnalysis(img, viewportHeight(viewport),
 				config.C.DesignMaxPixels)
 			facts := design.DesignFacts(analysed)
-			designPayload = designSummary(facts, note)
+			pageDesigns[index] = designSummary(facts, note)
 			factIDs := make([]string, 0, len(facts))
 			statements := make([]string, 0, len(facts))
 			for _, f := range facts {
@@ -780,27 +1076,32 @@ func RunDiscovery(job *jobs.Job, orgID, userID, projectID, targetID, target, vie
 			}
 			if len(facts) == 0 {
 				skipped = append(skipped, map[string]any{"type": "ui",
-					"reason": "the screenshot states no extractable design fact"})
-				break
+					"reason": where(page, "the screenshot states no extractable design fact")})
+				continue
 			}
-			uiArtefacts := ArtefactIDs(inv, factIDs)
-			screen := inv.Title
-			if screen == "" {
-				screen = inv.PagePath()
-			}
+			// The requirement names the screen a human would name; the cases name
+			// the screen design.UICases has always named. Kept apart on purpose —
+			// they are two different sentences with two different readers.
+			named := firstNonEmpty(page.Title, page.FinalURL, target)
+			screen := firstNonEmpty(page.Title, page.PagePath())
 			sortedIDs := append([]string{}, factIDs...)
 			sort.Strings(sortedIDs)
-			req, _ := upsertRequirement(orgID, projectID, "WEB-"+short+"-UI",
+			req, _ := upsertRequirement(orgID, projectID,
+				"WEB-"+short+tokens[index]+"-UI",
 				fmt.Sprintf("The screen '%s' conforms to the %d design facts extracted "+
-					"from its rendering at %s.", screen, len(facts), viewport),
+					"from its rendering at %s.", named, len(facts), viewport),
 				statements, "interface",
-				map[string]any{"url": inv.FinalURL, "viewport": viewport},
+				map[string]any{"url": page.FinalURL, "viewport": viewport},
 				jsonString(sortedIDs), "medium")
 			requirementCount++
-			for _, kase := range uiCases(facts, inv, screen) {
+			uiArtefacts := ArtefactIDs(page, factIDs)
+			for _, kase := range uiCases(facts, page, screen) {
 				emit(req, kase, "ui", uiArtefacts)
 			}
 		}
+		// "design" has always meant the target page's design, and the detail route
+		// and the UI both read it that way; the rest travel per page.
+		designPayload = pageDesigns[0]
 	}
 
 	// --- security: the S0 builders over the discovered endpoints -----------
@@ -826,11 +1127,10 @@ func RunDiscovery(job *jobs.Job, orgID, userID, projectID, targetID, target, vie
 		reasons := map[string]bool{}
 		for i := range domEndpoints {
 			ep := &domEndpoints[i]
-			captured, present := capturedByKey[strings.ToUpper(ep.Method)+" "+ep.Path]
-			if !present {
+			grounds := endpointGrounds(strings.ToUpper(ep.Method), ep.Path)
+			if len(grounds) == 0 {
 				continue
 			}
-			ground := "request:" + strings.ToUpper(ep.Method) + " " + captured
 			for _, weakness := range secmod.Weaknesses() {
 				ok, reason := secmod.Applicable(ep, weakness)
 				if !ok {
@@ -838,7 +1138,7 @@ func RunDiscovery(job *jobs.Job, orgID, userID, projectID, targetID, target, vie
 					continue
 				}
 				for _, data := range secmod.BuildCases(req, ep, weakness) {
-					if len(GroundingViolations([]string{ground}, artefacts)) > 0 {
+					if len(GroundingViolations(grounds, artefacts)) > 0 {
 						discarded++
 						continue
 					}
@@ -852,6 +1152,11 @@ func RunDiscovery(job *jobs.Job, orgID, userID, projectID, targetID, target, vie
 						duplicates++
 						continue
 					}
+					// secmod.PersistCase is shared with spec-derived generation,
+					// which has no page to cite; the reference is written in here
+					// so only web-target cases carry it.
+					data["preconditions"] = casePreconditions(Case{
+						Preconditions: str(data["preconditions"]), Grounds: grounds})
 					secmod.PersistCase(orgID, projectID, req, data)
 					existing[key] = true
 					casesByType["security"]++
@@ -876,10 +1181,15 @@ func RunDiscovery(job *jobs.Job, orgID, userID, projectID, targetID, target, vie
 	// --- persist the target ------------------------------------------------
 	job.Set(0.95, "Recording the target")
 	apiRequests := 0
-	for _, r := range inv.Requests {
+	for _, r := range requests {
 		if APIResourceTypes[r.ResourceType] {
 			apiRequests++
 		}
+	}
+	totalForms, totalControls := 0, 0
+	for _, page := range pages {
+		totalForms += len(page.Forms)
+		totalControls += len(page.Controls)
 	}
 	endpointDigest := make([]any, 0, len(ops))
 	for _, op := range ops {
@@ -887,20 +1197,51 @@ func RunDiscovery(job *jobs.Job, orgID, userID, projectID, targetID, target, vie
 			"method": op.Method, "path": op.Path, "observed_count": op.ObservedCount,
 			"origins": op.Origins, "statuses": op.Statuses})
 	}
+	// The sign-in gate is reported against the TARGET page: it is the page a login
+	// form would be on, and after a successful sign-in it is the page the crawl
+	// landed on instead.
+	report := LoginOutcome(login, inv)
+	totalSoFar := 0
+	for _, n := range casesByType {
+		totalSoFar += n
+	}
+	sentence := OutcomeSentence(report, len(pages), len(crawlSkipped),
+		requirementCount, totalSoFar)
+	// One digest per page. Bounded on purpose: the full forms and controls of a
+	// 50-page crawl do not belong in a row that is read on every list.
+	pageDigests := make([]any, 0, len(pages))
+	for i, page := range pages {
+		facts := 0
+		if n, isInt := pageDesigns[i]["fact_count"].(int); isInt {
+			facts = n
+		}
+		pageDigests = append(pageDigests, map[string]any{
+			"url": page.URL, "final_url": page.FinalURL, "title": page.Title,
+			"depth": page.Depth, "status": page.Status, "elapsed_ms": page.ElapsedMS,
+			"has_screenshot": screenshotKeys[i] != "",
+			"counts": map[string]any{"forms": len(page.Forms),
+				"controls": len(page.Controls), "requests": len(page.Requests),
+				"design_facts": facts},
+		})
+	}
 	summary := models.JSONMap{
 		"test_types": testTypes,
 		"counts": map[string]any{
-			"forms": len(inv.Forms), "controls": len(inv.Controls),
-			"requests": len(inv.Requests), "api_requests": apiRequests,
-			"endpoints": endpointCount},
+			"forms": totalForms, "controls": totalControls,
+			"requests": len(requests), "api_requests": apiRequests,
+			"endpoints": endpointCount, "pages": len(pages)},
 		"elapsed_ms":     inv.ElapsedMS,
 		"forms":          inv.Forms,
 		"controls":       capControls(inv.Controls, 200),
-		"requests":       capRequests(inv.Requests, 300),
+		"requests":       capRequests(requests, 300),
 		"endpoints":      endpointDigest,
 		"console_errors": inv.ConsoleErrors,
 		"design":         designPayload,
 		"skipped":        skipped,
+		"pages":          pageDigests,
+		"crawl":          crawl,
+		"login":          report,
+		"outcome":        sentence,
 	}
 	now := time.Now().UTC()
 	finalURL := inv.FinalURL
@@ -919,24 +1260,42 @@ func RunDiscovery(job *jobs.Job, orgID, userID, projectID, targetID, target, vie
 	}
 	result := map[string]any{
 		"target_id": targetID, "title": inv.Title,
-		"forms": len(inv.Forms), "controls": len(inv.Controls),
-		"requests": len(inv.Requests), "endpoints": endpointCount,
+		"forms": totalForms, "controls": totalControls,
+		"requests": len(requests), "endpoints": endpointCount,
 		"requirements": requirementCount, "cases_by_type": casesByType,
 		"skipped": skipped, "discarded": discarded, "duplicates": duplicates,
+		"pages_visited": len(pages), "pages_skipped": crawlSkipped,
+		// Provenance and outcome only. There is no field in this shape a username
+		// or a password could be written into by accident.
+		"login": map[string]any{"succeeded": report["succeeded"],
+			"strategy":           report["strategy"],
+			"credentials_source": report["credentials_source"],
+			"error":              report["error"],
+			"required":           report["required"], "form": report["form"]},
+		// Always present, null included: "we did not sign in" and "we signed in
+		// somehow" must not look the same to a caller.
+		"credentials_source": report["credentials_source"],
+		"outcome":            sentence,
 	}
 	uid := userID
 	httpx.Audit(orgID, &uid, "web_target.discovered", "web_target", targetID, models.JSONMap{
 		"url": target, "viewport": viewport, "test_types": testTypes,
 		"endpoints": endpointCount, "requirements": requirementCount,
-		"cases": totalCases, "discarded": discarded})
+		"cases": totalCases, "discarded": discarded,
+		"pages_visited": len(pages), "login": report["succeeded"],
+		"credentials_source": report["credentials_source"]})
 	// Autopilot chain (automation contract 4a/4b) — auto mode only. Without it
 	// the crawl's requirements stay "extracted" and the model-assisted generator
 	// never runs. It still stops at DRAFT cases: approval and runs stay manual.
 	job.Set(0.99, "Autopilot: confirming extracted requirements")
 	autopilot.AfterWebTarget(projectID, orgID, userID)
 
-	job.Set(0.99, fmt.Sprintf("%d cases from %d forms, %d endpoints",
-		totalCases, len(inv.Forms), endpointCount))
+	pageWord := "pages"
+	if len(pages) == 1 {
+		pageWord = "page"
+	}
+	job.Set(0.99, fmt.Sprintf("%d cases from %d forms on %d %s, %d endpoints",
+		totalCases, totalForms, len(pages), pageWord, endpointCount))
 	return result, nil
 }
 
@@ -961,6 +1320,7 @@ func capRequests(list []Request, n int) []Request {
 func uiCases(facts []design.Fact, inv Inventory, screen string) []Case {
 	path := inv.PagePath()
 	pageURL := inv.pageURL()
+	ref := PageRef(inv)
 	out := make([]Case, 0, len(facts)*2)
 	for _, uc := range design.UICases(facts, screen) {
 		request := map[string]any{"url": pageURL, "screen": uc.Screen, "check": uc.Check,
@@ -970,12 +1330,16 @@ func uiCases(facts []design.Fact, inv Inventory, screen string) []Case {
 		} else {
 			request["evidence"] = nil
 		}
+		grounds := []string{"fact:" + uc.FactID}
+		if ref != "" {
+			grounds = append(grounds, ref)
+		}
 		out = append(out, Case{
 			Title: uc.Title, Description: uc.Description, Preconditions: uc.Preconditions,
 			Type: uc.Type, Priority: uc.Priority, Technique: uc.Technique,
 			Steps: []Step{{Method: "GET", Path: path, Request: request,
 				Assertions: []any{map[string]any{"type": uc.Check, "expected": uc.Expected}}}},
-			Grounds: []string{"fact:" + uc.FactID},
+			Grounds: grounds,
 		})
 	}
 	return out

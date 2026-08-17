@@ -76,6 +76,100 @@ export class TargetPage {
     return this.page.getByTestId('target-result-card');
   }
 
+  // --- "Sign in first" — the authenticated crawl ------------------------------
+  //
+  // The credential fields are collapsed by default: discovery decides for
+  // itself whether a page is a login page, so most runs need nothing typed
+  // here, and a password field permanently on screen invites a real password
+  // into a tool that never asked for one. The whole block is gated on
+  // `import_spec` with the rest of the launcher.
+
+  get authSection(): Locator {
+    return this.page.getByTestId('target-auth-section');
+  }
+
+  /** Why nothing normally has to be filled in here. */
+  get authLead(): Locator {
+    return this.page.getByTestId('target-auth-lead');
+  }
+
+  /** Reveals the two credential fields — UNTICKED on first paint. */
+  get authToggle(): Locator {
+    return this.page.getByTestId('target-auth-toggle');
+  }
+
+  get authUsernameInput(): Locator {
+    return this.page.getByTestId('target-auth-username-input');
+  }
+
+  /** MUST be `type="password"` — asserted, not assumed. */
+  get authPasswordInput(): Locator {
+    return this.page.getByTestId('target-auth-password-input');
+  }
+
+  /** The copy stating what the crawler will and will not do with these. */
+  get authHint(): Locator {
+    return this.page.getByTestId('target-auth-hint');
+  }
+
+  /** Shown while the toggle is on and either credential is blank. */
+  get authIncompleteHint(): Locator {
+    return this.page.getByTestId('target-auth-incomplete-hint');
+  }
+
+  /**
+   * How many pages one crawl may visit (1…50 — the API's own window). OUTSIDE
+   * the collapse: crawl width has nothing to do with signing in.
+   */
+  get maxPagesInput(): Locator {
+    return this.page.getByTestId('target-max-pages-input');
+  }
+
+  /** Shown while the budget is outside 1…50 — start is disabled with it. */
+  get maxPagesHint(): Locator {
+    return this.page.getByTestId('target-max-pages-hint');
+  }
+
+  // --- the crawl outcome on the result card -----------------------------------
+
+  /** `pages_visited` — rendered only when the result reports it. */
+  get resultPagesVisited(): Locator {
+    return this.page.getByTestId('target-result-pages-visited-stat');
+  }
+
+  /** The panel listing the pages the crawl deliberately did not open. */
+  get resultPagesSkipped(): Locator {
+    return this.page.getByTestId('target-result-pages-skipped');
+  }
+
+  /** One skipped page — `data-state` is the reason it was skipped. */
+  get resultPageSkipRows(): Locator {
+    return this.page.getByTestId('target-result-pages-skipped-row');
+  }
+
+  /** The sign-in outcome — `data-state="succeeded|failed|login_required"`. */
+  get resultLogin(): Locator {
+    return this.page.getByTestId('target-result-login');
+  }
+
+  /** Which proof of a successful sign-in fired. */
+  get resultLoginStrategy(): Locator {
+    return this.page.getByTestId('target-result-login-strategy');
+  }
+
+  /**
+   * WHERE the credentials came from — `data-state="user|page"`. Provenance is
+   * reportable; the values behind it are not, and never appear here.
+   */
+  get resultCredentialsSource(): Locator {
+    return this.page.getByTestId('target-result-credentials-source');
+  }
+
+  /** Shown when a login page was found and nothing could sign in to it. */
+  get resultLoginRequired(): Locator {
+    return this.page.getByTestId('target-result-login-required');
+  }
+
   /**
    * Refusal of a rejected start. `data-state` carries the API error CODE
    * (invalid_test_type, browser_discovery_unavailable …) — asserted on the
@@ -155,6 +249,32 @@ export class TargetPage {
 
   async selectViewport(viewport: string): Promise<void> {
     await this.viewportSelect.selectOption(viewport);
+  }
+
+  /** Open the credentials section and type a pair into it. */
+  async fillCredentials(username: string, password: string): Promise<void> {
+    await this.authToggle.click();
+    await this.authUsernameInput.fill(username);
+    await this.authPasswordInput.fill(password);
+  }
+
+  async fillMaxPages(pages: number): Promise<void> {
+    await this.maxPagesInput.fill(String(pages));
+  }
+
+  /**
+   * Everything the browser is holding besides the DOM: the URL, localStorage
+   * and sessionStorage. The password may appear in NONE of them — a secret in
+   * a query string ends up in history, in a referrer and in a server log.
+   */
+  async clientSideState(): Promise<{ url: string; local: string; session: string }> {
+    return {
+      url: this.page.url(),
+      ...(await this.page.evaluate(() => ({
+        local: JSON.stringify(window.localStorage),
+        session: JSON.stringify(window.sessionStorage),
+      }))),
+    };
   }
 
   /** Tick exactly the given types, clearing the two checked by default. */

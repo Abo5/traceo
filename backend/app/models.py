@@ -370,6 +370,17 @@ class WebTarget(TimestampMixin, Base):
     # Why status is "failed" — a failed target with no reason is indistinguishable
     # from one nobody looked at.
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The sign-in credentials the crawl submits to THE LOGIN FORM ONLY, sealed
+    # with the same envelope environments use (app.security.encrypt_secret). The
+    # column is WRITE-ONLY on the wire: the API answers auth_configured
+    # true/false and never returns a username or a password, so a leaked payload
+    # or a shoulder-surfed screen cannot hand over the account.
+    auth_config_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    # How many pages one crawl may visit (1..50). The default explores: a user
+    # who hands Traceo a URL expects the product behind it to be examined, not
+    # one screen of it, and a default of 1 would mean the tool does nothing
+    # until someone finds the knob.
+    max_pages: Mapped[int] = mapped_column(Integer, default=25)
 # --- end web targets -------------------------------------------------------------------
 
 

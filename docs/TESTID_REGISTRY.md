@@ -67,6 +67,15 @@ sessions from them.
 | `projects-confirm-cancel-button` | Button | Abort the destructive action |
 | `projects-confirm-submit-button` | Button | Confirm archive/delete |
 
+**Creating with a URL always starts, including a page behind a sign-in.** The
+dialog pushes `/projects/{id}/target?url=…&start=1` and the Target screen runs
+the discovery on arrival — there is **no** "this page needs a sign-in"
+checkbox and no id for one. Discovery recognises a login page by itself (a
+visible form carrying an `input[type=password]`) and prefers the credentials
+the page publishes about itself, so a knob describing that would be asking the
+user for something the product can already see. The dialog collects no
+username and no password, and a secret never travels in a query string.
+
 ## App shell — `frontend/app/layout.tsx`
 
 | data-testid | Element | Purpose |
@@ -296,6 +305,15 @@ The **web target** screen: a URL plus a subset of the five test types, discovere
 | `target-url-input` | Input | Target page URL (absolute http/https) |
 | `target-url-hint` | text | Shown while the typed URL is not an absolute http(s) URL |
 | `target-viewport-select` | Select | Render viewport, `WIDTHxHEIGHT` (default `1280x800`) |
+| `target-auth-section` | panel | The sign-in block — an override, not a step (see below) |
+| `target-auth-lead` | text | Why nothing normally has to be filled in here |
+| `target-auth-toggle` | checkbox | "Sign in with my own credentials instead" — **unticked by default**; ticking reveals the two fields |
+| `target-auth-username-input` | Input | Username override — rendered only while the toggle is on |
+| `target-auth-password-input` | Input | Password override, `type="password"` — rendered only while the toggle is on |
+| `target-auth-hint` | text | The safety rule verbatim + the credential-handling rule — rendered with the fields |
+| `target-auth-incomplete-hint` | text | Shown when the toggle is on with a blank username or password (start is disabled) |
+| `target-max-pages-input` | Input (number) | Crawl budget, 1–50, **default 25** — always visible, the toggle does not hide it |
+| `target-max-pages-hint` | text | Shown when the budget is outside 1–50 (start is disabled) |
 | `target-type-picker` | container | The five toggles |
 | `target-type-row` | row (repeated) | One test-type choice — identified by its checkbox id |
 | `target-types-scope-hint` | text | Shown when the project excludes some types |
@@ -325,6 +343,14 @@ The **web target** screen: a URL plus a subset of the five test types, discovere
 | `target-result-cases-badge` | Badge (repeated) | One `cases_by_type` entry — `data-state` is the test type |
 | `target-result-skipped` | panel | `skipped[]` — types that produced nothing, with the reason |
 | `target-result-skipped-row` | row (repeated) | One skipped type — `data-state` is the type |
+| `target-result-pages-visited-stat` | StatCard | `pages_visited` — rendered only when the result reports it |
+| `target-result-pages-skipped` | panel | `pages_skipped[]` — URLs the crawl deliberately did not open |
+| `target-result-pages-skipped-row` | row (repeated) | One skipped URL — `data-state` is the reason |
+| `target-result-login` | row | Sign-in outcome — `data-state="succeeded\|failed\|login_required"` |
+| `target-result-login-strategy` | text | Which proof of a successful sign-in fired (URL left the login page / logout control appeared / password field gone) |
+| `target-result-credentials-source` | text | `data-state="user\|page"` — whose credentials were used; the credentials themselves are never rendered |
+| `target-result-login-required` | panel | The page needs a sign-in and none were available — only the public surface was read |
+| `target-login-failed` | panel | Job refusal `login_failed` — shown inside `target-start-error`, above the server's message |
 | `target-to-requirements-button` | Button | Go to requirements |
 | `target-to-endpoints-button` | Button | Go to endpoints |
 | `target-to-review-button` | Button | Go to the review queue |
@@ -356,6 +382,36 @@ The **web target** screen: a URL plus a subset of the five test types, discovere
 | `target-design-contrast-empty` | text | No contrast facts (UI type was not selected) |
 
 **Colours are asserted on `data-colour`, never on the swatch's inline style** — the same rule as `data-state`: the hex is backend data, the styling is presentation. A palette row is addressed by `[data-colour="#RRGGBB"]`, a contrast row by its `data-fact-id` (`contrast:#INK_on_#SURFACE`), which is exactly the fact id the generated UI cases carry.
+
+**The sign-in block is an override, not a step.** Discovery decides for itself
+whether a page is a login page — a visible form carrying an
+`input[type=password]` — and takes its credentials in this order: what the user
+supplied, then what the page publishes about itself (demo and sandbox sites
+routinely print them on the login screen; reading them is the same grounding
+rule as everything else), then neither, which is reported as `login_required`
+rather than failed and rather than passed off as complete. So
+`target-auth-toggle` is unticked by default and `target-auth-username-input`,
+`target-auth-password-input` and `target-auth-hint` are **absent from the DOM**
+until it is ticked — a legitimate state, not a defect. `target-max-pages-input`
+sits in the same block but is always visible: the crawl budget is independent
+of signing in, and it defaults to **25**, not 1.
+
+**Nothing on this screen ever renders a credential.** The password field is
+`type="password"`, is cleared when the toggle is unticked, and its value is
+sent once in the POST body — never to the URL, `localStorage`,
+`sessionStorage` or a query string. `target-result-credentials-source` names
+*whose* credentials were used (`user` or `page`) and never what they were. A
+spec asserts the absence by searching the URL and both storages for the
+password it typed.
+
+**Three sign-in outcomes, one id.** `target-result-login` carries
+`data-state="succeeded"` (with `target-result-login-strategy` naming the proof
+that fired), `"failed"` when supplied credentials were rejected — which arrives
+as a failed job, so `target-start-error[data-state="login_failed"]` and
+`target-login-failed` are what a spec asserts — or `"login_required"` when the
+page needs a sign-in and no credentials existed. The last one is a completed
+job with a partial result: `target-result-login-required` says so plainly, and
+the pages behind the sign-in are absent from the counts rather than invented.
 
 **Absence of the design ids is a legitimate state.** `ui` is only one of five optional types: a run with `ui` unchecked stores no design facts, so `target-design-palette-empty` and `target-design-contrast-empty` are rendered instead. Specs assert the design box against the types they actually requested.
 

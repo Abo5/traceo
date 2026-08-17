@@ -476,13 +476,17 @@ test.describe('web target discovery @critical @regression', () => {
           expect(endpoint.path.startsWith('/'), `"${endpoint.path}" is not a server-relative path`).toBe(
             true,
           );
-          // The page only ever GETs. A POST or DELETE in the inventory would
-          // mean the discovery submitted the form or clicked the destructive
-          // control — the safety rule, observed from the persisted side.
+          // A POST endpoint here is legitimate: a form DECLARES its action, and
+          // recording that declaration is not performing it. What must stay true
+          // is the safety rule itself, and the only witness for that is the
+          // target server's own log — asserted below, outside this loop.
+          // Reading "no POST endpoint" as proof of "nothing was submitted" would
+          // conflate the inventory with the traffic, and would go on passing if
+          // discovery started submitting forms that happened to be GET.
           expect(
             endpoint.method.toUpperCase(),
-            `a ${endpoint.method} endpoint was discovered from a page that only issues GETs`,
-          ).toBe('GET');
+            `"${endpoint.method}" is not an HTTP method`,
+          ).toMatch(/^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/);
           for (const concrete of CONCRETE_IDS) {
             expect(
               endpoint.path,

@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Traceo Crawl Fixture</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+      body {
+        background: #12131a;
+        color: #f2eff6;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+        min-height: 800px;
+      }
+      /* No transitions or animations anywhere: the screenshot must be a pure
+         function of the markup, or the design facts extracted from it would
+         differ page to page for reasons that have nothing to do with the page. */
+      * { transition: none !important; animation: none !important; }
+      .page { padding: 64px 0; display: flex; justify-content: center; }
+      .card { background: #1e2029; width: 640px; padding: 48px; }
+      h1 { margin: 0 0 32px 0; font-size: 32px; color: #f2eff6; }
+      label { display: block; margin: 0 0 8px 0; font-size: 14px; color: #f2eff6; }
+      input[type="text"], input[type="password"], input[type="email"] {
+        display: block;
+        width: 544px;
+        height: 48px;
+        margin: 0 0 24px 0;
+        padding: 0 16px;
+        background: #2a2d3a;
+        border: 0;
+        color: #f2eff6;
+        font-size: 16px;
+      }
+      .primary {
+        display: block;
+        width: 544px;
+        height: 56px;
+        margin: 16px 0 0 0;
+        border: 0;
+        background: #f0903f;
+        color: #12131a;
+        font-size: 18px;
+        font-weight: 700;
+      }
+      /* Deliberately below WCAG AA on this surface, exactly like the
+         single-page fixture: a failing contrast fact is what gives the ui
+         track a real finding to ground a case in. */
+      .muted { color: #6b6f7a; font-size: 22px; line-height: 32px; margin: 24px 0 0 0; }
+      .danger { margin: 32px 0 0 0; background: #1e2029; color: #6b6f7a; border: 0; font-size: 22px; }
+      /* The published pair is ordinary visible copy, sized like the rest of the
+         card: a credential a demo site prints is not a hidden hint. */
+      .published { margin: 0 0 24px 0; padding: 16px; background: #2a2d3a; font-size: 18px; line-height: 28px; }
+      .published p { margin: 0; color: #f2eff6; }
+      nav { margin: 32px 0 0 0; font-size: 18px; line-height: 32px; }
+      nav a { display: inline-block; margin: 0 16px 0 0; }
+      a { color: #f0903f; }
+    </style>
+  </head>
+  <body>
+    <!--
+      SERVED HTML CONTAINS NO FORM, NO INPUT AND NO BUTTON — on purpose, and on
+      EVERY page this fixture serves, not just the login page.
+
+      The measured constraint behind the whole feature: the OrangeHRM demo login
+      is a Vue SPA whose plain HTTP GET returns ~3.4KB with 0 forms, 0 inputs and
+      0 buttons, and the pages behind its login are the same. A crawler that
+      "logged in" by string-parsing the response body would find no field to
+      type into and no link to follow, so every artefact the suite observes from
+      this fixture is proof that a real browser rendered every page it reports —
+      not only the first one.
+
+      One shell serves every route. The page is chosen from location.pathname, so
+      the login page and the four pages behind it are the same client-rendered
+      document with different content — which is what makes "the crawl visited
+      four pages" a statement about the crawler rather than about the fixture.
+    -->
+    <div id="app" data-state="loading">Loading…</div>
+
+    <script>
+      const APP = document.getElementById('app');
+
+      /*__TRACEO_FIXTURE_FLAGS__*/
+
+      /**
+       * PAGE-PUBLISHED CREDENTIALS. Demo and sandbox environments routinely
+       * print the account next to the form — the motivating target's login
+       * screen reads "Username : Admin" and "Password : admin123" in plain
+       * sight. When the fixture is started that way the server writes the pair
+       * into the marker above and this page RENDERS IT AS VISIBLE TEXT, which
+       * is the only place a crawler may read it from: something published on a
+       * page is a fact about that page, and reading a fact is grounding, not
+       * guessing.
+       *
+       * The pair published here is deliberately NOT the pair an operator
+       * supplies (see CRAWL_CREDENTIALS in the helper). Keeping them different
+       * is what lets the suite assert that a user's secret appears nowhere,
+       * while a page-published credential is allowed to appear everywhere it
+       * already appears — on the page.
+       */
+      const PUBLISHED = window.__TRACEO_PUBLISHED_CREDENTIALS__ || null;
+
+      /**
+       * Markup is built with DOM calls, never as an HTML string: the bytes this
+       * server sends contain no form, input or button TAG anywhere, so even a
+       * regex-based reader finds nothing on any page. Only something that
+       * EXECUTED the page can see the fields — which is the property the whole
+       * fixture exists to have.
+       */
+      function el(tag, props, children) {
+        const node = document.createElement(tag);
+        for (const [key, value] of Object.entries(props || {})) {
+          if (value === true) node.setAttribute(key, '');
+          else if (value !== null && value !== false) node.setAttribute(key, String(value));
+        }
+        for (const child of children || []) {
+          node.appendChild(typeof child === 'string' ? document.createTextNode(child) : child);
+        }
+        return node;
+      }
+
+      function field(spec) {
+        const attrs = { id: spec.id, name: spec.name || spec.id, type: spec.type };
+        if (spec.required) attrs.required = true;
+        if (spec.maxlength) attrs.maxlength = spec.maxlength;
+        if (spec.placeholder) attrs.placeholder = spec.placeholder;
+        if (spec.pattern) attrs.pattern = spec.pattern;
+        return [el('label', { for: spec.id }, [spec.label]), el('input', attrs, [])];
+      }
+
+      /**
+       * Every page carries a DIFFERENT form with DIFFERENT field ids. That is
+       * the whole point: a case grounded in `#profile-email` can only have come
+       * from the profile page, so per-page grounding is checkable rather than
+       * asserted by hope. The login page's fields are named `username` and
+       * `password` because that is what the motivating target names them.
+       */
+      const PAGES = {
+        '/login': {
+          title: 'Sign in',
+          heading: 'Traceo Crawl Fixture',
+          form: {
+            id: 'signin',
+            action: '/login',
+            method: 'post',
+            submit: 'Sign in',
+            fields: [
+              {
+                id: 'username',
+                type: 'text',
+                label: 'Username',
+                required: true,
+                maxlength: 64,
+                placeholder: 'Your username',
+              },
+              {
+                id: 'password',
+                type: 'password',
+                label: 'Password',
+                required: true,
+                maxlength: 72,
+                placeholder: 'Your password',
+              },
+            ],
+          },
+          // The login page issues no XHR: an API call recorded without a session
+          // cookie would then be ambiguous, and the suite asserts that every
+          // request behind the login carried one.
+          fetches: [],
+        },
+        '/app/dashboard': {
+          title: 'Dashboard',
+          heading: 'Dashboard',
+          form: {
+            id: 'dashboard-search',
+            action: '/app/dashboard',
+            method: 'post',
+            submit: 'Search',
+            fields: [
+              {
+                id: 'dashboard-term',
+                type: 'text',
+                label: 'Search orders',
+                required: true,
+                maxlength: 80,
+                placeholder: 'Order reference',
+              },
+            ],
+          },
+          fetches: ['/api/v2/session', '/api/v2/summary'],
+        },
+        '/app/profile': {
+          title: 'My profile',
+          heading: 'My profile',
+          form: {
+            id: 'profile-details',
+            action: '/app/profile',
+            method: 'post',
+            submit: 'Save profile',
+            fields: [
+              {
+                id: 'profile-email',
+                type: 'email',
+                label: 'Contact email',
+                required: true,
+                maxlength: 120,
+                pattern: '[^@]+@[^@]+',
+              },
+              { id: 'profile-phone', type: 'text', label: 'Phone', maxlength: 20 },
+            ],
+          },
+          fetches: ['/api/v2/session', '/api/v2/customers/3f0f8e2c-4d1a-4a53-9f4b-6a2c9b7e1d55'],
+        },
+        '/app/orders': {
+          title: 'Orders',
+          heading: 'Orders',
+          form: {
+            id: 'orders-filter',
+            action: '/app/orders',
+            method: 'post',
+            submit: 'Apply filter',
+            fields: [
+              {
+                id: 'orders-reference',
+                type: 'text',
+                label: 'Reference',
+                required: true,
+                maxlength: 24,
+              },
+              { id: 'orders-note', type: 'text', label: 'Note', maxlength: 200 },
+            ],
+          },
+          fetches: ['/api/v2/session', '/api/v2/orders/1042', '/api/v2/orders?status=open&page=1'],
+        },
+        '/app/settings': {
+          title: 'Settings',
+          heading: 'Settings',
+          form: {
+            id: 'settings-preferences',
+            action: '/app/settings',
+            method: 'post',
+            submit: 'Save settings',
+            fields: [
+              { id: 'settings-locale', type: 'text', label: 'Locale', required: true, maxlength: 8 },
+            ],
+          },
+          fetches: ['/api/v2/session', '/api/v2/settings'],
+        },
+      };
+
+      /**
+       * The chrome every page carries — including the three controls a crawl
+       * MUST NOT activate. They are present on EVERY page, login included, so a
+       * crawler that clicked controls would have to be lucky four times over to
+       * escape the server's request log, and a crawler that browsed without
+       * logging in would still be recorded asking for a page behind the login.
+       */
+      function chrome() {
+        const nav = el('nav', { id: 'site-nav' }, [
+          el('a', { id: 'nav-dashboard', href: '/app/dashboard' }, ['Dashboard']),
+          el('a', { id: 'nav-profile', href: '/app/profile' }, ['My profile']),
+          el('a', { id: 'nav-orders', href: '/app/orders' }, ['Orders']),
+          el('a', { id: 'nav-settings', href: '/app/settings' }, ['Settings']),
+          el('a', { id: 'nav-logout', href: '/logout' }, ['Log out']),
+          el('a', { id: 'nav-reset', href: '/reset-password' }, ['Reset password']),
+          // A different origin (same host, different port). Following it would
+          // leave the login URL's origin, which the safety rule forbids.
+          el('a', { id: 'nav-offsite', href: 'http://127.0.0.1:9/offsite' }, ['Status (external)']),
+        ]);
+
+        const destructive = el(
+          'button',
+          { id: 'delete-account', type: 'button', 'data-action': 'delete', class: 'danger' },
+          ['Delete this account permanently'],
+        );
+        destructive.addEventListener('click', () => fetch('/api/account', { method: 'DELETE' }));
+
+        return [nav, destructive];
+      }
+
+      function render() {
+        const page = PAGES[location.pathname];
+        if (!page) return;
+
+        document.title = 'Traceo Crawl Fixture — ' + page.title;
+        APP.setAttribute('data-state', 'ready');
+        APP.textContent = '';
+
+        const form = el(
+          'form',
+          { id: page.form.id, name: page.form.id, action: page.form.action, method: page.form.method },
+          [
+            ...page.form.fields.flatMap(field),
+            el('button', { id: page.form.id + '-submit', type: 'submit', class: 'primary' }, [
+              page.form.submit,
+            ]),
+          ],
+        );
+
+        // Large muted copy: the contrast fact only exists if the ink covers
+        // enough of the canvas to be extracted from the screenshot. It carries
+        // NO link, deliberately — every same-origin link this fixture serves is
+        // a nav link, so "which pages a crawl visits" is a statement about the
+        // crawl budget and the skip rules, never about DOM order.
+        const help = el('p', { class: 'muted' }, [
+          'Trouble with this screen? Ask your administrator for access.',
+        ]);
+
+        // Printed the way a demo environment prints it — two visible lines
+        // next to the form, in the same "Label : value" shape the motivating
+        // target uses. Nothing hidden, nothing in an attribute: if a crawler
+        // is to use these, it has to READ THE RENDERED PAGE.
+        const published =
+          PUBLISHED && location.pathname === '/login'
+            ? [
+                el('div', { id: 'demo-credentials', class: 'published' }, [
+                  el('p', {}, ['Username : ' + PUBLISHED.username]),
+                  el('p', {}, ['Password : ' + PUBLISHED.password]),
+                ]),
+              ]
+            : [];
+
+        APP.appendChild(
+          el('div', { class: 'page' }, [
+            el('div', { class: 'card' }, [
+              el('h1', {}, [page.heading]),
+              ...published,
+              form,
+              help,
+              ...chrome(),
+            ]),
+          ]),
+        );
+
+        for (const url of page.fetches) fetch(url);
+      }
+
+      // A tick after DOMContentLoaded: nothing that reads the initial HTML
+      // response body can see the form, only something that ran the script.
+      window.addEventListener('DOMContentLoaded', () => setTimeout(render, 30));
+    </script>
+  </body>
+</html>

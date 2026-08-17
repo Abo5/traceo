@@ -246,16 +246,49 @@ export default function TargetPage() {
 
   const L = {
     title: "Target",
-    sub: "Point Traceo at a URL: a real browser renders it, and the test types you pick are built from what it actually found",
+    sub: "Point Traceo at a URL: a real browser renders it, signs in when the page asks for one, crawls what it links to, and the test types you pick are built from what it actually found",
     launcher: "Web target",
     urlLabel: "Page URL",
-    urlHint: "The page is rendered in a browser — client-rendered SPAs are discovered exactly like server-rendered pages.",
+    urlHint: "The page is rendered in a browser — client-rendered SPAs are discovered exactly like server-rendered pages. Give the login page itself if there is one; it is recognised on sight.",
     urlPh: "https://example.com/login",
     viewportLabel: "Viewport",
     types: "Test types",
     typesHint: "Each type only builds from what discovery found — nothing is invented.",
     start: "Start discovery",
     starting: "Discovering…",
+    auth: "Sign in",
+    authLead:
+      "Nothing to set up: a page with a visible password field IS a login page, and discovery signs in by itself — with the credentials the page publishes about itself when it publishes any, as demo and sandbox sites routinely do.",
+    authToggle: "Sign in with my own credentials instead",
+    authToggleHint:
+      "Only needed when the page publishes none, or to sign in as a specific user. What you type here outranks anything read off the page.",
+    authUser: "Username",
+    authUserPh: "Admin",
+    authPass: "Password",
+    // The one safety rule, stated the same way in the crawler, the API and here.
+    authRule:
+      "The crawler submits the login form only, once, with the credentials you supply. It submits no other form, ever. It clicks no control whose accessible name or href matches logout / sign out / delete / remove / destroy / reset / deactivate / terminate. It stays on the login URL's origin. It follows links only.",
+    authStorage:
+      "The password is sent once with this request and stored encrypted. It is never read back, never put in the address bar, and never kept in browser storage.",
+    authIncomplete: "Enter both a username and a password, or untick this and let discovery sign itself in.",
+    maxPages: "Pages to crawl",
+    maxPagesHint:
+      "Breadth-first from the page you gave, same origin only. 25 by default; 50 is the ceiling.",
+    maxPagesBad: "Enter a whole number between 1 and 50",
+    pagesVisited: "Pages visited",
+    pagesSkipped: "Pages skipped",
+    loginOk: "Signed in",
+    loginBad: "Not signed in",
+    loginVia: "proof",
+    credsLabel: "Credentials",
+    credsUser: "the ones you supplied",
+    credsPage: "published by the page itself",
+    loginFailedTitle: "The site rejected the credentials",
+    loginFailedHelp:
+      "Nothing was crawled: a run that cannot prove it signed in would describe the logged-out product. Check the username and the password on the target site, then start again.",
+    loginRequiredTitle: "This page needs a sign-in, and no credentials were available",
+    loginRequiredHelp:
+      "The page publishes none and none were supplied, so only the public surface was read. What is behind the sign-in was not visited and nothing was invented for it. Supply credentials above and start again to cover it.",
     grounding:
       "Every case references something discovery actually found: a form field selector, a captured request, or a design fact id.",
     result: "Discovery result",
@@ -297,6 +330,15 @@ export default function TargetPage() {
   // ---- launcher state ----
   const [url, setUrl] = useState("");
   const [viewport, setViewport] = useState(VIEWPORTS[0]);
+  // Credentials live in component state only, for the lifetime of one start.
+  // They are never written to the URL, to localStorage or to a query string —
+  // a secret in an address bar ends up in history, in a screenshot and in a log.
+  const [authOn, setAuthOn] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  // 25 by default: a site is a set of pages, and a crawl that stopped at the
+  // first one described the front door and called it the building.
+  const [maxPages, setMaxPages] = useState("25");
   // The project's declaration is the default AND the ceiling: the backend
   // refuses a type the project is not set up for, so offering it here would be
   // offering a control that always fails.
@@ -422,7 +464,14 @@ export default function TargetPage() {
 
   const trimmed = url.trim();
   const urlOk = /^https?:\/\/\S+$/i.test(trimmed);
-  const canStart = urlOk && selected.size > 0 && !job && projectLoaded;
+  // The backend refuses 0 and 51 with invalid_max_pages; the same window is
+  // enforced here so the common typo costs a hint rather than a failed job.
+  const maxPagesRaw = maxPages.trim();
+  const maxPagesNum = /^\d+$/.test(maxPagesRaw) ? Number.parseInt(maxPagesRaw, 10) : NaN;
+  const maxPagesOk = Number.isInteger(maxPagesNum) && maxPagesNum >= 1 && maxPagesNum <= 50;
+  // A password is never trimmed: leading and trailing spaces are part of it.
+  const authComplete = !authOn || (username.trim() !== "" && password !== "");
+  const canStart = urlOk && selected.size > 0 && !job && projectLoaded && maxPagesOk && authComplete;
 
   // Arriving from the New Project dialog with ?url=…&start=1: prefill and run.
   // The query is cleared first so a refresh does not launch a second discovery,
@@ -436,7 +485,12 @@ export default function TargetPage() {
     autoStarted.current = true;
     setUrl(wanted);
     if (search?.get("start") === "1") {
-      router.replace(`/projects/${id}/target`);
+      // history.replaceState, not router.replace: the router's version is a
+      // transition that resolves after a round trip, so it can still be in
+      // flight when the discovery it triggers has already started — leaving a
+      // reloadable ?start=1 in the address bar, which launches a second
+      // discovery. Rewriting history directly cannot lose that race.
+      window.history.replaceState(null, "", `/projects/${id}/target`);
       setPendingAutoStart(wanted);
     }
   }, [search, router, id]);
@@ -459,14 +513,17 @@ export default function TargetPage() {
     setResult(null);
     setJob({ msg: L.starting, pct: 2 });
     try {
-      const res = await api(`/projects/${id}/web-targets`, {
-        body: {
-          url: trimmed,
-          viewport,
-          // Sent in the canonical order so the request is stable to read.
-          test_types: TEST_TYPES.filter((t) => selected.has(t)),
-        },
-      });
+      const body: Record<string, any> = {
+        url: trimmed,
+        viewport,
+        // Sent in the canonical order so the request is stable to read.
+        test_types: TEST_TYPES.filter((t) => selected.has(t)),
+        max_pages: maxPagesNum,
+      };
+      // Omitted entirely when the sign-in is not asked for, so an untouched
+      // launcher sends exactly the request it sent before this section existed.
+      if (authOn) body.auth = { username: username.trim(), password };
+      const res = await api(`/projects/${id}/web-targets`, { body });
       const out = await pollJob(res.job_id, (j) =>
         setJob({ msg: j?.message || L.starting, pct: jobPct(j) })
       );
@@ -494,6 +551,26 @@ export default function TargetPage() {
     result?.cases_by_type && typeof result.cases_by_type === "object" ? result.cases_by_type : {};
   const duplicateCount = toNum(result?.duplicates) ?? 0;
   const discardedCount = toNum(result?.discarded) ?? 0;
+  // The crawl summary. `skipped` above is the test types that produced nothing;
+  // `pages_skipped` is a different list — URLs the crawl deliberately did not
+  // open — so the two are never merged into one panel.
+  const pagesVisited = toNum(result?.pages_visited);
+  const pagesSkipped: any[] = Array.isArray(result?.pages_skipped) ? result.pages_skipped : [];
+  const login: any =
+    result?.login && typeof result.login === "object" ? result.login : null;
+  const loginSucceeded = toBool(login?.succeeded);
+  // A page that needs a sign-in nobody could provide is neither a success nor a
+  // failure: the run is honest about covering the public surface only, so it is
+  // reported as its own outcome rather than folded into either of the other two.
+  const loginRequired =
+    result?.login_required === true ||
+    login?.status === "login_required" ||
+    login?.reason === "login_required" ||
+    result?.error_code === "login_required";
+  const credentialsSource: string | null = (() => {
+    const v = result?.credentials_source ?? login?.credentials_source;
+    return v === "user" || v === "page" ? v : null;
+  })();
 
   const resultStats: [string, string][] = [
     ["forms", "Forms"],
@@ -534,6 +611,137 @@ export default function TargetPage() {
                     ))}
                   </Select>
                 </Field>
+              </div>
+            </div>
+
+            {/* ---------- sign in ----------
+                An override, not a step. Discovery decides for itself whether a
+                page is a login page and prefers the credentials that page
+                publishes about itself; asking the user to describe something
+                the product can already see is the defect this section avoids.
+                Collapsed, because a credential field on a screen that does not
+                need one invites typing a real password into a tool that never
+                asked for it. */}
+            <div
+              data-testid="target-auth-section"
+              style={{
+                border: "1px solid var(--border)",
+                borderRadius: 12,
+                background: "var(--surface-2)",
+                padding: "12px 14px",
+                display: "flex",
+                flexDirection: "column",
+                gap: 12,
+              }}
+            >
+              <div
+                className="eyebrow"
+                style={{ fontSize: 10.5, color: "var(--text-secondary)" }}
+              >
+                {L.auth}
+              </div>
+
+              <div
+                data-testid="target-auth-lead"
+                style={{ fontSize: 12, lineHeight: 1.7, color: "var(--text-secondary)" }}
+              >
+                {L.authLead}
+              </div>
+
+              <label style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  data-testid="target-auth-toggle"
+                  checked={authOn}
+                  onChange={(e: any) => {
+                    const on = e.target.checked;
+                    setAuthOn(on);
+                    // Clearing on collapse means a password can never be sent by
+                    // a launcher that no longer shows it.
+                    if (!on) {
+                      setUsername("");
+                      setPassword("");
+                    }
+                  }}
+                  style={{ marginTop: 3, accentColor: "var(--accent)" }}
+                />
+                <span style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
+                    {L.authToggle}
+                  </span>
+                  <span style={{ fontSize: 12, lineHeight: 1.6, color: "var(--text-secondary)" }}>
+                    {L.authToggleHint}
+                  </span>
+                </span>
+              </label>
+
+              {authOn && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ flex: "1 1 220px", minWidth: 200 }}>
+                      <Field label={L.authUser} testId="target-auth-username-input">
+                        <Input
+                          type="text"
+                          autoComplete="off"
+                          spellCheck={false}
+                          placeholder={L.authUserPh}
+                          value={username}
+                          onChange={(e: any) => setUsername(e.target.value)}
+                        />
+                      </Field>
+                    </div>
+                    <div style={{ flex: "1 1 220px", minWidth: 200 }}>
+                      <Field label={L.authPass} testId="target-auth-password-input">
+                        <Input
+                          type="password"
+                          autoComplete="off"
+                          spellCheck={false}
+                          value={password}
+                          onChange={(e: any) => setPassword(e.target.value)}
+                        />
+                      </Field>
+                    </div>
+                  </div>
+                  <div
+                    data-testid="target-auth-hint"
+                    style={{ fontSize: 12, lineHeight: 1.7, color: "var(--text-secondary)" }}
+                  >
+                    {L.authRule} {L.authStorage}
+                  </div>
+                  {!authComplete && (
+                    <div
+                      data-testid="target-auth-incomplete-hint"
+                      style={{ fontSize: 12, color: "var(--warning)" }}
+                    >
+                      {L.authIncomplete}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Outside the collapse on purpose: how many pages to crawl is
+                  independent of signing in — a public site is crawled the same
+                  way — and the backend takes max_pages with or without auth. */}
+              <div style={{ width: 200 }}>
+                <Field label={L.maxPages} hint={L.maxPagesHint} testId="target-max-pages-input">
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={50}
+                    step={1}
+                    value={maxPages}
+                    onChange={(e: any) => setMaxPages(e.target.value)}
+                  />
+                </Field>
+                {!maxPagesOk && (
+                  <div
+                    data-testid="target-max-pages-hint"
+                    style={{ fontSize: 12, color: "var(--warning)", marginTop: 6 }}
+                  >
+                    {L.maxPagesBad}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -613,6 +821,20 @@ export default function TargetPage() {
                   padding: "10px 14px",
                 }}
               >
+                {/* The likeliest failure of an authenticated crawl by a wide
+                    margin, so it is named rather than left as a bare code. The
+                    server never says WHICH of the two was wrong, and neither
+                    does this — it only repeats what it was told. */}
+                {startErrorCode === "login_failed" && (
+                  <div data-testid="target-login-failed" style={{ marginBottom: 6 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 700, color: "var(--error)" }}>
+                      {L.loginFailedTitle}
+                    </div>
+                    <div style={{ fontSize: 12, lineHeight: 1.7, color: "var(--text-secondary)" }}>
+                      {L.loginFailedHelp}
+                    </div>
+                  </div>
+                )}
                 <div style={{ fontSize: 13, fontWeight: 600, color: "var(--error)" }}>{startError}</div>
                 {startErrorCode && (
                   <M style={{ fontSize: 11, color: "var(--text-secondary)" }}>{startErrorCode}</M>
@@ -646,6 +868,13 @@ export default function TargetPage() {
             )}
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+              {pagesVisited !== null && (
+                <StatCard
+                  value={pagesVisited}
+                  label={L.pagesVisited}
+                  testId="target-result-pages-visited-stat"
+                />
+              )}
               {resultStats.map(([k, label]) => (
                 <StatCard
                   key={k}
@@ -655,6 +884,97 @@ export default function TargetPage() {
                 />
               ))}
             </div>
+
+            {/* A crawl that reports success without proving it signed in would
+                describe the logged-out product, so the outcome is shown next to
+                the counts it explains — not hidden in a detail view. */}
+            {(login || loginRequired) && (
+              <div
+                data-testid="target-result-login"
+                data-state={
+                  loginRequired
+                    ? "login_required"
+                    : loginSucceeded === null
+                      ? undefined
+                      : loginSucceeded
+                        ? "succeeded"
+                        : "failed"
+                }
+                style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}
+              >
+                <Badge tone={loginRequired ? "warning" : loginSucceeded ? "success" : "error"}>
+                  {loginRequired ? L.loginRequiredTitle : loginSucceeded ? L.loginOk : L.loginBad}
+                </Badge>
+                {typeof login?.strategy === "string" && login.strategy !== "" && (
+                  <M data-testid="target-result-login-strategy" style={{ color: "var(--text-secondary)" }}>
+                    {L.loginVia}: {login.strategy}
+                  </M>
+                )}
+                {/* Which credentials were used is reportable, not secret: what
+                    was read off the page is a finding like any other, and what
+                    the user supplied is named without ever being echoed. */}
+                {credentialsSource && (
+                  <span
+                    data-testid="target-result-credentials-source"
+                    data-state={credentialsSource}
+                    style={{ fontSize: 12, color: "var(--text-secondary)" }}
+                  >
+                    {L.credsLabel}: {credentialsSource === "page" ? L.credsPage : L.credsUser}
+                  </span>
+                )}
+              </div>
+            )}
+
+            {loginRequired && (
+              <div
+                data-testid="target-result-login-required"
+                style={{
+                  border: "1px solid var(--warning)",
+                  background: "var(--warning-subtle, rgba(255,197,61,.16))",
+                  borderRadius: 12,
+                  padding: "10px 14px",
+                }}
+              >
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: "var(--warning)" }}>
+                  {L.loginRequiredTitle}
+                </div>
+                <div style={{ fontSize: 12, lineHeight: 1.7, color: "var(--text-secondary)" }}>
+                  {L.loginRequiredHelp}
+                </div>
+              </div>
+            )}
+
+            {pagesSkipped.length > 0 && (
+              <div
+                data-testid="target-result-pages-skipped"
+                style={{
+                  border: "1px solid var(--border)",
+                  borderRadius: 12,
+                  padding: "10px 14px",
+                }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", marginBottom: 6 }}>
+                  {L.pagesSkipped} ({pagesSkipped.length})
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {pagesSkipped.map((s, i) => (
+                    <div
+                      key={i}
+                      data-testid="target-result-pages-skipped-row"
+                      data-state={typeof s?.reason === "string" ? s.reason : undefined}
+                      style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}
+                    >
+                      <M style={{ color: "var(--text)", overflowWrap: "anywhere", flex: 1, minWidth: 200 }}>
+                        {typeof s?.url === "string" ? s.url : typeof s === "string" ? s : JSON.stringify(s)}
+                      </M>
+                      <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                        {s?.reason ?? "—"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {Object.keys(casesByType).length > 0 && (
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>

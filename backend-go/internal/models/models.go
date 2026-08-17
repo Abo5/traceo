@@ -418,6 +418,14 @@ type WebTarget struct {
 	// LastError states why Status is "failed". A failed target with no reason is
 	// indistinguishable from one nobody ever looked at.
 	LastError *string `gorm:"type:text" json:"last_error"`
+	// AuthConfigEncrypted holds {username, password} for the crawl's sign-in,
+	// sealed with the same envelope environment secrets use. `json:"-"` is not
+	// decoration: this value has no representation on the wire at all, and the
+	// API answers auth_configured true/false instead.
+	AuthConfigEncrypted []byte `json:"-"`
+	// MaxPages is the crawl's page budget (1..50). The default explores — a user
+	// who hands Traceo a URL is asking about the product, not one screen of it.
+	MaxPages int `gorm:"default:25" json:"max_pages"`
 }
 
 func All() []any {

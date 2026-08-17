@@ -95,6 +95,11 @@ export default function ProjectsPage() {
       // screen start the discovery. Starting it from here would be a second
       // place that launches a job — and the error handling, the progress bar
       // and the result card all already live there.
+      //
+      // It starts for a page behind a sign-in too: discovery recognises a login
+      // page by itself and uses the credentials the page publishes about
+      // itself. Asking the user to declare that up front would be a knob for
+      // something the product can already see.
       router.push(
         target
           ? `/projects/${p.id}/target?url=${encodeURIComponent(target)}&start=1`
@@ -302,7 +307,7 @@ export default function ProjectsPage() {
           </div>
           <Field
             label="Page URL (optional)"
-            hint="Give a URL and Traceo opens it in a browser and starts testing it right away. You can add one later instead."
+            hint="Give a URL and Traceo opens it in a browser and starts testing it right away — including a page behind a sign-in, which it recognises on its own. You can add one later instead."
             testId="projects-create-url-input"
           >
             <Input

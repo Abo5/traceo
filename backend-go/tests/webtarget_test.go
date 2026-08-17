@@ -52,7 +52,8 @@ func withSidecar(t *testing.T, doc map[string]any) {
 	t.Helper()
 	previousRunner := webtarget.SidecarRunner
 	previousPrivate := config.C.AllowPrivateTargets
-	webtarget.SidecarRunner = func(url, viewport, outDir string, timeoutS float64) (map[string]any, error) {
+	webtarget.SidecarRunner = func(url, viewport, outDir string, timeoutS float64,
+		plan *webtarget.CrawlPlan) (map[string]any, error) {
 		return doc, nil
 	}
 	config.C.AllowPrivateTargets = true
@@ -315,8 +316,11 @@ func TestWebTargetRecordedPayloadDrivesEverySelectedTrack(t *testing.T) {
 	if result["title"] != "OrangeHRM" {
 		t.Fatalf("title = %v", result["title"])
 	}
+	// endpoints: 4 from the captured xhr/fetch traffic (ids templated) plus the 2
+	// the page DECLARES in its own markup — the login form's POST action and the
+	// search form's GET back to the page itself.
 	for key, want := range map[string]float64{
-		"forms": 2, "controls": 3, "requests": 8, "endpoints": 4,
+		"forms": 2, "controls": 3, "requests": 8, "endpoints": 5,
 	} {
 		if result[key].(float64) != want {
 			t.Fatalf("%s = %v, want %v", key, result[key], want)
@@ -360,14 +364,62 @@ func TestWebTargetAPITrackWritesDomEndpointsWithTemplatedIDs(t *testing.T) {
 		"GET /web/index.php/api/v2/admin/validation/user-name",
 		"GET /web/index.php/api/v2/pim/employees/{id}",
 		"POST /web/index.php/api/v2/auth/session",
-		"GET /web/index.php/api/v2/core/i18n/messages",
+		// declared by the markup, not observed on the wire
+		"POST /web/index.php/auth/validate",
+		"GET /web/index.php/auth/login",
 	} {
 		if _, present := byKey[want]; !present {
 			t.Fatalf("missing endpoint %q — got %v", want, keysOf(byKey))
 		}
 	}
-	if len(byKey) != 4 {
+	if len(byKey) != 5 {
 		t.Fatalf("document/script/image requests must not become endpoints: %v", keysOf(byKey))
+	}
+	// The i18n call in this payload is served from cdn.orangehrm.example, an
+	// origin the crawl never visited, so it is NOT adopted. That costs a real
+	// endpoint when an app serves its own API from a second host — a loss the
+	// result reports by origin and count — and it is the price of never adopting
+	// an embedded third party's API, which the security builders would then aim
+	// probes at.
+	for key := range byKey {
+		if strings.Contains(key, "i18n") {
+			t.Fatalf("a foreign origin's call became this project's endpoint: %s", key)
+		}
+	}
+
+	// A form's action is an operation the page declares. Its parameters are the
+	// form's OWN fields, with required-ness exactly as the page marks it.
+	validate := byKey["POST /web/index.php/auth/validate"]
+	if validate["observed_count"].(float64) != 0 {
+		t.Fatalf("a declared endpoint claimed %v observations", validate["observed_count"])
+	}
+	body := validate["request_schema"].(map[string]any)
+	properties := body["properties"].(map[string]any)
+	for _, name := range []string{"username", "password", "_token"} {
+		if _, present := properties[name]; !present {
+			t.Fatalf("the form's field %q is not in the body schema: %v", name, properties)
+		}
+	}
+	if len(properties) != 3 {
+		t.Fatalf("the body schema invented fields: %v", properties)
+	}
+	// the hidden token is not required — the page does not say it is
+	required := body["required"].([]any)
+	if len(required) != 2 || required[0] != "username" || required[1] != "password" {
+		t.Fatalf("required = %v", required)
+	}
+	// a GET form puts its fields in the query string instead
+	search := byKey["GET /web/index.php/auth/login"]
+	if search["request_schema"] != nil {
+		t.Fatalf("a GET form declared a request body: %v", search["request_schema"])
+	}
+	searchParams := search["parameters"].([]any)
+	if len(searchParams) != 1 {
+		t.Fatalf("parameters = %v", searchParams)
+	}
+	q := searchParams[0].(map[string]any)
+	if q["name"] != "q" || q["location"] != "query" || q["required"] != false {
+		t.Fatalf("the GET form's field became %v", q)
 	}
 	// the two concrete employee ids collapsed onto ONE templated endpoint
 	employees := byKey["GET /web/index.php/api/v2/pim/employees/{id}"]
@@ -424,6 +476,42 @@ func TestWebTargetNeverDowngradesASpecEndpoint(t *testing.T) {
 		if key == "POST /web/index.php/api/v2/auth/session" && e["source"] != "dom" {
 			t.Fatalf("the endpoints the spec never mentioned must still arrive: %v", e)
 		}
+	}
+}
+
+func TestWebTargetSpecOwnedPathIsNotDowngradedByAFormAction(t *testing.T) {
+	// A form's action is read from markup — the weakest evidence there is. It
+	// must never overwrite a contract a spec declared.
+	withSidecar(t, recordedPayload(t))
+	headers, pid := webTargetProject(t)
+	spec := M{
+		"openapi": "3.0.3", "info": M{"title": "Auth", "version": "1"},
+		"paths": M{"/web/index.php/auth/validate": M{"post": M{
+			"operationId": "validate", "summary": "Declared by the spec",
+			"responses": M{"200": M{"description": "OK"}}}}},
+	}
+	raw, _ := json.Marshal(spec)
+	w := uploadFile(t, "/v1/projects/"+pid+"/api-specs", "spec.json", raw,
+		"application/json", headers)
+	if w.Code != 200 && w.Code != 201 {
+		t.Fatalf("spec import: %d %.300s", w.Code, w.Body.String())
+	}
+	runTarget(t, headers, pid, []string{"api"})
+
+	found := false
+	for _, item := range itemsOf(jsonAny(t, do(t, "GET", "/v1/projects/"+pid+"/endpoints",
+		nil, headers))) {
+		e := item.(map[string]any)
+		if fmt.Sprintf("%v %v", e["method"], e["path"]) != "POST /web/index.php/auth/validate" {
+			continue
+		}
+		found = true
+		if e["source"] != "spec" || e["summary"] != "Declared by the spec" {
+			t.Fatalf("a form action overwrote a declared contract: %v", e)
+		}
+	}
+	if !found {
+		t.Fatalf("the spec-declared path vanished")
 	}
 }
 
@@ -732,9 +820,10 @@ func TestWebTargetWithoutAScreenshotSaysSo(t *testing.T) {
 	}
 }
 
-func TestWebTargetPageWithNoAPICallsReportsTheReason(t *testing.T) {
-	doc := recordedPayload(t)
-	var kept []any
+// stripXHR removes the captured API traffic, leaving only how the page was
+// delivered.
+func stripXHR(doc map[string]any) map[string]any {
+	kept := []any{}
 	for _, raw := range doc["requests"].([]any) {
 		r := raw.(map[string]any)
 		if r["resourceType"] != "xhr" && r["resourceType"] != "fetch" {
@@ -742,6 +831,14 @@ func TestWebTargetPageWithNoAPICallsReportsTheReason(t *testing.T) {
 		}
 	}
 	doc["requests"] = kept
+	return doc
+}
+
+func TestWebTargetPageWithNoAPISurfaceAtAllReportsTheReason(t *testing.T) {
+	// No XHR AND no form action. Either one on its own is an API surface, so the
+	// reason is only honest when the page states neither.
+	doc := stripXHR(recordedPayload(t))
+	doc["forms"] = []any{}
 	withSidecar(t, doc)
 	headers, pid := webTargetProject(t)
 	job, _ := runTarget(t, headers, pid, []string{"api", "security"})
@@ -750,8 +847,55 @@ func TestWebTargetPageWithNoAPICallsReportsTheReason(t *testing.T) {
 		t.Fatalf("endpoints = %v", result["endpoints"])
 	}
 	for _, kind := range []string{"api", "security"} {
-		if !skippedFor(job, kind, "XHR/fetch") {
+		if !skippedFor(job, kind, "XHR/fetch") || !skippedFor(job, kind, "form action") {
 			t.Fatalf("%s must be skipped with its reason: %v", kind, result["skipped"])
+		}
+	}
+}
+
+func TestWebTargetFormActionAloneIsStillAnAPISurface(t *testing.T) {
+	// The owner's report: a page whose server interaction is a classic form POST
+	// used to discover ZERO endpoints, and every requirement then came back
+	// unmappable because the inventory was empty.
+	withSidecar(t, stripXHR(recordedPayload(t)))
+	headers, pid := webTargetProject(t)
+	job, _ := runTarget(t, headers, pid, []string{"api"})
+	result := job["result"].(map[string]any)
+	if result["endpoints"].(float64) != 2 {
+		t.Fatalf("endpoints = %v (skipped: %v)", result["endpoints"], result["skipped"])
+	}
+	rows := itemsOf(jsonAny(t, do(t, "GET", "/v1/projects/"+pid+"/endpoints", nil, headers)))
+	found := false
+	for _, raw := range rows {
+		e := raw.(map[string]any)
+		if e["method"] == "POST" && e["path"] == "/web/index.php/auth/validate" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the form's declared action never became an endpoint: %v", rows)
+	}
+	if result["cases_by_type"].(map[string]any)["api"].(float64) == 0 {
+		t.Fatalf("a declared endpoint produced no cases")
+	}
+}
+
+func TestWebTargetFormPostingToAnotherOriginIsSkippedWithTheReason(t *testing.T) {
+	// Somebody else's endpoint is not this project's endpoint.
+	doc := recordedPayload(t)
+	doc["forms"].([]any)[0].(map[string]any)["action"] = "https://analytics.example.com/collect"
+	withSidecar(t, doc)
+	headers, pid := webTargetProject(t)
+	job, _ := runTarget(t, headers, pid, []string{"api"})
+	if !skippedFor(job, "api", "analytics.example.com") ||
+		!skippedFor(job, "api", "different origin") {
+		t.Fatalf("a cross-origin action was not refused with its reason: %v",
+			job["result"].(map[string]any)["skipped"])
+	}
+	rows := itemsOf(jsonAny(t, do(t, "GET", "/v1/projects/"+pid+"/endpoints", nil, headers)))
+	for _, raw := range rows {
+		if strings.Contains(fmt.Sprint(raw.(map[string]any)["path"]), "analytics") {
+			t.Fatalf("a cross-origin action became an endpoint: %v", raw)
 		}
 	}
 }
@@ -1004,5 +1148,59 @@ func TestWebTargetManualModeLeavesTheCrawlsRequirementsAlone(t *testing.T) {
 		if r.State != "extracted" {
 			t.Fatalf("manual mode confirmed %s on the user's behalf", r.ExternalID)
 		}
+	}
+}
+
+// TestWebTargetThirdPartyCallsNeverBecomeThisProjectsEndpoints: a page that
+// embeds a third party makes that party's calls from the same browser.
+// Recording them would put somebody else's API into this project — and the
+// security builders would then aim probes at a host the user never named.
+// Measured on the real target: the Buzz page embeds YouTube, and without this
+// filter the crawl adopted four Google endpoints and twelve security cases were
+// built on them, one of them a rate-limit probe.
+func TestWebTargetThirdPartyCallsNeverBecomeThisProjectsEndpoints(t *testing.T) {
+	inv := webtarget.NormalisePayload(recordedPayload(t))
+	ours := "https://opensource-demo.orangehrmlive.com"
+
+	// copy a real capture so it survives the resource-type filter and is
+	// rejected for its ORIGIN, which is what this test is about
+	var embedded webtarget.Request
+	for _, r := range inv.Requests {
+		if r.ResourceType == "xhr" || r.ResourceType == "fetch" {
+			embedded = r
+			break
+		}
+	}
+	if embedded.URL == "" {
+		t.Fatal("the fixture has no captured xhr/fetch request")
+	}
+	embedded.URL = "https://www.youtube.com/youtubei/v1/log_event?alt=json"
+	requests := append(append([]webtarget.Request{}, inv.Requests...), embedded)
+
+	ops, reasons := webtarget.EndpointsFromRequests(requests, map[string]bool{ours: true})
+	if len(ops) == 0 {
+		t.Fatal("the target's own captures must still be recorded")
+	}
+	for _, op := range ops {
+		if strings.Contains(op.Path, "youtubei") {
+			t.Fatalf("a third party's call became this project's endpoint: %s", op.Path)
+		}
+	}
+	named := false
+	for _, r := range reasons {
+		if strings.Contains(r, "youtube.com") {
+			named = true
+		}
+	}
+	if !named {
+		t.Fatalf("the dropped origin must be reported: %v", reasons)
+	}
+
+	// with no origin set given, the filter is off — the older callers that pass
+	// nothing must behave exactly as they did
+	unfiltered, noReasons := webtarget.EndpointsFromRequests(requests, nil)
+	if len(unfiltered) <= len(ops) || len(noReasons) != 0 {
+		t.Fatalf("a nil origin set must disable the filter: %d vs %d, %v",
+			len(unfiltered), len(ops), noReasons)
 	}
 }

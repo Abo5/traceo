@@ -39,6 +39,35 @@ var mapSchema = map[string]any{
 
 var wordRe = regexp.MustCompile(`[a-z]{3,}`)
 
+// isPageGrounded reports whether this requirement was extracted from a rendered
+// page.
+//
+// The web-target engine records the page it read in source_location["url"];
+// document- and spec-derived requirements have no such key. This is a read of
+// stored provenance, not a guess from the text — a requirement that merely
+// mentions a URL is still an ordinary requirement.
+// The truthiness test mirrors Python's bool() over every JSON type, not just
+// string, so a malformed provenance value cannot make the two engines disagree
+// about whether a requirement is mappable.
+func isPageGrounded(req *models.Requirement) bool {
+	switch url := req.SourceLocation["url"].(type) {
+	case nil:
+		return false
+	case string:
+		return url != ""
+	case bool:
+		return url
+	case float64:
+		return url != 0
+	case []any:
+		return len(url) > 0
+	case map[string]any:
+		return len(url) > 0
+	default:
+		return true
+	}
+}
+
 func tokens(text string) map[string]bool {
 	out := map[string]bool{}
 	for _, w := range wordRe.FindAllString(strings.ToLower(text), -1) {

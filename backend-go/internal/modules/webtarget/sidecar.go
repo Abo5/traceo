@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,16 +47,49 @@ func installHint(reason string) string {
 		reason, filepath.Dir(config.C.WebDiscoveryScript))
 }
 
-// SidecarCommand is the exact argv the discovery sidecar is invoked with.
-func SidecarCommand(url, viewport, outDir string, timeoutMS int) []string {
-	return []string{config.C.NodeBin, config.C.WebDiscoveryScript,
+// SidecarCommand is the exact argv the discovery sidecar is invoked with. The
+// password is NEVER in it — see CrawlPasswordEnv.
+func SidecarCommand(url, viewport, outDir string, timeoutMS int, plan *CrawlPlan) []string {
+	argv := []string{config.C.NodeBin, config.C.WebDiscoveryScript,
 		"--url", url, "--out", outDir,
 		"--viewport", viewport, "--timeout", fmt.Sprint(timeoutMS)}
+	if plan != nil {
+		argv = append(argv, "--max-pages", strconv.Itoa(plan.MaxPages),
+			"--max-depth", strconv.Itoa(plan.MaxDepth))
+		if plan.SignsIn() {
+			argv = append(argv, "--username", plan.Username)
+		}
+	}
+	return argv
 }
 
-// RunSidecar renders the page and returns the sidecar's JSON document, or a
-// coded jobs.Error.
-func RunSidecar(url, viewport, outDir string, timeoutS float64) (map[string]any, error) {
+// SidecarEnv is the child's environment, and the ONLY place a password is
+// written. An inherited value is dropped first: a server process that happens to
+// carry TRACEO_CRAWL_PASSWORD must not make an anonymous crawl sign in with
+// somebody else's secret.
+func SidecarEnv(plan *CrawlPlan) []string {
+	out := make([]string, 0, len(os.Environ())+2)
+	for _, entry := range os.Environ() {
+		if strings.HasPrefix(entry, CrawlPasswordEnv+"=") {
+			continue
+		}
+		out = append(out, entry)
+	}
+	if config.C.AllowPrivateTargets {
+		out = append(out, "TRACEO_ALLOW_PRIVATE_TARGETS=1")
+	}
+	if plan.SignsIn() {
+		out = append(out, CrawlPasswordEnv+"="+plan.Password)
+	}
+	return out
+}
+
+// RunSidecar renders the target and returns the sidecar's JSON document, or a
+// coded jobs.Error. With no plan it renders exactly one page, the way it always
+// did; with one, the same sidecar signs in if the page asks to be signed into
+// and follows links up to the plan's budget.
+func RunSidecar(url, viewport, outDir string, timeoutS float64,
+	plan *CrawlPlan) (map[string]any, error) {
 	script := config.C.WebDiscoveryScript
 	if info, err := os.Stat(script); err != nil || info.IsDir() {
 		return nil, jobs.Fail(BrowserUnavailable,
@@ -64,17 +98,20 @@ func RunSidecar(url, viewport, outDir string, timeoutS float64) (map[string]any,
 	if timeoutS <= 0 {
 		timeoutS = config.C.WebDiscoveryTimeout
 	}
+	// --timeout is the per-navigation ceiling; a crawl may legitimately spend
+	// that long once per page, so the kill deadline scales with the budget.
+	pages := 1
+	if plan != nil && plan.MaxPages > 1 {
+		pages = plan.MaxPages
+	}
 	ctx, cancel := context.WithTimeout(context.Background(),
-		time.Duration((timeoutS+30.0)*float64(time.Second)))
+		time.Duration((timeoutS*float64(pages)+30.0)*float64(time.Second)))
 	defer cancel()
 
-	argv := SidecarCommand(url, viewport, outDir, int(timeoutS*1000))
+	argv := SidecarCommand(url, viewport, outDir, int(timeoutS*1000), plan)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = filepath.Dir(script)
-	cmd.Env = os.Environ()
-	if config.C.AllowPrivateTargets {
-		cmd.Env = append(cmd.Env, "TRACEO_ALLOW_PRIVATE_TARGETS=1")
-	}
+	cmd.Env = SidecarEnv(plan)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -120,6 +157,12 @@ func RunSidecar(url, viewport, outDir string, timeoutS float64) (map[string]any,
 	if code, message, reported := payloadError(doc); reported {
 		if unavailableCodes[code] {
 			return nil, jobs.Fail(BrowserUnavailable, installHint(message))
+		}
+		// The sidecar's own login message is REPLACED, not forwarded: it is the
+		// one message that could carry a credential, and no downstream reader can
+		// tell a safe one from a leaky one.
+		if code == LoginFailed {
+			return nil, jobs.Fail(LoginFailed, LoginFailedMessage)
 		}
 		return nil, jobs.Fail(code, message)
 	}

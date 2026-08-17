@@ -535,6 +535,72 @@ export interface WebTargetDesign {
   failing_contrast?: number;
 }
 
+/**
+ * One page the crawl decided NOT to visit, and why. The reason is the entry's
+ * whole purpose: "12 pages skipped" is a number, "logout control" and "left the
+ * origin" are the safety rule being observed doing its job.
+ */
+export interface WebTargetPageSkip {
+  url: string;
+  reason: string;
+}
+
+/**
+ * How the sign-in went. `strategy` names WHICH success proof fired (the URL
+ * left the login page, a logout control appeared, or the password field is
+ * gone) — three different observations, and knowing which one was used is the
+ * difference between a diagnosable crawl and a hopeful one.
+ *
+ * There is no field for the credentials here, and there must never be one.
+ */
+export interface WebTargetLoginOutcome {
+  succeeded: boolean;
+  strategy?: string | null;
+  final_url?: string | null;
+  /** Set when a sign-in gate was found that nothing could pass. */
+  required?: boolean;
+  /** The gate's own form, so the report names what would unlock the rest. */
+  form?: WebTargetLoginFormRef | null;
+}
+
+/** The login form as the login report echoes it: selectors, nothing else. */
+export interface WebTargetLoginFormRef {
+  selector?: string | null;
+  /** Field SELECTORS, verbatim from the rendered form. */
+  fields?: string[];
+  submit?: string | null;
+}
+
+/**
+ * The crawl summary carried inside the inventory. Read defensively for the same
+ * reason the rest of the inventory is (see the note above): the job RESULT is
+ * the closed contract, this is the backend's own summary of it.
+ */
+export interface WebTargetCrawlSummary {
+  /** What --max-pages was asked for, and what was actually reached. */
+  requested_max_pages?: number;
+  visited?: number;
+  pages_visited?: number;
+  skipped?: WebTargetPageSkip[];
+  pages_skipped?: WebTargetPageSkip[];
+  origin?: string;
+  login?: WebTargetLoginOutcome;
+  /** One entry per visited page — the per-page artefacts persistence stands on. */
+  pages?: WebTargetCrawledPage[];
+}
+
+/** One page of a crawl, as the inventory summarises it. */
+export interface WebTargetCrawledPage {
+  url: string;
+  final_url?: string | null;
+  title?: string | null;
+  depth?: number;
+  elapsed_ms?: number | null;
+  forms?: number | WebTargetForm[];
+  controls?: number | WebTargetControl[];
+  status?: number | null;
+}
+
 /** The discovered inventory summary of one target (detail responses only). */
 export interface WebTargetInventory {
   forms?: WebTargetForm[];
@@ -546,6 +612,8 @@ export interface WebTargetInventory {
   /** Milliseconds the discovery render took — the performance baseline. */
   elapsed_ms?: number | null;
   skipped?: WebTargetSkip[];
+  /** Present when the target was crawled beyond its first page. */
+  crawl?: WebTargetCrawlSummary;
 }
 
 /** A web target as listed by GET /projects/{id}/web-targets. */
@@ -570,6 +638,15 @@ export interface WebTarget {
   /** forms / controls / requests / api_requests / endpoints of that discovery. */
   counts?: Record<string, number>;
   created_at?: string | null;
+  /**
+   * WHETHER credentials are stored for this target — never which. The stored
+   * pair is encrypted and write-only on the wire (backend/app/security.py
+   * encrypt_secret), so this boolean is the entire read surface, and a spec
+   * that finds anything more than a boolean here has found a leak.
+   */
+  auth_configured?: boolean;
+  /** The crawl budget this target was last discovered with (1…50). */
+  max_pages?: number;
 }
 
 /** GET /web-targets/{id} — the target plus its inventory summary and design box. */
@@ -591,6 +668,18 @@ export interface NewWebTarget {
    * what the project is for.
    */
   test_types?: string[];
+  /**
+   * Credentials for the one form the crawler is allowed to submit. WRITE-ONLY:
+   * they go in, and nothing ever reads them back out — the payload answers
+   * `auth_configured` instead.
+   *
+   * Typed loosely on purpose, exactly like `test_types`: the refusal path has
+   * to be able to send a blank username or password without fighting the type
+   * system, since `invalid_credentials` is part of the contract.
+   */
+  auth?: { username?: string; password?: string };
+  /** How many pages the crawl may visit, 1…50. Anything else is a 422. */
+  max_pages?: number;
 }
 
 /**
@@ -634,6 +723,53 @@ export interface WebTargetJobResult {
   discarded?: number;
   /** Planned cases that already existed — deduplicated, not persisted. */
   duplicates?: number;
+
+  // --- the authenticated crawl (absent on a single-page discovery) ------------
+
+  /** How many pages the crawl actually rendered. 1 when nothing was crawled. */
+  pages_visited?: number;
+  /** Pages the crawl refused to visit, each with the reason it refused. */
+  pages_skipped?: WebTargetPageSkip[];
+  /** How the sign-in went — absent entirely when no credentials were given. */
+  login?: WebTargetLoginOutcome | null;
+  /**
+   * WHERE the credentials came from, never what they were:
+   *
+   *  - `"user"` — the operator supplied them. A SECRET: it appears in no
+   *    payload, no error and no log, so this string is the only evidence a run
+   *    used one.
+   *  - `"page"` — the login screen published them about itself. A fact about
+   *    the page, and therefore auditable: a reader has to be able to see that a
+   *    crawl signed in with an account nobody handed it.
+   *  - `null` — it signed in with nothing, because there was nothing to use.
+   */
+  credentials_source?: CredentialSource | null;
+  /**
+   * Present when a login page was found and NOTHING could sign in to it. It is
+   * not a failure and not a licence to report the logged-out surface as the
+   * product: the crawl says what it found, and names the form that would unlock
+   * the rest.
+   */
+  login_required?: WebTargetLoginRequirement | boolean | null;
+}
+
+/** Provenance of the credentials one crawl used — never a value. */
+export type CredentialSource = 'user' | 'page';
+
+/**
+ * "There is a login here and I could not pass it." The SELECTORS are the
+ * substance: they are what turns an apology into something actionable, and they
+ * are grounded in the same rendered form every other artefact is grounded in.
+ */
+export interface WebTargetLoginRequirement {
+  /** Selectors of the login form and its fields, verbatim from the discovery. */
+  selectors?: string[];
+  /** The form itself, when the backend echoes the whole thing. */
+  form?: WebTargetForm | null;
+  /** Where the login form was found. */
+  url?: string | null;
+  /** Product copy — asserted on the code and the selectors, never on this (§6). */
+  message?: string | null;
 }
 
 // --- insight — the sixth engine (QA Insight Agent) ---------------------------
