@@ -808,6 +808,11 @@ function probeLoginState() {
     logout_control: logout,
     visible_password_fields:
       Array.from(document.querySelectorAll('input[type=password]')).filter(visible).length,
+    // The same elements the hydration gate waits for. A page showing none of
+    // them has rendered nothing yet, and "the password field is gone" says
+    // nothing about a page that has no fields of any kind.
+    interactive_elements:
+      document.querySelectorAll('form, input, select, textarea, button, a[href]').length,
   };
 }
 /* c8 ignore stop */
@@ -1454,8 +1459,17 @@ async function main() {
           // /login?error=1 has not signed anybody in.
           url_left_login: pathKey(page.url()) !== pathKey(beforeUrl),
           logout_control: Boolean(after.logout_control) && !before.logout_control,
-          password_field_gone:
-            before.visible_password_fields > 0 && after.visible_password_fields === 0,
+          // A RE-RENDERING PAGE HAS NO FIELDS OF ANY KIND, and that is not the
+          // same thing as a page that no longer asks for a password. Measured on
+          // the owner's target with a wrong password: the app re-mounts its
+          // login form to show the error, and during the re-mount the DOM is
+          // empty — which satisfied this check on its own and turned a rejected
+          // sign-in into a reported success. Requiring the page to have
+          // rendered SOMETHING is what tells "signed in" apart from "not
+          // finished drawing".
+          password_field_gone: before.visible_password_fields > 0
+            && after.visible_password_fields === 0
+            && after.interactive_elements > 0,
         };
       };
       const firstTrue = (c) => ['url_left_login', 'logout_control', 'password_field_gone']

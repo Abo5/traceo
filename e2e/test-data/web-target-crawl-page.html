@@ -335,9 +335,19 @@
         for (const url of page.fetches) fetch(url);
       }
 
-      // A tick after DOMContentLoaded: nothing that reads the initial HTML
-      // response body can see the form, only something that ran the script.
-      window.addEventListener('DOMContentLoaded', () => setTimeout(render, 30));
+      /**
+       * A tick after DOMContentLoaded: nothing that reads the initial HTML
+       * response body can see the form, only something that ran the script.
+       *
+       * On a REJECTED sign-in the server may serve this page with a blanking
+       * delay, which is what a real SPA does when it re-mounts its login form to
+       * show the error: for that window the password field is not in the DOM at
+       * all. A crawler that treats "the password field is gone" as proof of a
+       * sign-in will believe a rejection — so the fixture reproduces the
+       * transient rather than describing it.
+       */
+      const BLANK_MS = window.__TRACEO_REJECTION_BLANK_MS__ || 0;
+      window.addEventListener('DOMContentLoaded', () => setTimeout(render, BLANK_MS || 30));
     </script>
   </body>
 </html>

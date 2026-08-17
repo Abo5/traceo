@@ -1027,6 +1027,72 @@ test.describe('authenticated crawl refusals @regression', () => {
     }
   });
 
+  test('a rejection that re-renders the login form is still a rejection, not a sign-in @negative', async ({
+    api,
+    project,
+  }) => {
+    test.setTimeout(CRAWL_TEST_TIMEOUT_MS);
+
+    // THE REGRESSION THIS PINS. A real SPA answers a wrong password by
+    // re-mounting its login form, and for that window the password field is not
+    // in the DOM. "The password field is gone" is one of the three things the
+    // crawler accepts as proof of a sign-in — so measured against the
+    // motivating target, a wrong password produced login.succeeded = true and
+    // the logged-out product was crawled and reported as the application. The
+    // fixture now reproduces the transient, so the proof has to outlive it.
+    const target = await startAuthenticatedWebTarget({ blankOnRejection: true });
+    const wrongPassword = 'not-the-fixture-password-4b19';
+    try {
+      const discovery = await api.webTargets.createAndSettle(project.id, {
+        url: target.loginUrl,
+        viewport: VIEWPORT,
+        test_types: ['functional'],
+        auth: { username: target.username, password: wrongPassword },
+        max_pages: MAX_PAGES,
+      });
+
+      if (discovery.kind === 'refused') {
+        expect(['ssrf_blocked', 'invalid_url']).toContain(discovery.error.code);
+        test.skip(true, NOT_EXERCISED);
+        return;
+      }
+      if (discovery.kind === 'completed') {
+        throw new Error(
+          'a sign-in the site REFUSED was reported as successful — the crawl believed a form ' +
+            'that was merely re-rendering, and everything it went on to describe is the ' +
+            `logged-out product (result: ${JSON.stringify(discovery.result)})`,
+        );
+      }
+      if (discovery.code === 'browser_discovery_unavailable') {
+        test.skip(true, NOT_EXERCISED);
+        return;
+      }
+      expect(
+        discovery.code,
+        `a rejected sign-in must fail with login_failed; it failed with "${discovery.code}"`,
+      ).toBe('login_failed');
+      expect(
+        secretTraces(discovery.error, wrongPassword),
+        'the failure message contains the password that was tried',
+      ).toEqual([]);
+
+      // The oracle that makes this test capable of failing: the fixture really
+      // did serve the blanking page, and it really did leave the form off long
+      // enough for the transient to be observable.
+      const submissions = target.loginSubmissions();
+      expect(submissions.length, 'the login form was not submitted exactly once').toBe(1);
+      expect(submissions[0].credentialsAccepted).toBe(false);
+      expect(
+        target.visitedPagePaths(),
+        'the crawl read pages behind the login after being refused entry',
+      ).toEqual([]);
+      expect(target.unauthenticatedBehindLogin()).toEqual([]);
+      expect(target.forbiddenActivations()).toEqual([]);
+    } finally {
+      await target.close();
+    }
+  });
+
   test('a page budget outside 1..50 is refused with 422 invalid_max_pages naming the window @negative', async ({
     api,
     project,

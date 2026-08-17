@@ -259,6 +259,25 @@ Success is never assumed. It is proved, and the run says which proof fired: the 
 page, a sign-out control appeared, or the password field is gone. A crawl that cannot prove it
 signed in does not crawl.
 
+Two things had to be added to that last proof, and both were bought with a measured failure against
+the motivating target. An SPA answers a **wrong** password by re-mounting its login form, and during
+the re-mount the DOM is empty — so "the password field is gone" was momentarily true of a sign-in
+that had just been **refused**, and the run reported `succeeded: true` and went on to describe the
+logged-out product as the application. So: a page that has rendered nothing at all does not count as
+a page without a password field, and whichever proof fires is re-observed once the page settles —
+a proof that stops being true was never a proof. `e2e/tests/web-target-crawl.spec.ts` reproduces
+that transient in the fixture, and the test fails against a crawler without these guards.
+
+### The login page is one of the pages
+
+The page the operator named is `pages[0]` of the result, before the pages behind it. It is the only
+record of the logged-out surface, and its sign-in form is a form like any other: it yields a
+functional requirement, cases carrying its selectors, design facts from its screenshot, and the
+`POST` endpoint its `action` **declares** — declared, never called, because reading a form's action
+is not submitting it. It spends one of `max_pages`, so `max_pages: 1` on a site with a login returns
+the login page and nothing else. Its own links are *not* followed: they belong to the logged-out
+product, and the frontier restarts from wherever signing in landed.
+
 ### SSRF, twice
 
 The SSRF rule of the spec fetcher applies in `webtarget.validate_target_url` before the job is
@@ -368,6 +387,13 @@ Two environment notes:
   screen is grounding; the account still being valid is the page's claim, not Traceo's. When it is
   stale the crawl degrades to the public surface and says so, exactly as if nothing had been
   published.
+- **Proving a sign-in is an observation, not a handshake.** The three proofs read a rendered page:
+  the URL, a sign-out control, the password field. An application that authenticates without
+  changing any of the three — sets a cookie, keeps the same screen, shows no sign-out — cannot be
+  proved to have signed anybody in, and the run fails with `login_failed` rather than crawl on a
+  guess. That is the correct trade: the opposite mistake, believing a rejected sign-in, silently
+  produces a full report about the logged-out product, and it is the one this feature actually
+  made before it was caught.
 - **The suite does not test session recovery.** The hermetic fixture keeps its session for the whole
   crawl, so "a page that bounces back to the login mid-crawl re-authenticates once and continues" is
   implemented and documented but not covered by an e2e assertion — a fixture that expired the

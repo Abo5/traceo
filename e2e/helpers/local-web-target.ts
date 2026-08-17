@@ -378,16 +378,33 @@ function credentialSourceOf(form: URLSearchParams): CredentialSource | null {
  * stopped matching the one the server accepts would fail as "the crawler read
  * it wrong", which is the most expensive kind of wrong test.
  */
-function withFlags(html: string, publishCredentials: boolean): string {
-  if (!publishCredentials) return html;
+function withFlags(
+  html: string,
+  publishCredentials: boolean,
+  rejectionBlankMs = 0,
+): string {
+  if (!publishCredentials && rejectionBlankMs === 0) return html;
   if (!html.includes(FLAGS_MARKER)) {
     throw new Error(`local web target: ${CRAWL_PAGE_FILE} no longer carries ${FLAGS_MARKER}`);
   }
-  return html.replace(
-    FLAGS_MARKER,
-    `window.__TRACEO_PUBLISHED_CREDENTIALS__ = ${JSON.stringify(PUBLISHED_CREDENTIALS)};`,
-  );
+  const lines = [];
+  if (publishCredentials) {
+    lines.push(
+      `window.__TRACEO_PUBLISHED_CREDENTIALS__ = ${JSON.stringify(PUBLISHED_CREDENTIALS)};`,
+    );
+  }
+  if (rejectionBlankMs > 0) {
+    lines.push(`window.__TRACEO_REJECTION_BLANK_MS__ = ${rejectionBlankMs};`);
+  }
+  return html.replace(FLAGS_MARKER, lines.join('\n      '));
 }
+
+/**
+ * How long the rejection page leaves the form off the DOM, in ms. Long enough
+ * that a crawler polling for "the password field is gone" will observe it, short
+ * enough that the test is not slow.
+ */
+const REJECTION_BLANK_MS = 1500;
 
 export interface AuthenticatedTargetOptions {
   /**
@@ -397,6 +414,18 @@ export interface AuthenticatedTargetOptions {
    * the logged-out product.
    */
   publishCredentials?: boolean;
+  /**
+   * Serve a rejected sign-in the way a real SPA does: re-render the login
+   * screen, which means the password field is briefly ABSENT from the DOM while
+   * the form re-mounts.
+   *
+   * This is not a hypothetical. Measured against the motivating target with a
+   * wrong password: that transient alone satisfied the crawler's
+   * "password_field_gone" proof, so a REJECTED sign-in was reported as a
+   * successful one, and the logged-out product was crawled and described as the
+   * application. Default OFF, so the ordinary rejection stays the simple one.
+   */
+  blankOnRejection?: boolean;
 }
 
 /**
@@ -414,7 +443,13 @@ export async function startAuthenticatedWebTarget(
 ): Promise<AuthenticatedWebTarget> {
   const publishCredentials = options.publishCredentials === true;
   const published = publishCredentials ? { ...PUBLISHED_CREDENTIALS } : null;
-  const html = withFlags(fs.readFileSync(samplePath(CRAWL_PAGE_FILE), 'utf8'), publishCredentials);
+  const source = fs.readFileSync(samplePath(CRAWL_PAGE_FILE), 'utf8');
+  const html = withFlags(source, publishCredentials);
+  // Served ONLY in answer to a rejected sign-in, so the ordinary pages are
+  // unaffected by the delay.
+  const rejectedHtml = options.blankOnRejection === true
+    ? withFlags(source, publishCredentials, REJECTION_BLANK_MS)
+    : html;
   const requests: RecordedRequest[] = [];
   const issued = new Set<string>();
 
@@ -461,11 +496,12 @@ export async function startAuthenticatedWebTarget(
         if (accepted && source) record.credentialSource = source;
 
         if (!accepted) {
-          // Answered AT THE LOGIN URL and with the password field still on the
+          // Answered AT THE LOGIN URL and with the password field back on the
           // page, so all three of the crawler's success probes must come back
           // negative. A redirect elsewhere would let "the URL left the login
-          // page" fire on a rejected sign-in.
-          page();
+          // page" fire on a rejected sign-in. Under `blankOnRejection` the form
+          // comes back LATE, which is the transient a real SPA produces.
+          answer(200, { 'Content-Type': 'text/html; charset=utf-8' }, rejectedHtml);
           return;
         }
         const token = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;

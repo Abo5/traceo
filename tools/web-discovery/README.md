@@ -198,11 +198,26 @@ Three checks, sampled every 250ms up to `--login-wait`. Any **one** is enough, a
 |---|---|
 | `url_left_login` | the URL's **origin+path** changed — `?error=1` on the same path is not a sign-in |
 | `logout_control` | a logout/sign-out control **appeared** that was not in the DOM before the submit |
-| `password_field_gone` | the page had a visible password field before and has none now |
+| `password_field_gone` | the page had a visible password field before, has none now, **and has rendered something** |
 
 `logout_control` and `password_field_gone` are compared against a probe taken **before** the
 submit, because only a *change* proves anything: a login page shipping a hidden "Sign out" in
 its shell would otherwise certify itself.
+
+Two guards on `password_field_gone`, both bought with a measured defect:
+
+* **A page that has rendered nothing has no password field either.** An SPA answers a wrong
+  password by re-mounting its login form, and during the re-mount the DOM is empty. On the
+  motivating target that transient alone satisfied this check, so a REJECTED sign-in was
+  reported as `succeeded: true` and the logged-out product was crawled and described as the
+  application — the exact failure the safety rule exists to prevent. The check now also
+  requires at least one `form, input, select, textarea, button, a[href]` on the page.
+* **A proof that stops being true was never a proof.** Whichever check fires is re-observed
+  once the page settles, and only counts if it still holds. A sign-in that is merely slow
+  still gets until `--login-wait` to prove itself.
+
+`e2e/tests/web-target-crawl.spec.ts` pins this with a fixture that reproduces the transient;
+against the pre-fix crawler that test fails with `strategy: "password_field_gone"`.
 
 If none fires, the run **fails** with `login_failed` and crawls nothing. The message says the
 credentials were rejected and deliberately does **not** say which of the two was wrong — the
@@ -470,9 +485,12 @@ describes, so a generated case stays auditable months later.
 ```
 
 `crawl.skipped[].reason` is one of `forbidden_control`, `cross_origin`, `non_http_scheme`,
-`invalid_url`, `max_depth`, `max_pages`, `download`, `session_lost`, or the failure code of a
-page that could not be loaded (`navigation_failed`, `navigation_timeout`, `http_error`,
-`ssrf_blocked`, `extraction_failed`, `screenshot_failed`).
+`invalid_url`, `max_depth`, `max_pages`, `download`, `session_lost`, `login_required`, or the
+failure code of a page that could not be loaded (`navigation_failed`, `navigation_timeout`,
+`http_error`, `ssrf_blocked`, `extraction_failed`, `screenshot_failed`).
+
+A link's own `decision`/`reason` inside `pages[].links` adds `pre_login`, which never reaches
+`crawl.skipped` — see the crawl rules above.
 
 **`pages[0]` IS the top-level page.** Every key that existed before this script grew a crawler
 still means exactly what it meant: it describes the first page crawled. Two consequences worth
@@ -482,8 +500,10 @@ stating plainly:
   consumer that wants the whole crawl concatenates `pages[].requests` and deduplicates.
 - Top-level `elapsed_ms` is page 0's own load-and-settle time (the performance track's
   baseline). The wall time of the whole run is `engine.total_elapsed_ms`.
-- With a sign-in, top-level `url` is still the URL that was *requested* while `final_url` is
-  the post-login landing page, so `redirected` is `true`.
+- With a sign-in at the entry page, page 0 IS the login page, so the top-level `title`,
+  `forms`, `screenshot` and `counts` describe the sign-in screen — the page the operator
+  named — and `final_url` equals `url`. Where the sign-in *landed* is `login.final_url`, and
+  the landing page is `pages[1]`.
 
 ### Notes for the backend
 
@@ -519,13 +539,12 @@ Run from this tree; local fixtures need `TRACEO_ALLOW_PRIVATE_TARGETS=1`.
 | Target | Result |
 |---|---|
 | OrangeHRM login (Vue SPA) | exit 0 · **1 form, 3 fields, 6 controls, 13 requests, 1 xhr**, 0 console errors · `wait_strategy: networkidle` · ~4.0s · form action `POST /web/index.php/auth/validate`, heading "Login", fields `_token`(hidden) / `username` / `password` with labels resolved · screenshot → 42 design facts |
-| **OrangeHRM, NO credentials given at all, `--max-pages 12 --max-depth 2`** | exit 0 · read `Username : Admin` / `Password : …` off the login screen and signed in · `credentials_source: "page"`, `credentials_evidence: ["Username : Admin", "Password : [redacted]"]`, `strategy: url_left_login`, `login_form_submissions: 1` · **12 pages** — dashboard, admin, pim, leave, time, recruitment, my-details, performance, directory, maintenance, claim, buzz · **12 forms, 42 fields, 576 controls, 300 requests, 78 xhr** · 13 links skipped (`cross_origin`, `max_pages`) · 12 PNGs, 3.8 MB · 51.5s · **0 occurrences of the password** in stdout or `discovery.json` |
-| **OrangeHRM, `--username Admin` + `$TRACEO_CRAWL_PASSWORD`, same budget** | exit 0 · the identical 12 pages, `credentials_source: "user"` |
-| **OrangeHRM, no flags at all** (`--max-pages` defaults to 25) | exit 0 · **22 pages** — the 12 modules plus 10 employee sub-tabs · 16 forms, 56 fields, 1006 controls, 139 xhr · 3 skipped (all `cross_origin`) · 76.5s |
-| Loopback fixture: client-rendered login, session cookie, 3 linked pages each with a form, a `Logout` link, a `Delete account` link, a `Reset password` link, a CSV download, a `mailto:` and an external link | exit 0 · **4 pages** (`/app/home`, `/app/alpha`, `/app/beta`, `/app/gamma`) · the server's own request log records **1 POST in the whole run**, to `/login`; **0** POSTs to any other form action; **0** fetches of `/app/logout`, `/app/delete/7` or `/app/reset-password`; **0** behind-login GETs without the session cookie · skipped: `forbidden_control`×3 (matching `logout`, `delete`, `reset`), `non_http_scheme` (`mailto:`), `cross_origin`, `download` (the CSV) |
-| Same fixture, wrong password | exit 1 · `login_failed`, `reason: proof_not_observed`, `login_form_submissions: 1`, 0 pages · message names neither credential and the password appears 0 times · the server logs that one POST and nothing else |
-| Same fixture, login page publishing nothing, no credentials | exit 0 · `login.error.code: login_required`, `attempted: false`, public surface crawled (1 page) · the server received **0** POSTs |
-| Same fixture, password set to `Alpha` — a word every page prints as link text | exit 0 · **0** raw `Alpha` survive, **9** `[redacted]` markers appear, page 0's link names read `[redacted] \| Beta \| Gamma \| …`; the same crawl under a different password leaves all **5** intact and `/app/alpha` in the URLs is untouched in both. The scrubber is token-anchored and case-exact, and is demonstrably capable of failing |
+| **OrangeHRM, NO credentials given at all, `--max-pages 12 --max-depth 2`** | exit 0 · read `Username : Admin` / `Password : …` off the login screen and signed in · `credentials_source: "page"`, `credentials_evidence: ["Username : Admin", "Password : [redacted]"]`, `strategy: url_left_login`, `login_form_submissions: 1` · **12 pages** — the login page, then dashboard, admin, pim, leave, time, recruitment, my-details, performance, directory, maintenance, claim · **12 forms, 44 fields, 531 controls, 279 requests, 75 xhr** · 18 links skipped (`cross_origin`×7, `max_pages`×11) · 81.5s · **0 occurrences of the password** in stdout or `discovery.json` |
+| **OrangeHRM, `--username Admin` + `$TRACEO_CRAWL_PASSWORD`, same budget** | exit 0 · the identical 12 pages, `credentials_source: "user"` · 12 forms, 44 fields, 531 controls, 281 requests, 75 xhr · 42.6s |
+| **OrangeHRM, no flags at all** (`--max-pages` defaults to 25) | exit 0 · **23 pages** — the login page, the 12 modules and 10 employee sub-tabs · 16 forms, 59 fields, 1016 controls, 522 requests, 145 xhr · 7 skipped (all `cross_origin`) · 124.6s |
+| **OrangeHRM, `--max-pages 1`** | exit 0 · signs in, then spends the whole budget on the login page: **1 page**, 1 form, 3 fields, 6 controls. The budget is a cap on what the RESULT contains, and the page the operator named is part of it — ask for more than one page to see anything behind the sign-in |
+| **OrangeHRM, `--username Admin` and a WRONG password** | exit 1 · `login_failed`, `reason: proof_not_observed`, `login_form_submissions: 1`, **0 pages crawled** · the message names neither half of the pair and the password appears **0** times in the document |
+| Loopback fixture (`e2e/helpers/local-web-target.ts`), driven through both backends by `e2e/tests/web-target-crawl.spec.ts` | The safety rule is asserted against the fixture server's OWN request log, not against the crawler's account of itself: the login form submitted **exactly once**, **0** other form submissions, **0** activations of `/logout`, `/reset-password` or `/api/account`, and **0** behind-login GETs without the session cookie. 13 tests, green on both engines |
 | `--max-pages 0`, `--max-pages 51`, `--max-pages 2.5` | exit 2 · `invalid_arguments`, "must be an integer between 1 and 50" |
 | `--max-depth -1` | exit 2 · `invalid_arguments`, "must be an integer between 0 and 10" |
 | `--password` without `--username`; `--username-selector` without `--password-selector`; `--login-url` on another origin | exit 2 · `invalid_arguments` for each |
