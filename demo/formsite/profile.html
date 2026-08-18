@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Formery — profile</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<header><b>Formery</b><nav>
+  <a href="/index.html">Home</a><a href="/signup.html">Sign up</a><a href="/checkout.html">Checkout</a>
+  <a href="/profile.html">Profile</a><a href="/support.html">Support</a>
+</nav></header>
+<main>
+  <h1>Profile settings</h1>
+  <p class="sub">The widest spread of control types — text, number, range, colour, date,
+     select, radio, checkbox and textarea — so you can see what discovery does with each.</p>
+
+  <!-- novalidate so the submit handler below actually runs with an empty
+       required field; without it the browser blocks first and the planted
+       reset bug is unreachable. -->
+  <form id="profile" action="/thanks.html" method="get" novalidate>
+    <h2>Public profile</h2>
+    <p class="hint">PLANTED BUGS: display name drops its minlength=2, and a refused
+       submission resets the whole form so everything typed is lost.</p>
+    <div class="row">
+      <label><span class="req">Display name</span>
+        <input id="display" name="display" required minlength="2" maxlength="30"></label>
+      <label>Pronouns <input id="pronouns" name="pronouns" maxlength="20"></label>
+    </div>
+    <label>Homepage <input id="home" name="home" type="url"></label>
+    <label>About you <textarea id="about" name="about" maxlength="300"></textarea></label>
+    <div class="row">
+      <label>Daily reminder <input id="remind" name="remind" type="time"></label>
+      <label>Theme colour <input id="colour" name="colour" type="color" value="#3d6bf5"></label>
+    </div>
+    <div class="row">
+      <label>Results per page
+        <input id="perpage" name="perpage" type="number" min="5" max="50" step="5" value="10"></label>
+      <label>Font scale <input id="scale" name="scale" type="range" min="80" max="150" value="100"></label>
+    </div>
+    <label>Language
+      <select id="lang" name="lang">
+        <option value="en" selected>English</option><option value="ar">Arabic</option>
+      </select></label>
+    <div class="inline" style="margin-bottom:18px">
+      <span>Visibility:</span>
+      <label><input type="radio" name="vis" id="vis-pub" value="public" checked> Public</label>
+      <label><input type="radio" name="vis" id="vis-priv" value="private"> Private</label>
+      <label><input type="checkbox" name="indexable" id="indexable" checked> Allow search engines</label>
+    </div>
+    <button type="submit" id="profile-go">Save profile</button>
+  </form>
+</main>
+<script>
+  // PLANTED BUG — display name declares a 2-character minimum and then drops it.
+  document.getElementById('display').addEventListener('input', function (e) {
+    e.target.removeAttribute('minlength');
+  });
+
+  // PLANTED BUG — a refused submission wipes the whole form, so the user has to
+  // type everything again. This is the classic error-recovery defect.
+  document.getElementById('profile').addEventListener('submit', function (e) {
+    var d = document.getElementById('display');
+    if (!d.value.trim()) { e.preventDefault(); document.getElementById('profile').reset(); }
+  });
+</script>
+</body></html>

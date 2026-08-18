@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Traceo demo — sign in</title>
+<!--
+  Demo page for the web-target flow (docs/WEB_TARGETS.md §6).
+
+  Scan it, then run the checks. It carries TWO PLANTED BUGS, both of the kind a
+  form actually has in the wild, and both invisible to anything that only reads
+  the HTML — you have to drive the page to find them:
+
+    1. `email` is marked `required`, but the form is `novalidate` and the only
+       JS check looks at `username`. The field declares a rule nobody enforces.
+    2. `notes` declares `maxlength="5"` and then raises its own limit on the
+       first keystroke.
+    3. `age` declares min=18 max=120 and strips both attributes on the first
+       keystroke, so any number is accepted.
+
+  `nickname` (minlength 3, maxlength 12) and `email` (type=email) are correct,
+  so the validation cases built from them should pass.
+
+  `username` (required), `phone` (pattern) and the page-load budget are correct,
+  so a run that fails them is the runner's bug, not this page's.
+-->
+<style>
+  body { font: 15px/1.6 system-ui, sans-serif; margin: 0; padding: 48px; color: #1b1f2b; background: #f6f7f9; }
+  form { background: #fff; border: 1px solid #e8eaf0; border-radius: 12px; padding: 24px; max-width: 420px; }
+  label { display: block; margin-bottom: 14px; font-size: 13px; color: #5d6472; }
+  input { display: block; width: 100%; margin-top: 4px; padding: 9px 12px; font: inherit;
+          border: 1px solid #e8eaf0; border-radius: 8px; }
+  button { background: #3d6bf5; color: #fff; border: 0; border-radius: 8px; padding: 10px 18px;
+           font: inherit; font-weight: 600; cursor: pointer; }
+  h1 { font-size: 20px; margin: 0 0 18px; }
+</style>
+</head>
+<body>
+<h1>Sign in</h1>
+<form id="login" action="/done" method="get" novalidate>
+  <label>User <input id="username" name="username" required maxlength="10"></label>
+  <label>Email <input id="email" name="email" type="email" required></label>
+  <label>Phone <input id="phone" name="phone" pattern="05[0-9]{8}"></label>
+  <label>Age <input id="age" name="age" type="number" min="18" max="120"></label>
+  <label>Nickname <input id="nickname" name="nickname" minlength="3" maxlength="12"></label>
+  <label>Notes <input id="notes" name="notes" maxlength="5"></label>
+  <button type="submit" id="go">Sign in</button>
+</form>
+<script>
+  // One XHR on load, so the `api` test type has an endpoint to discover and the
+  // `security` type has something to build weakness cases against. Without a
+  // captured request those two tracks correctly produce nothing.
+  fetch('/api/session.json').catch(function () { /* offline is fine */ });
+
+  document.getElementById('notes').addEventListener('input', function (e) {
+    e.target.setAttribute('maxlength', '999');          // planted bug 2
+  });
+  // BUG ON PURPOSE 3: age is declared 18..120 and the page overrides the
+  // browser, so an out-of-range number sails through.
+  document.getElementById('age').addEventListener('input', function (e) {
+    e.target.setCustomValidity('');
+    e.target.removeAttribute('min');
+    e.target.removeAttribute('max');
+  });
+
+  document.getElementById('login').addEventListener('submit', function (e) {
+    var u = document.getElementById('username');
+    if (!u.value) {                                      // username IS enforced
+      e.preventDefault();
+      u.setAttribute('aria-invalid', 'true');
+    }
+    // planted bug 1: nothing checks email
+  });
+</script>
+</body>
+</html>

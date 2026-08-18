@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Formery — a site made of forms</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<header><b>Formery</b><nav>
+  <a href="/index.html">Home</a><a href="/signup.html">Sign up</a><a href="/checkout.html">Checkout</a>
+  <a href="/profile.html">Profile</a><a href="/support.html">Support</a>
+</nav></header>
+<main>
+  <h1>A site made of forms</h1>
+  <p class="sub">Every page here is a target you can point Traceo at. Each form declares real
+     validation rules; some pages keep their promises and some deliberately do not.</p>
+
+  <form id="newsletter" action="/thanks.html" method="get">
+    <h2>Newsletter</h2>
+    <p class="hint">Two fields, both honest — this form should come back clean.</p>
+    <label><span class="req">Email</span>
+      <input id="nl-email" name="email" type="email" required maxlength="120"></label>
+    <label>Name
+      <input id="nl-name" name="name" minlength="2" maxlength="40"></label>
+    <button type="submit" id="nl-go">Subscribe</button>
+  </form>
+
+  <form id="search" action="/results.html" method="get">
+    <h2>Search</h2>
+    <p class="hint">One optional field that declares nothing — Traceo should write no
+       validation case for it, only a presence check.</p>
+    <label>Query <input id="q" name="q" type="search"></label>
+    <button type="submit" id="q-go">Search</button>
+  </form>
+</main>
+<script>
+  // This page is deliberately correct: the browser's own constraint validation
+  // is left switched on, so every rule the fields declare is actually enforced.
+</script>
+</body></html>

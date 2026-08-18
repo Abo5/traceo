@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Formery — support</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<header><b>Formery</b><nav>
+  <a href="/index.html">Home</a><a href="/signup.html">Sign up</a><a href="/checkout.html">Checkout</a>
+  <a href="/profile.html">Profile</a><a href="/support.html">Support</a>
+</nav></header>
+<main>
+  <h1>Contact support</h1>
+  <p class="sub">A clean page. A run over this one should come back with nothing to fix —
+     which is worth having: a tool that only ever finds problems is not measuring anything.</p>
+
+  <form id="ticket" action="/thanks.html" method="get">
+    <h2>Open a ticket</h2>
+    <p class="hint">No planted bugs. Every declared rule is enforced.</p>
+    <div class="row">
+      <label><span class="req">Your email</span>
+        <input id="t-email" name="email" type="email" required maxlength="120"></label>
+      <label><span class="req">Order number</span>
+        <input id="t-order" name="order" required pattern="[A-Z]{2}-[0-9]{6}" placeholder="AB-123456"></label>
+    </div>
+    <label><span class="req">Subject</span>
+      <input id="t-subject" name="subject" required minlength="5" maxlength="80"></label>
+    <label><span class="req">Message</span>
+      <textarea id="t-body" name="body" required minlength="20" maxlength="1000"></textarea></label>
+    <label>Priority
+      <select id="t-priority" name="priority">
+        <option>Low</option><option selected>Normal</option><option>High</option>
+      </select></label>
+    <button type="submit" id="t-go">Send</button>
+  </form>
+</main>
+</body></html>
