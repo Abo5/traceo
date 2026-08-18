@@ -4,72 +4,68 @@ import React from "react";
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
 import { ProjectProvider, useProject } from "@/lib/project-context";
-import { useLang } from "@/lib/i18n";
 import { Badge } from "@/components/ui";
 
-const NAV_GROUPS: { ar: string; en: string; items: { seg: string; ar: string; en: string }[] }[] = [
+const NAV_GROUPS: { label: string; items: { seg: string; label: string }[] }[] = [
   {
-    ar: "مساحة العمل",
-    en: "Workspace",
+    label: "Workspace",
     items: [
-      { seg: "", ar: "نظرة عامة", en: "Overview" },
-      { seg: "requirements", ar: "المتطلبات", en: "Requirements" },
-      { seg: "endpoints", ar: "الواجهات", en: "Endpoints" },
+      { seg: "", label: "Overview" },
+      { seg: "requirements", label: "Requirements" },
+      { seg: "endpoints", label: "Endpoints" },
+      { seg: "target", label: "Target" },
     ],
   },
   {
-    ar: "التحليل",
-    en: "Analysis",
+    label: "Analysis",
     items: [
-      { seg: "generate", ar: "التوليد", en: "Generate" },
-      { seg: "review", ar: "المراجعة", en: "Review" },
-      { seg: "runs", ar: "التشغيلات", en: "Runs" },
-      { seg: "matrix", ar: "المصفوفة", en: "Matrix" },
+      { seg: "generate", label: "Generate" },
+      { seg: "insights", label: "Insights" },
+      { seg: "review", label: "Review" },
+      { seg: "runs", label: "Runs" },
+      { seg: "matrix", label: "Matrix" },
     ],
   },
   {
-    ar: "الإعداد",
-    en: "Configure",
+    label: "Configure",
     items: [
-      { seg: "environments", ar: "البيئات", en: "Environments" },
-      { seg: "integrations", ar: "التكاملات", en: "Integrations" },
+      { seg: "environments", label: "Environments" },
+      { seg: "settings", label: "Settings" },
+      { seg: "integrations", label: "Integrations" },
     ],
+  },
+  {
+    label: "Reference",
+    items: [{ seg: "reference", label: "Reference" }],
   },
 ];
 
 function Sidebar({ projectId }: { projectId: string }) {
   const pathname = usePathname();
   const { project } = useProject();
-  const { lang } = useLang();
-  const ar = lang === "ar";
 
   const base = `/projects/${projectId}`;
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" data-testid="nav-project-sidebar">
       <div className="sidebar-head">
-        <div className="sidebar-project" title={project?.name ?? ""}>
+        <div className="sidebar-project" title={project?.name ?? ""} data-testid="nav-project-name">
           {project?.name ?? "…"}
         </div>
         <div className="row" style={{ gap: 6 }}>
-          {project?.language && (
-            <Badge tone="accent">
-              {project.language === "ar" ? (ar ? "العربية" : "Arabic") : ar ? "الإنجليزية" : "English"}
-            </Badge>
-          )}
           {project?.status === "archived" && (
-            <Badge tone="muted">{ar ? "مؤرشف" : "Archived"}</Badge>
+            <Badge tone="muted" testId="nav-project-archived-badge">Archived</Badge>
           )}
         </div>
       </div>
       <nav className="sidebar-nav">
         {NAV_GROUPS.map((group) => (
-          <div key={group.en} style={{ marginBottom: 6 }}>
+          <div key={group.label} style={{ marginBottom: 6 }}>
             <div
               className="eyebrow"
-              style={{ padding: "10px 12px 4px", fontSize: 10.5, color: "var(--text-muted)" }}
+              style={{ padding: "10px 12px 4px", fontSize: 10.5, color: "var(--text-secondary)" }}
             >
-              {ar ? group.ar : group.en}
+              {group.label}
             </div>
             {group.items.map((item) => {
               const href = item.seg ? `${base}/${item.seg}` : base;
@@ -81,8 +77,9 @@ function Sidebar({ projectId }: { projectId: string }) {
                   key={item.seg || "overview"}
                   href={href}
                   className={`nav-item ${active ? "nav-item-active" : ""}`}
+                  data-testid={`nav-link-${item.seg || "overview"}`}
                 >
-                  {ar ? item.ar : item.en}
+                  {item.label}
                 </Link>
               );
             })}
@@ -99,7 +96,7 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
 
   return (
     <ProjectProvider projectId={id}>
-      <div className="project-shell">
+      <div className="project-shell" data-testid="nav-project-shell">
         <Sidebar projectId={id} />
         <div className="project-main">{children}</div>
       </div>

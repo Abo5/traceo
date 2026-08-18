@@ -6,12 +6,10 @@ Prerequisites (run from repo root):
   2. Demo SUT up:  cd demo/sut && uvicorn main:app --port 9000
 Then:              python3 demo/seed_demo.py
 
-Logs in as demo@traceo.sa (falls back to registering org "شركة نجم البرمجيات"),
-creates the "منصة الطلبات — الحكومية" project, uploads the Arabic requirements
-document, imports the OpenAPI spec, folds in a live traffic capture, generates +
-approves test cases, executes a run (with a fixture that is created and torn down),
-evaluates the delivery gate, issues a CI token and schedules a nightly run — then
-prints the summary.
+Logs in as demo@traceo.sa (falls back to registering org "Northstar Software"),
+creates the "Orders Platform" project, uploads the requirements document, imports
+the OpenAPI spec, generates + approves test cases, executes a run against the SUT
+and prints a traceability summary.
 """
 import json
 import sys
@@ -26,14 +24,13 @@ except ImportError:
 
 BASE = "http://localhost:8000/v1"
 DEMO_DIR = Path(__file__).resolve().parent
-REQ_DOC = DEMO_DIR / "sample_requirements_ar.md"
+REQ_DOC = DEMO_DIR / "sample_requirements_en.md"
 SPEC_FILE = DEMO_DIR / "sample_openapi.yaml"
 
 DEMO_EMAIL = "demo@traceo.sa"
-ADMIN_EMAIL = "admin@traceo.sa"  # seeded alongside the demo user; can mint CI tokens
 DEMO_PASSWORD = "Demo1234!"
-ORG_NAME = "شركة نجم البرمجيات"
-PROJECT_NAME = "منصة الطلبات — الحكومية"
+ORG_NAME = "Northstar Software"
+PROJECT_NAME = "Orders Platform"
 
 
 # ------------------------------------------------------------------ helpers
@@ -99,7 +96,7 @@ def main():
         else:
             step(f"Login failed ({r.status_code}) — registering org {ORG_NAME}")
             data = check(anon.post(f"{BASE}/auth/register", json={
-                "org_name": ORG_NAME, "name": "نواف القحطاني",
+                "org_name": ORG_NAME, "name": "Demo QA Lead",
                 "email": DEMO_EMAIL, "password": DEMO_PASSWORD,
             }), 200, 201, what="register")
             token = data.get("token") or data.get("access_token")
@@ -108,7 +105,7 @@ def main():
 
     with httpx.Client(timeout=60.0, headers={"Authorization": f"Bearer {token}"}) as c:
         step(f"Creating project: {PROJECT_NAME}")
-        proj = check(c.post(f"{BASE}/projects", json={"name": PROJECT_NAME, "language": "ar"}),
+        proj = check(c.post(f"{BASE}/projects", json={"name": PROJECT_NAME}),
                      200, 201, what="create project")
         pid = proj.get("id") or (proj.get("project") or {}).get("id")
         if not pid:
@@ -118,17 +115,6 @@ def main():
         env = check(c.post(f"{BASE}/projects/{pid}/environments", json={
             "name": "staging", "base_url": "http://localhost:9000/api/v2",
             "auth_type": "bearer", "auth_config": {"token": "demo-token"},
-            # FR-043: a customer created before the suite and removed after it —
-            # {{run_ns}} keeps each run's data identifiable in the target system.
-            "fixtures": [{
-                "name": "seed-customer",
-                "create": {"method": "POST", "path": "/customers",
-                           "body": {"name": "عميل التهيئة {{run_ns}}",
-                                    "phone": "0512345678",
-                                    "email": "fixture@traceo.sa", "age": 30}},
-                "extract": {"fixture_customer_id": "id"},
-                "delete": {"method": "DELETE", "path": "/customers/{{fixture_customer_id}}"},
-            }],
         }), 200, 201, what="create environment")
         env_id = env.get("id") or (env.get("environment") or {}).get("id")
         if not env_id:
@@ -158,41 +144,6 @@ def main():
                               200, 201, 202, what="import spec")
         if spec_resp.get("warnings"):
             print(f"    spec warnings: {spec_resp['warnings']}")
-
-        step("Folding a live traffic capture into the endpoint surface (FR-021)")
-        capture_entries = []
-        with httpx.Client(timeout=10.0) as sut:
-            headers = {"Authorization": "Bearer demo-token"}
-            for path in ("/orders", "/orders?status=pending", "/customers/CUST-001",
-                         "/customers/CUST-002", "/invoices/INV-2001"):
-                try:
-                    resp = sut.get(f"http://localhost:9000/api/v2{path}", headers=headers)
-                except httpx.HTTPError:
-                    break
-                capture_entries.append({
-                    "request": {"method": "GET",
-                                "url": f"http://localhost:9000/api/v2{path}",
-                                "headers": [{"name": "Authorization",
-                                             "value": "Bearer demo-token"}],
-                                "queryString": []},
-                    "response": {"status": resp.status_code,
-                                 "content": {"mimeType": "application/json",
-                                             "text": resp.text}},
-                })
-        traffic = {}
-        if capture_entries:
-            traffic = check(c.post(f"{BASE}/projects/{pid}/discovery/traffic", json={
-                "har": {"log": {"version": "1.2", "entries": capture_entries}},
-                "base_url": "http://localhost:9000/api/v2",
-            }), 200, 201, what="import traffic capture")
-            # An endpoint the spec already declares is reinforced with its observation
-            # count but keeps its declared shape — that is `observations_only`.
-            print(f"    {traffic.get('endpoints_count', 0)} observed endpoint(s); "
-                  f"{traffic.get('added', 0)} new, "
-                  f"{traffic.get('observations_only', 0)} reinforced a declared endpoint")
-        endpoints = items_of(check(c.get(f"{BASE}/projects/{pid}/endpoints"), 200,
-                                   what="list endpoints"))
-        never_seen = [e for e in endpoints if e.get("declared_never_seen")]
 
         step("Generating test cases (depth=standard)")
         gen = check(c.post(f"{BASE}/projects/{pid}/generate", json={"depth": "standard"}),
@@ -237,49 +188,15 @@ def main():
             die(f"run did not complete (state={run.get('state')})")
         counts = run.get("counts") or {}
 
-        step("Evaluating the delivery gate (FR-061)")
-        check(c.put(f"{BASE}/projects/{pid}/gate", json={
-            "enabled": True, "min_coverage_pct": 80, "max_new_failures": 0,
-            "block_on": "high_priority"}), 200, what="set gate policy")
-        gate = check(c.get(f"{BASE}/runs/{run_id}/gate"), 200, what="gate verdict")
-
-        step("Issuing a CI token and scheduling a nightly run")
-        # Minting a credential is admin-only (FR-080), and the demo user is a QA lead —
-        # so this step authenticates as the seeded admin rather than widening the role.
-        ci_token = {}
-        r = c.post(f"{BASE}/tokens", json={"name": "github-actions",
-                                           "project_id": pid, "role": "qa_engineer"})
-        if r.status_code == 403:
-            with httpx.Client(timeout=30.0) as anon:
-                admin = anon.post(f"{BASE}/auth/login", json={
-                    "email": ADMIN_EMAIL, "password": DEMO_PASSWORD})
-            if admin.status_code == 200:
-                admin_token = admin.json().get("token") or admin.json().get("access_token")
-                r = c.post(f"{BASE}/tokens",
-                           json={"name": "github-actions", "project_id": pid,
-                                 "role": "qa_engineer"},
-                           headers={"Authorization": f"Bearer {admin_token}"})
-            else:
-                print("    skipped: no admin account in this org to mint a CI token")
-        if r.status_code in (200, 201):
-            ci_token = r.json()
-        schedule = check(c.post(f"{BASE}/projects/{pid}/schedules", json={
-            "environment_id": env_id, "cron": "0 2 * * *", "branch": "main"}),
-            200, 201, what="create schedule")
-
         step("Fetching traceability matrix")
         trace = check(c.get(f"{BASE}/projects/{pid}/traceability"), 200, what="traceability")
         coverage = trace.get("coverage_pct", 0)
         gaps = trace.get("gaps") or []
 
     # ------------------------------------------------------------ summary
-    fixtures = run.get("fixtures") or {}
     rows = [
         ("Project", PROJECT_NAME),
         ("Requirements confirmed", str(len(confirmed))),
-        ("Endpoints discovered", str(len(endpoints))),
-        ("  observed in traffic", str(traffic.get("endpoints_count", 0))),
-        ("  declared, never seen", str(len(never_seen))),
         ("Test cases generated", str(generated)),
         ("Discarded by grounding gate", str(discarded)),
         ("Unmappable requirements", str(len(unmappable))),
@@ -288,16 +205,8 @@ def main():
         ("  passed", str(counts.get("passed", "?"))),
         ("  failed", str(counts.get("failed", "?"))),
         ("  errored", str(counts.get("errored", "?"))),
-        ("Fixtures created", ", ".join(fixtures.get("created") or []) or "—"),
-        ("Fixtures torn down", ", ".join(fixtures.get("removed") or []) or "—"),
         ("Coverage", f"{coverage}%"),
         ("Traceability gaps", str(len(gaps))),
-        ("Gate verdict", "PASSED" if gate.get("passed") else "FAILED"),
-        ("  exit code", str(gate.get("exit_code"))),
-        ("  breaches", str(len(gate.get("breaches") or []))),
-        ("CI token", f"{ci_token.get('prefix', '')}… (shown once)"
-                     if ci_token else "not issued (needs an admin)"),
-        ("Nightly schedule", f"{schedule.get('cron')} {schedule.get('timezone')}"),
     ]
     width = max(len(k) for k, _ in rows) + 2
     print("\n" + "=" * (width + 20))
@@ -309,10 +218,6 @@ def main():
     if counts.get("failed"):
         print("Note: failures are expected — the demo SUT contains two intentional bugs")
         print("      (11-digit phone accepted; dispatched orders cancellable).")
-    for breach in gate.get("breaches") or []:
-        named = ", ".join(r.get("external_id", "") for r in breach.get("requirements") or [])
-        print(f"Gate breach [{breach['code']}]: {breach['message']}"
-              + (f" — {named}" if named else ""))
     print("Done.")
 
 

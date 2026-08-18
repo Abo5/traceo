@@ -75,7 +75,7 @@ def make_grounded_case():
                 "headers": {"Content-Type": "application/json",
                             "Authorization": "Bearer {{token}}"},
                 "params": {},
-                "body": {"name": "سارة القحطاني", "phone": "0512345678",
+                "body": {"name": "Sara Whitfield", "phone": "0512345678",
                          "email": "sara@example.sa", "age": 30},
             },
             "assertions": [{"type": "status_code", "expected": 201}],
@@ -124,7 +124,7 @@ def test_fabricated_query_param_yields_violation():
 
 def test_fabricated_body_field_yields_violation():
     case = make_grounded_case()
-    case["steps"][0]["request"]["body"]["nickname"] = "أبو فهد"  # not in schema
+    case["steps"][0]["request"]["body"]["nickname"] = "Sam"  # not in schema
     violations = grounding_validate(case, make_inventory())
     assert violations
     assert any("'nickname'" in v and "does not exist" in v for v in violations)

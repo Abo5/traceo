@@ -1,7 +1,7 @@
 /* ============================================================
    Traceo — global design tokens & base styles (dark, amber)
    1px borders + surface steps for depth. NO shadows.
-   RTL-safe: logical properties only (inline/block, start/end).
+   English-only, LTR.
    ============================================================ */
 
 :root {
@@ -51,6 +51,15 @@
   --info: #4d9dff;
   --info-subtle: rgba(77, 157, 255, 0.16);
 
+  /* Text-on-subtle variants. The semantic colours above are tuned for fills,
+     dots and borders; as 11px text on their own 16%-opacity background they
+     land just under WCAG AA (4.5:1) — #ff5c72 reads 4.27:1 and #4d9dff 4.44:1.
+     These lightened pairs clear 5:1 and are used ONLY for text. */
+  --error-text: #ff7c8e;
+  --info-text: #6fb0ff;
+  /* Violet marks AI-suggested content. #9b6bff is 3.85:1 on its own tint. */
+  --c-violet-text: #c3a3ff;
+
   /* gradients */
   --grad-hero: linear-gradient(135deg, #ff8a22 0%, #f85ec2 52%, #9b6bff 100%);
   --grad-warm: linear-gradient(135deg, #ff8a22, #ff5c72);
@@ -69,8 +78,8 @@
   --t-slow: 320ms cubic-bezier(0.2, 0.6, 0.2, 1);
 
   /* fonts */
-  --font-ui: "IBM Plex Sans Arabic", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono", "IBM Plex Sans Arabic", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 /* ---------- base ---------- */
@@ -132,14 +141,14 @@ button {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--text-muted);
+  /* text-secondary, not text-muted: muted on any surface fails WCAG AA 4.5:1
+     (axe color-contrast, @a11y delta gate) */
+  color: var(--text-secondary);
 }
 
 .code-block {
   font-family: var(--font-mono);
   font-size: 12px;
-  direction: ltr;
-  text-align: left;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
@@ -198,7 +207,7 @@ button {
 .brand-tagline {
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 
@@ -262,8 +271,6 @@ button {
 .demo-hint {
   font-family: var(--font-mono);
   font-size: 12px;
-  direction: ltr;
-  text-align: left;
   color: var(--text-secondary);
   background: var(--bg);
   border: 1px solid var(--border);
@@ -525,13 +532,13 @@ button {
 
 .badge-error {
   background: var(--error-subtle);
-  color: var(--error);
+  color: var(--error-text);
   border-color: rgba(255, 92, 114, 0.3);
 }
 
 .badge-info {
   background: var(--info-subtle);
-  color: var(--info);
+  color: var(--info-text);
   border-color: rgba(77, 157, 255, 0.3);
 }
 
@@ -623,8 +630,8 @@ button {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--text-muted);
-  text-align: start;
+  color: var(--text-secondary);
+  text-align: left;
   border-block-end: 1px solid var(--border);
   white-space: nowrap;
 }
@@ -690,7 +697,12 @@ button {
 
 .empty-hint {
   font-size: 12.5px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
+  max-width: 46ch;
+}
+
+.empty-action {
+  margin-top: 14px;
 }
 
 /* ---------- modal ---------- */
@@ -737,7 +749,7 @@ button {
 .modal-close {
   background: transparent;
   border: none;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 14px;
   line-height: 1;
   padding: 6px;
@@ -772,7 +784,7 @@ button {
 
 .field-hint {
   font-size: 11.5px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .input {
@@ -807,16 +819,9 @@ button {
   appearance: none;
   background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23756F84' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: left 12px center;
-  padding-inline-end: 12px;
-  padding-inline-start: 28px;
-}
-
-:root [dir="ltr"] .select,
-[dir="ltr"] .select {
   background-position: right 12px center;
-  padding-inline-start: 12px;
-  padding-inline-end: 28px;
+  padding-left: 12px;
+  padding-right: 28px;
 }
 
 .textarea {

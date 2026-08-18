@@ -7,3 +7,15 @@ frontend/node_modules/
 frontend/.next/
 __pycache__/
 **/__pycache__/
+.pytest_cache/
+
+# Real configuration and secrets; env.example is the committed template.
+.env
+.env.*
+!env.example
+
+# Go backend local state
+backend-go/*.db
+backend-go/storage/
+
+frontend/tsconfig.tsbuildinfo

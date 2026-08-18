@@ -8,11 +8,16 @@ const USER_KEY = "traceo_user";
 export class ApiError extends Error {
   code: string;
   status: number;
-  constructor(code: string, message: string, status: number) {
+  /** Field-level detail lines the API attached to the error (e.g. 422 invalid_spec). */
+  errors: string[];
+  constructor(code: string, message: string, status: number, errors?: unknown) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.status = status;
+    this.errors = Array.isArray(errors)
+      ? errors.map((e) => (typeof e === "string" ? e : e?.message ?? JSON.stringify(e)))
+      : [];
   }
 }
 
@@ -59,11 +64,63 @@ export function setUser(u: any | null): void {
   }
 }
 
+/**
+ * No-login mode: a backend running with TRACEO_DEV_AUTOLOGIN=1 hands out a
+ * session without credentials. This resolves once, before the first request
+ * goes out — otherwise every screen would fire its initial fetch while the
+ * token is still in flight and fail with "Missing bearer token", which is a
+ * race, not an authorisation problem. On any other backend the endpoint 404s,
+ * nothing is stored, and normal authentication is untouched.
+ *
+ * The answer is "is this backend running without login", NOT "did we just mint a
+ * token" — a reload already holding a token must still learn that login is gone,
+ * or the shell would put the sign-out control back.
+ */
+let sessionBootstrap: Promise<boolean> | null = null;
+
+export function ensureSession(): Promise<boolean> {
+  if (typeof window === "undefined") return Promise.resolve(false);
+  if (sessionBootstrap === null) {
+    sessionBootstrap = (async () => {
+      try {
+        const res = await fetch(`${API}/auth/dev-session`, { method: "POST" });
+        if (!res.ok) return false;
+        const data = await res.json();
+        if (!getToken()) {
+          setToken(data.token);
+          setUser(data.user);
+        }
+        return true;
+      } catch {
+        return false; // offline or endpoint absent
+      }
+    })();
+  }
+  return sessionBootstrap;
+}
+
+/**
+ * Discard the stored session so the next call bootstraps a fresh one.
+ *
+ * This build has no sign-out control and no login screen, so a stored token
+ * that the backend rejects — minted before the database was recreated, or
+ * against a different signing key — would otherwise be permanent: every screen
+ * shows "Invalid or expired token" forever and the user has no way to clear it.
+ * Recovery has to be automatic because there is no manual path left.
+ */
+export function resetSession(): void {
+  sessionBootstrap = null;
+  setToken(null);
+  setUser(null);
+}
+
 export async function api<T = any>(
   path: string,
-  opts?: { method?: string; body?: any; form?: FormData }
+  opts?: { method?: string; body?: any; form?: FormData },
+  retriedAfterReset = false
 ): Promise<T> {
   const headers: Record<string, string> = {};
+  if (!getToken()) await ensureSession();
   const token = getToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
@@ -81,7 +138,7 @@ export async function api<T = any>(
   try {
     res = await fetch(API + path, { method, headers, body });
   } catch (e: any) {
-    throw new ApiError("network_error", e?.message || "تعذّر الاتصال بالخادم", 0);
+    throw new ApiError("network_error", e?.message || "Could not reach the server", 0);
   }
 
   let data: any = undefined;
@@ -94,18 +151,32 @@ export async function api<T = any>(
     }
   }
 
+  // A rejected token is thrown away and the request retried once with a fresh
+  // session. Once only, and only for this code: a second 401 is a real refusal
+  // and must surface, not loop. A FormData body cannot be replayed after the
+  // fetch consumed it, so an upload reports the failure instead — the next
+  // call, made with the cleared session, succeeds.
+  if (res.status === 401 && !retriedAfterReset && !opts?.form) {
+    const code = data?.detail?.code ?? data?.code;
+    if (code === "invalid_token" && getToken()) {
+      resetSession();
+      if (await ensureSession()) return api<T>(path, opts, true);
+    }
+  }
+
   if (!res.ok) {
     const detail = data && typeof data === "object" ? data.detail ?? data : data;
     if (detail && typeof detail === "object") {
       throw new ApiError(
         detail.code || `http_${res.status}`,
-        detail.message || detail.msg || res.statusText || "خطأ غير متوقع",
-        res.status
+        detail.message || detail.msg || res.statusText || "Unexpected error",
+        res.status,
+        detail.errors
       );
     }
     throw new ApiError(
       `http_${res.status}`,
-      typeof detail === "string" && detail ? detail : res.statusText || "خطأ غير متوقع",
+      typeof detail === "string" && detail ? detail : res.statusText || "Unexpected error",
       res.status
     );
   }
@@ -128,14 +199,14 @@ export async function pollJob(jobId: string, onProgress?: (j: any) => void): Pro
     if (state === "failed") {
       const err = j?.error;
       const msg =
-        (err && typeof err === "object" ? err.message : err) || "فشلت المهمة";
+        (err && typeof err === "object" ? err.message : err) || "The job failed";
       const code = (err && typeof err === "object" && err.code) || "job_failed";
       throw new ApiError(code, msg, 500);
     }
     if (state === "cancelled" || state === "aborted") {
-      throw new ApiError("job_cancelled", "أُلغيت المهمة", 409);
+      throw new ApiError("job_cancelled", "The job was cancelled", 409);
     }
     await sleep(1000);
   }
-  throw new ApiError("job_timeout", "انتهت مهلة انتظار المهمة", 408);
+  throw new ApiError("job_timeout", "Timed out waiting for the job", 408);
 }

@@ -1,0 +1,320 @@
+{
+  "url": "http://localhost:8017/web/index.php/auth/login",
+  "final_url": "http://localhost:8017/web/index.php/dashboard/index",
+  "title": "OrangeHRM Dashboard",
+  "viewport": "1280x800",
+  "elapsed_ms": 1800,
+  "screenshot": "screen.png",
+  "engine": "chromium",
+  "login": {
+    "attempted": true,
+    "succeeded": true,
+    "strategy": "url_changed",
+    "final_url": "http://localhost:8017/web/index.php/dashboard/index",
+    "error": "",
+    "credentials_source": "page",
+    "reauthenticated": 1
+  },
+  "crawl": {
+    "requested_max_pages": 25,
+    "visited": 3,
+    "origin": "http://localhost:8017",
+    "skipped": [
+      {
+        "url": "http://localhost:8017/web/index.php/auth/logout",
+        "reason": "forbidden control name 'Logout'"
+      },
+      {
+        "url": "http://localhost:8017/web/index.php/pim/deleteEmployee/7",
+        "reason": "forbidden control name 'Delete'"
+      },
+      {
+        "url": "https://www.linkedin.com/company/orangehrm",
+        "reason": "different origin"
+      },
+      {
+        "url": "http://localhost:8017/web/index.php/pim/exportEmployees.csv",
+        "reason": "triggers a download"
+      }
+    ]
+  },
+  "forms": [
+    {
+      "selector": "form#dashboard-search",
+      "name": "",
+      "id": "dashboard-search",
+      "action": "",
+      "method": "get",
+      "heading": "Dashboard",
+      "submits": [
+        {
+          "selector": "form#dashboard-search button",
+          "name": "Search",
+          "type": "submit"
+        }
+      ],
+      "fields": [
+        {
+          "selector": "form#dashboard-search input[name=q]",
+          "name": "q",
+          "id": "",
+          "type": "search",
+          "required": false,
+          "placeholder": "Search",
+          "label": "Search",
+          "maxlength": 80,
+          "pattern": ""
+        }
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "selector": "a[href='/web/index.php/pim/viewPimModule']",
+      "role": "link",
+      "name": "PIM",
+      "href": "/web/index.php/pim/viewPimModule"
+    },
+    {
+      "selector": "a[href='/web/index.php/admin/viewAdminModule']",
+      "role": "link",
+      "name": "Admin",
+      "href": "/web/index.php/admin/viewAdminModule"
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "url": "http://localhost:8017/web/index.php/dashboard/index",
+      "resourceType": "document",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:8017/web/index.php/api/v2/dashboard/employees/action-summary",
+      "resourceType": "xhr",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:8017/web/index.php/api/v2/core/i18n/messages",
+      "resourceType": "fetch",
+      "status": 200
+    }
+  ],
+  "console_errors": [],
+  "pages": [
+    {
+      "url": "http://localhost:8017/web/index.php/auth/login",
+      "final_url": "http://localhost:8017/web/index.php/dashboard/index",
+      "title": "OrangeHRM Dashboard",
+      "depth": 0,
+      "status": 200,
+      "elapsed_ms": 1800,
+      "screenshot": "screen.png",
+      "forms": [
+        {
+          "selector": "form#dashboard-search",
+          "name": "",
+          "id": "dashboard-search",
+          "action": "",
+          "method": "get",
+          "heading": "Dashboard",
+          "submits": [
+            {
+              "selector": "form#dashboard-search button",
+              "name": "Search",
+              "type": "submit"
+            }
+          ],
+          "fields": [
+            {
+              "selector": "form#dashboard-search input[name=q]",
+              "name": "q",
+              "id": "",
+              "type": "search",
+              "required": false,
+              "placeholder": "Search",
+              "label": "Search",
+              "maxlength": 80,
+              "pattern": ""
+            }
+          ]
+        }
+      ],
+      "controls": [
+        {
+          "selector": "a[href='/web/index.php/pim/viewPimModule']",
+          "role": "link",
+          "name": "PIM",
+          "href": "/web/index.php/pim/viewPimModule"
+        },
+        {
+          "selector": "a[href='/web/index.php/admin/viewAdminModule']",
+          "role": "link",
+          "name": "Admin",
+          "href": "/web/index.php/admin/viewAdminModule"
+        }
+      ],
+      "links": [
+        "http://localhost:8017/web/index.php/pim/viewPimModule",
+        "http://localhost:8017/web/index.php/admin/viewAdminModule"
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "url": "http://localhost:8017/web/index.php/dashboard/index",
+          "resourceType": "document",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "url": "http://localhost:8017/web/index.php/api/v2/dashboard/employees/action-summary",
+          "resourceType": "xhr",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "url": "http://localhost:8017/web/index.php/api/v2/core/i18n/messages",
+          "resourceType": "fetch",
+          "status": 200
+        }
+      ],
+      "console_errors": []
+    },
+    {
+      "url": "http://localhost:8017/web/index.php/pim/viewPimModule",
+      "final_url": "http://localhost:8017/web/index.php/pim/viewPimModule",
+      "title": "OrangeHRM PIM",
+      "depth": 1,
+      "status": 200,
+      "elapsed_ms": 4100,
+      "screenshot": "screen.png",
+      "forms": [
+        {
+          "selector": "form#employee-search",
+          "name": "",
+          "id": "employee-search",
+          "action": "/web/index.php/pim/viewEmployeeList",
+          "method": "post",
+          "heading": "Employee Information",
+          "submits": [
+            {
+              "selector": "form#employee-search button[type=submit]",
+              "name": "Search",
+              "type": "submit"
+            }
+          ],
+          "fields": [
+            {
+              "selector": "form#employee-search input[name=employeeName]",
+              "name": "employeeName",
+              "id": "",
+              "type": "text",
+              "required": true,
+              "placeholder": "Type for hints...",
+              "label": "Employee Name",
+              "maxlength": 100,
+              "pattern": ""
+            },
+            {
+              "selector": "form#employee-search input[name=employeeId]",
+              "name": "employeeId",
+              "id": "",
+              "type": "text",
+              "required": false,
+              "placeholder": "",
+              "label": "Employee Id",
+              "maxlength": null,
+              "pattern": "[0-9]+"
+            }
+          ]
+        }
+      ],
+      "controls": [
+        {
+          "selector": "a[href='/web/index.php/pim/addEmployee']",
+          "role": "link",
+          "name": "Add Employee",
+          "href": "/web/index.php/pim/addEmployee"
+        }
+      ],
+      "links": [
+        "http://localhost:8017/web/index.php/pim/addEmployee"
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "url": "http://localhost:8017/web/index.php/api/v2/core/i18n/messages",
+          "resourceType": "fetch",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "url": "http://localhost:8017/web/index.php/api/v2/pim/employees/7",
+          "resourceType": "xhr",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "url": "http://localhost:8017/web/index.php/api/v2/pim/employees/512",
+          "resourceType": "xhr",
+          "status": 200
+        }
+      ],
+      "console_errors": [
+        "TypeError: undefined is not a function"
+      ]
+    },
+    {
+      "url": "http://localhost:8017/web/index.php/admin/viewAdminModule",
+      "final_url": "http://localhost:8017/web/index.php/admin/viewAdminModule",
+      "title": "OrangeHRM Admin",
+      "depth": 1,
+      "status": 200,
+      "elapsed_ms": 2200,
+      "screenshot": "",
+      "forms": [
+        {
+          "selector": "form#system-users",
+          "name": "",
+          "id": "system-users",
+          "action": "/web/index.php/admin/viewSystemUsers",
+          "method": "post",
+          "heading": "System Users",
+          "submits": [
+            {
+              "selector": "form#system-users button[type=submit]",
+              "name": "Search",
+              "type": "submit"
+            }
+          ],
+          "fields": [
+            {
+              "selector": "form#system-users input[name=username]",
+              "name": "username",
+              "id": "",
+              "type": "text",
+              "required": true,
+              "placeholder": "",
+              "label": "Username",
+              "maxlength": 40,
+              "pattern": ""
+            }
+          ]
+        }
+      ],
+      "controls": [],
+      "links": [],
+      "requests": [
+        {
+          "method": "GET",
+          "url": "http://localhost:8017/web/index.php/api/v2/admin/users?limit=50",
+          "resourceType": "xhr",
+          "status": 200
+        }
+      ],
+      "console_errors": []
+    }
+  ]
+}

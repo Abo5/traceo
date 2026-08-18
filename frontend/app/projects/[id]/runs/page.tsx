@@ -5,7 +5,7 @@ import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
+import { useCan } from "@/lib/permissions";
 import { Badge, Button, Card, DateTimeText, Empty, Field, Input, Modal, PageHeader, Select, StatusDot, Table, stateTone } from "@/components/ui";
 
 function asList(x: any): any[] {
@@ -15,7 +15,7 @@ function asList(x: any): any[] {
 
 function M({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
-    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12, ...style }}>
+    <span style={{ fontFamily: "'JetBrains Mono',ui-monospace,monospace", fontSize: 12, ...style }}>
       {children}
     </span>
   );
@@ -27,93 +27,79 @@ function shortId(id?: string): string {
 
 const TERMINAL = ["completed", "aborted", "cancelled", "failed"];
 
+/** 26px tinted numbered chip (design spec §2.20). */
+function NumberedChip({ n, color }: { n: string; color: string }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 26,
+        height: 26,
+        borderRadius: 8,
+        background: `color-mix(in srgb, ${color} 16%, transparent)`,
+        color,
+        fontFamily: "'JetBrains Mono',ui-monospace,monospace",
+        fontSize: 12,
+        fontWeight: 700,
+        flexShrink: 0,
+      }}
+    >
+      {n}
+    </span>
+  );
+}
+
 export default function RunsPage() {
   const { id } = useParams<{ id: string }>();
-  const { lang } = useLang();
+  const canDo = useCan();
 
-  const L =
-    lang === "ar"
-      ? {
-          title: "التشغيلات",
-          sub: "شغّل الحالات المعتمدة ضد بيئة وتابع النتائج مباشرة",
-          launch: "تشغيل جديد",
-          env: "البيئة",
-          pickEnv: "اختر بيئة…",
-          approvedCount: "حالة معتمدة جاهزة للتشغيل",
-          subset: "تشغيل مجموعة فرعية",
-          subsetPicked: "حالة محددة",
-          subsetTitle: "اختيار مجموعة فرعية",
-          subsetHint: "اترك الاختيار فارغًا لتشغيل جميع الحالات المعتمدة",
-          apply: "تطبيق",
-          clear: "مسح",
-          run: "تشغيل",
-          launching: "جارٍ الإطلاق…",
-          live: "التشغيل الجاري",
-          cancel: "إلغاء التشغيل",
-          report: "عرض التقرير",
-          total: "الكل",
-          passed: "ناجح",
-          failed: "فاشل",
-          errored: "خطأ",
-          skipped: "متجاوز",
-          history: "سجل التشغيلات",
-          runId: "المعرّف",
-          state: "الحالة",
-          counts: "النتائج",
-          started: "البداية",
-          finished: "النهاية",
-          initiator: "المشغّل",
-          noRuns: "لا توجد تشغيلات بعد",
-          noRunsHint: "شغّل الحالات المعتمدة لبدء التتبّع",
-          noEnvs: "لا توجد بيئات — أنشئ بيئة أولاً من صفحة البيئات",
-          noApproved: "لا توجد حالات معتمدة — اعتمد حالات من صفحة المراجعة",
-          loadError: "تعذّر تحميل البيانات",
-          retry: "إعادة المحاولة",
-          search: "بحث…",
-        }
-      : {
-          title: "Runs",
-          sub: "Execute approved cases against an environment and watch results live",
-          launch: "New run",
-          env: "Environment",
-          pickEnv: "Pick an environment…",
-          approvedCount: "approved cases ready to run",
-          subset: "Run a subset",
-          subsetPicked: "cases selected",
-          subsetTitle: "Pick a subset",
-          subsetHint: "Leave empty to run all approved cases",
-          apply: "Apply",
-          clear: "Clear",
-          run: "Run",
-          launching: "Launching…",
-          live: "Live run",
-          cancel: "Cancel run",
-          report: "View report",
-          total: "Total",
-          passed: "Passed",
-          failed: "Failed",
-          errored: "Errored",
-          skipped: "Skipped",
-          history: "Run history",
-          runId: "ID",
-          state: "State",
-          counts: "Counts",
-          started: "Started",
-          finished: "Finished",
-          initiator: "Initiator",
-          noRuns: "No runs yet",
-          noRunsHint: "Run approved cases to start tracing",
-          noEnvs: "No environments — create one on the Environments page first",
-          noApproved: "No approved cases — approve cases on the Review page",
-          loadError: "Failed to load data",
-          retry: "Retry",
-          search: "Search…",
-        };
-
-  const stateLabel = (s: string) =>
-    lang === "ar"
-      ? ({ queued: "في الانتظار", running: "قيد التنفيذ", completed: "مكتمل", aborted: "مُجهض", cancelled: "ملغى", failed: "فاشل" } as Record<string, string>)[s] ?? s
-      : s;
+  const L = {
+    title: "Runs",
+    sub: "Execute approved cases against an environment and watch results live",
+    launch: "New run",
+    env: "Environment",
+    pickEnv: "Pick an environment…",
+    approvedCount: "approved cases ready to run",
+    subset: "Run a subset",
+    subsetPicked: "cases selected",
+    subsetTitle: "Pick a subset",
+    subsetHint: "Leave empty to run all approved cases",
+    apply: "Apply",
+    clear: "Clear",
+    selectAll: "Select all",
+    run: "Run",
+    launching: "Launching…",
+    live: "Live run",
+    cancel: "Cancel run",
+    report: "View report",
+    total: "Total",
+    passed: "Passed",
+    failed: "Failed",
+    errored: "Errored",
+    skipped: "Skipped",
+    history: "Run history",
+    runId: "ID",
+    state: "State",
+    counts: "Counts",
+    started: "Started",
+    finished: "Finished",
+    initiator: "Initiator",
+    noRuns: "No runs yet",
+    noRunsHint: "Run approved cases to start tracing",
+    noEnvs: "No environments in this project yet — a run needs one to know where to send requests.",
+    noEnvsLink: "Create an environment",
+    noApproved: "No approved cases — approve cases on the Review page",
+    loadError: "Failed to load data",
+    retry: "Retry",
+    search: "Search…",
+    step1: "Target",
+    step2: "Scope",
+    step3: "Rules",
+    rulesHint: "Enabled generation techniques — read-only",
+    techniques: ["EP", "BVA", "Negative", "Decision tables", "Localisation"],
+  };
 
   const [envs, setEnvs] = useState<any[]>([]);
   const [approved, setApproved] = useState<any[]>([]);
@@ -235,12 +221,12 @@ export default function RunsPage() {
     [L.passed, counts.passed ?? 0, "var(--success)"],
     [L.failed, counts.failed ?? 0, "var(--error)"],
     [L.errored, counts.errored ?? 0, "var(--warning)"],
-    [L.skipped, counts.skipped ?? 0, "var(--text-muted)"],
+    [L.skipped, counts.skipped ?? 0, "var(--text-secondary)"],
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      <PageHeader title={L.title} sub={L.sub} />
+    <div data-testid="runs-page-root" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <PageHeader title={L.title} sub={L.sub} testId="runs-page-header" />
 
       {error && (
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -256,53 +242,146 @@ export default function RunsPage() {
       {/* Launch card */}
       <Card title={L.launch}>
         {loading ? (
-          <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 13 }}>…</div>
+          <div style={{ padding: 24, color: "var(--text-secondary)", fontSize: 13 }}>…</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end" }}>
-              <div style={{ minWidth: 240 }}>
-                <Field label={L.env}>
-                  <Select value={envId} onChange={(e: any) => setEnvId(e.target.value)}>
-                    <option value="">{L.pickEnv}</option>
-                    {envs.map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {e.name}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, paddingBottom: 8 }}>
-                <M style={{ fontSize: 18, fontWeight: 700, color: "var(--success)" }}>{approved.length}</M>
-                <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>{L.approvedCount}</span>
-              </div>
-              <div style={{ paddingBottom: 4, display: "flex", gap: 8, alignItems: "center" }}>
-                <Button variant="secondary" size="sm" onClick={() => setSubsetOpen(true)} disabled={approved.length === 0}>
-                  {L.subset}
-                </Button>
-                {subset.size > 0 && (
-                  <Badge tone="accent">
-                    <M style={{ fontSize: 11 }}>{subset.size}</M> {L.subsetPicked}
-                  </Badge>
-                )}
-              </div>
-              <div style={{ paddingBottom: 4, marginInlineStart: "auto" }}>
-                <Button
-                  disabled={launching || !envId || approved.length === 0 || (!!live && !liveTerminal)}
-                  onClick={launch}
-                >
-                  {launching ? L.launching : `${L.run} ▶`}
-                </Button>
+            {/* 01 · target */}
+            <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
+              <NumberedChip n="01" color="#FF8A22" />
+              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{L.step1}</div>
+                <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end" }}>
+                  <div style={{ minWidth: 240 }}>
+                    {envs.length === 0 ? (
+                      // An empty <select> offers nothing to pick and reads as a
+                      // broken control; say what is missing and where to fix it.
+                      <div
+                        data-testid="runs-environment-empty-hint"
+                        style={{ display: "flex", flexDirection: "column", gap: 6, maxWidth: 420 }}
+                      >
+                        <span className="field-label">{L.env}</span>
+                        <span style={{ fontSize: 13, color: "var(--warning)", lineHeight: 1.6 }}>
+                          {L.noEnvs}
+                        </span>
+                        <Link
+                          href={`/projects/${id}/environments`}
+                          data-testid="runs-environment-empty-link"
+                          style={{ color: "var(--accent)", fontSize: 13 }}
+                        >
+                          {L.noEnvsLink} →
+                        </Link>
+                      </div>
+                    ) : (
+                      <Field label={L.env}>
+                        <Select testId="runs-launch-env-select" value={envId} onChange={(e: any) => setEnvId(e.target.value)}>
+                          <option value="">{L.pickEnv}</option>
+                          {envs.map((e) => (
+                            <option key={e.id} value={e.id}>
+                              {e.name}
+                            </option>
+                          ))}
+                        </Select>
+                      </Field>
+                    )}
+                  </div>
+                  {envId && (
+                    <div style={{ paddingBottom: 12 }}>
+                      <M style={{ fontSize: 12, color: "var(--text-secondary)", overflowWrap: "anywhere" }}>
+                        {envs.find((e) => e.id === envId)?.base_url ?? ""}
+                      </M>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
-            {envs.length === 0 && <div style={{ fontSize: 13, color: "var(--warning)" }}>{L.noEnvs}</div>}
+            {/* 02 · scope */}
+            <div style={{ display: "flex", gap: 14, alignItems: "flex-start", borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+              {/* --c-blue, not --c-violet: violet on its 16% mix is 3.97:1 —
+                  fails WCAG AA 4.5:1 (axe color-contrast, @a11y delta gate) */}
+              <NumberedChip n="02" color="#4D9DFF" />
+              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{L.step2}</div>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                  <span style={{ display: "inline-flex", alignItems: "baseline", gap: 8 }}>
+                    <M style={{ fontSize: 20, fontWeight: 700, color: "var(--success)" }}>{approved.length}</M>
+                    <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>{L.approvedCount}</span>
+                  </span>
+                  {canDo("trigger_run") && (
+                    <Button variant="secondary" size="sm" testId="runs-launch-subset-button" onClick={() => setSubsetOpen(true)} disabled={approved.length === 0}>
+                      {L.subset}
+                    </Button>
+                  )}
+                  {subset.size > 0 && (
+                    <Badge tone="accent">
+                      <M style={{ fontSize: 11 }}>{subset.size}</M> {L.subsetPicked}
+                    </Badge>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* 03 · rules */}
+            <div style={{ display: "flex", gap: 14, alignItems: "flex-start", borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+              <NumberedChip n="03" color="#2BD4C4" />
+              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{L.step3}</div>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                  <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap" }}>
+                    {L.techniques.map((tName) => (
+                      <span
+                        key={tName}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          height: 22,
+                          padding: "0 10px",
+                          borderRadius: 6,
+                          background: "var(--surface-2)",
+                          border: "1px solid var(--border)",
+                          fontFamily: "'JetBrains Mono',ui-monospace,monospace",
+                          fontSize: 10.5,
+                          fontWeight: 500,
+                          color: "var(--text-secondary)",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {tName}
+                      </span>
+                    ))}
+                  </span>
+                  <span style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>{L.rulesHint}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* launch */}
+            {canDo("trigger_run") && (
+            <div style={{ display: "flex", justifyContent: "flex-end", borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+              <Button
+                testId="runs-launch-run-button"
+                disabled={
+                  launching ||
+                  envs.length === 0 ||
+                  !envId ||
+                  approved.length === 0 ||
+                  (!!live && !liveTerminal)
+                }
+                onClick={launch}
+              >
+                {launching ? L.launching : `${L.run} ▶`}
+              </Button>
+            </div>
+            )}
+
+            {/* The missing-environment case is stated by the picker itself (step 01). */}
             {approved.length === 0 && <div style={{ fontSize: 13, color: "var(--warning)" }}>{L.noApproved}</div>}
             {launchError && <div style={{ fontSize: 13, color: "var(--error)" }}>{launchError}</div>}
 
             {/* Live panel */}
             {liveRunId && live && (
               <div
+                data-testid="runs-live-panel"
                 style={{
                   border: `1px solid ${liveTerminal ? "var(--border-strong)" : "var(--accent)"}`,
                   background: "var(--surface-2)",
@@ -315,20 +394,22 @@ export default function RunsPage() {
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{L.live}</span>
-                  <M style={{ color: "var(--text-muted)" }}>{shortId(liveRunId)}</M>
+                  <M style={{ color: "var(--text-secondary)" }}>{shortId(liveRunId)}</M>
                   <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                    <StatusDot state={live.state} />
-                    <Badge tone={stateTone(live.state)}>{stateLabel(live.state)}</Badge>
+                    <StatusDot state={live.state} testId="runs-live-status-dot" />
+                    <Badge tone={stateTone(live.state)} testId="runs-live-state-badge" state={live.state}>{live.state}</Badge>
                   </span>
-                  <div style={{ marginInlineStart: "auto", display: "flex", gap: 8 }}>
+                  <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
                     {!liveTerminal ? (
-                      <Button variant="danger" size="sm" disabled={cancelling} onClick={cancelRun}>
-                        {L.cancel}
-                      </Button>
+                      canDo("trigger_run") && (
+                        <Button variant="danger" size="sm" testId="runs-live-cancel-button" disabled={cancelling} onClick={cancelRun}>
+                          {L.cancel}
+                        </Button>
+                      )
                     ) : (
                       <Link href={`/projects/${id}/runs/${liveRunId}`}>
-                        <Button variant="secondary" size="sm">
-                          {L.report} ←
+                        <Button variant="secondary" size="sm" testId="runs-live-report-button">
+                          {L.report} →
                         </Button>
                       </Link>
                     )}
@@ -362,24 +443,24 @@ export default function RunsPage() {
       {/* History */}
       <Card title={L.history} pad={false}>
         {loading ? (
-          <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 13 }}>…</div>
+          <div style={{ padding: 24, color: "var(--text-secondary)", fontSize: 13 }}>…</div>
         ) : runs.length === 0 ? (
-          <Empty title={L.noRuns} hint={L.noRunsHint} />
+          <Empty title={L.noRuns} hint={L.noRunsHint} testId="runs-empty-state" />
         ) : (
-          <Table head={[L.runId, L.state, L.counts, L.started, L.finished, L.initiator]}>
+          <Table head={[L.runId, L.state, L.counts, L.started, L.finished, L.initiator]} testId="runs-table-root">
             {runs.map((r) => {
               const c = r.counts ?? {};
               return (
-                <tr key={r.id}>
+                <tr key={r.id} data-testid="runs-row">
                   <td>
-                    <Link href={`/projects/${id}/runs/${r.id}`} style={{ textDecoration: "none" }}>
+                    <Link href={`/projects/${id}/runs/${r.id}`} data-testid="runs-row-link" style={{ textDecoration: "none" }}>
                       <M style={{ color: "var(--accent)" }}>{r.display_id ? `#${r.display_id}` : shortId(r.id)}</M>
                     </Link>
                   </td>
                   <td>
                     <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                      <StatusDot state={r.state} />
-                      <Badge tone={stateTone(r.state)}>{stateLabel(r.state)}</Badge>
+                      <StatusDot state={r.state} testId="runs-row-status-dot" />
+                      <Badge tone={stateTone(r.state)} testId="runs-row-state-badge" state={r.state}>{r.state}</Badge>
                     </span>
                   </td>
                   <td>
@@ -408,10 +489,10 @@ export default function RunsPage() {
       </Card>
 
       {/* Subset modal */}
-      <Modal open={subsetOpen} onClose={() => setSubsetOpen(false)} title={L.subsetTitle}>
+      <Modal open={subsetOpen} onClose={() => setSubsetOpen(false)} title={L.subsetTitle} testId="runs-subset-modal">
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{L.subsetHint}</div>
-          <Input placeholder={L.search} value={subsetQ} onChange={(e: any) => setSubsetQ(e.target.value)} />
+          <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{L.subsetHint}</div>
+          <Input placeholder={L.search} testId="runs-subset-search-input" value={subsetQ} onChange={(e: any) => setSubsetQ(e.target.value)} />
           <div style={{ maxHeight: "40vh", overflowY: "auto", border: "1px solid var(--border)", borderRadius: 10 }}>
             {subsetFiltered.map((c, i) => (
               <label
@@ -442,14 +523,24 @@ export default function RunsPage() {
               </label>
             ))}
             {subsetFiltered.length === 0 && (
-              <div style={{ padding: 16, fontSize: 13, color: "var(--text-muted)" }}>—</div>
+              <div style={{ padding: 16, fontSize: 13, color: "var(--text-secondary)" }}>—</div>
             )}
           </div>
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Button variant="ghost" onClick={() => setSubset(new Set())}>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
+            <span style={{ marginRight: "auto", fontSize: 12, color: "var(--text-secondary)" }} data-testid="runs-subset-count">
+              {subset.size} / {subsetFiltered.length}
+            </span>
+            <Button
+              variant="secondary"
+              testId="runs-subset-select-all-button"
+              onClick={() => setSubset((prev) => new Set([...prev, ...subsetFiltered.map((c: any) => c.id)]))}
+            >
+              {L.selectAll}
+            </Button>
+            <Button variant="ghost" testId="runs-subset-clear-button" onClick={() => setSubset(new Set())}>
               {L.clear}
             </Button>
-            <Button variant="primary" onClick={() => setSubsetOpen(false)}>
+            <Button variant="primary" testId="runs-subset-apply-button" onClick={() => setSubsetOpen(false)}>
               {L.apply}
             </Button>
           </div>

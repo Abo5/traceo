@@ -1,0 +1,54 @@
+{
+  "info": {
+    "_postman_id": "0f9c1a52-6d3e-4c07-9d21-5b6a7e2f4c11",
+    "name": "Billing API",
+    "description": "Synthetic Postman v2.1 collection used to prove how a derived environment treats collection variables: plain ones are carried with their example values, credential-looking ones are carried as empty keys for the user to fill. The values below are fake and exist only so the spec can assert that they are NEVER copied into an environment.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "List invoices",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Accept", "value": "application/json" }],
+        "url": {
+          "raw": "{{baseUrl}}/tenants/:tenantId/invoices?status=open&pageSize={{pageSize}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["tenants", ":tenantId", "invoices"],
+          "query": [
+            { "key": "status", "value": "open" },
+            { "key": "pageSize", "value": "{{pageSize}}" }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Create invoice",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount_cents\": 1250,\n  \"currency\": \"USD\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/tenants/:tenantId/invoices",
+          "host": ["{{baseUrl}}"],
+          "path": ["tenants", ":tenantId", "invoices"]
+        }
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "https://billing.example.com/api/v2", "type": "string" },
+    { "key": "tenantId", "value": "tenant-42" },
+    { "key": "pageSize", "value": "50" },
+    { "key": "authToken", "value": "fake-alpha-11110000" },
+    { "key": "apiKey", "value": "fake-bravo-22220000" },
+    { "key": "client_secret", "value": "fake-charlie-33330000" },
+    { "key": "webhookPassword", "value": "fake-delta-44440000" }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "name": "traceo-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Traceo E2E test framework (Playwright + TypeScript) — docs/TEST_AUTOMATION_ARCHITECTURE.md",
+  "scripts": {
+    "test": "playwright test",
+    "test:pr": "playwright test --grep \"@smoke|@critical|@permission|@a11y\" --grep-invert \"@regression\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "@faker-js/faker": "^9.4.0",
+    "@playwright/test": "^1.50.0",
+    "@types/node": "^22.13.0",
+    "typescript": "^5.7.3"
+  }
+}

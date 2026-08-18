@@ -22,27 +22,34 @@ from .. import jobs as jobstore
 from ..config import settings
 from ..db import SessionLocal, get_db
 from ..deps import audit, get_project_scoped, require
-from ..llm import get_provider
+from ..llm import UNTRUSTED_NOTE, frame_untrusted, get_provider
 from ..models import Endpoint, Requirement, RequirementTestCase, TestCase, TestStep, User
-from .ingestion import numbered_criteria
 
 router = APIRouter()
 
 DEPTHS = ("smoke", "standard", "exhaustive")
 MIN_MAP_CONFIDENCE = 0.3
 MAX_CANDIDATES = 10
+MAX_COMBOS = 8          # decision-table cap
 MAX_ENUM_SWEEP = 8
 
-# FR-034 localisation probes (Arabic round-trip) + FR-033 injection-shaped strings
-ARABIC_SAMPLE = "محمد الشمري"
-ARABIC_SAMPLE_LONG = "منصة الطلبات — اختبار"
+# FR-034 localisation probes (Unicode round-trip) + FR-033 injection-shaped strings.
+# The samples are deliberately non-ASCII and deliberately NOT Arabic: accented
+# Latin plus CJK, which is what an English-only product still has to survive.
+UNICODE_SAMPLE = "José Ångström"                       # 13 chars, accented Latin
+UNICODE_SAMPLE_LONG = "José Ångström — 東京 round-trip"  # 29 chars, adds CJK
 INJECTION_PAYLOADS = ("' OR 1=1--", "<script>alert(1)</script>")
 
+# The requirement text originates from a user-uploaded document, so the PAYLOAD's
+# "requirement" value is framed by llm.frame_untrusted and announced by
+# UNTRUSTED_NOTE. The "PAYLOAD:\n" sentinel is unchanged — MockProvider splits on
+# it (app/llm/mock.py) and strips the frame before scoring.
 MAP_INSTRUCTIONS = (
     "You map ONE software requirement onto API endpoints. Pick ONLY from the closed "
     "candidate list below (TRD §4.3) — respond with the integer indices of the matching "
     "candidates plus your confidence between 0 and 1. Never invent endpoints; an empty "
     "selection is a valid answer.\n"
+    + UNTRUSTED_NOTE
 )
 MAP_SCHEMA = {
     "type": "object",
@@ -53,7 +60,7 @@ MAP_SCHEMA = {
     "required": ["selected", "confidence"],
 }
 
-_WORD_RE = re.compile(r"[a-zء-ي]{3,}")
+_WORD_RE = re.compile(r"[a-z]{3,}")
 _SAFE_HEADERS = {"authorization", "content-type", "accept"}
 _CONSTRAINT_KEYS = ("pattern", "enum", "minimum", "maximum", "minLength", "maxLength", "format")
 
@@ -160,6 +167,19 @@ def value_for(schema: dict | None, depth: int = 0):
     """Valid representative value for a JSON-schema fragment / parameter constraints."""
     if not isinstance(schema, dict) or depth > 8:
         return "example"
+    # A stated example/default is the document's own answer to "what is a valid
+    # value here" — always better than a synthesised one, and for identifier-like
+    # parameters it is the difference between hitting the resource and a 404.
+    for key in ("example", "default"):
+        if schema.get(key) is not None:
+            return schema[key]
+    examples = schema.get("examples")
+    if isinstance(examples, list) and examples:
+        return examples[0]
+    if isinstance(examples, dict) and examples:
+        first = next(iter(examples.values()))
+        if isinstance(first, dict) and "value" in first:
+            return first["value"]
     enum = schema.get("enum")
     if isinstance(enum, list) and enum:
         return enum[0]
@@ -290,14 +310,20 @@ def _is_free_text(sch: dict) -> bool:
 
 
 def _free_text_body_fields(ep) -> list[dict]:
-    """Top-level free-text string fields of the request body (FR-034 targets)."""
+    """Top-level free-text string fields of the request body (FR-034 targets).
+
+    Sorted by name, NOT left in declaration order. The callers take [0], so the
+    order decides which field gets the localisation and injection coverage, and
+    declaration order does not survive the trip through Go: encoding/json emits
+    map keys sorted, so the two engines would read the same schema and pick a
+    different field. Sorting is the only order both can agree on."""
     rs = _body_object_schema(ep)
     if not rs:
         return []
     required = rs.get("required") or []
     return [{"name": name, "where": "body", "schema": sch,
              "required": name in required, "location": "body"}
-            for name, sch in rs["properties"].items()
+            for name, sch in sorted(rs["properties"].items())
             if isinstance(sch, dict) and _is_free_text(sch)]
 
 
@@ -468,51 +494,6 @@ def grounding_validate(case: dict, endpoints_by_key: dict) -> list[str]:
 # Case builders (deterministic, techniques per ISTQB)
 # ---------------------------------------------------------------------------
 
-def pairwise_combinations(n: int) -> list[tuple[bool, ...]]:
-    """All-pairs covering set over `n` binary conditions (valid / invalid).
-
-    Exhaustive coverage costs 2^n; every pair of conditions appearing together in
-    both states costs a few dozen tests at most, and catches the interaction defects
-    that motivate a decision table in the first place. Greedy set-cover, fully
-    deterministic — the same endpoint always yields the same suite (FR-032 AC3).
-    """
-    if n < 2:
-        return [(True,) * n]
-
-    # A pair is (i, j, value_i, value_j) with i < j.
-    uncovered = {(i, j, vi, vj)
-                 for i in range(n) for j in range(i + 1, n)
-                 for vi in (True, False) for vj in (True, False)}
-
-    def key(a: int, b: int, va: bool, vb: bool):
-        return (a, b, va, vb) if a < b else (b, a, vb, va)
-
-    tests: list[tuple[bool, ...]] = []
-    while uncovered:
-        # Seed with the lowest uncovered pair so the result never depends on set order.
-        i, j, vi, vj = min(uncovered)
-        combo: list[bool | None] = [None] * n
-        combo[i], combo[j] = vi, vj
-
-        for k in range(n):
-            if combo[k] is not None:
-                continue
-            best_value, best_gain = True, -1
-            for value in (True, False):
-                gain = sum(1 for m in range(n)
-                           if m != k and combo[m] is not None
-                           and key(m, k, combo[m], value) in uncovered)
-                if gain > best_gain:
-                    best_value, best_gain = value, gain
-            combo[k] = best_value
-
-        final = tuple(bool(v) for v in combo)
-        for a in range(n):
-            for b in range(a + 1, n):
-                uncovered.discard((a, b, final[a], final[b]))
-        tests.append(final)
-    return tests
-
 def _apply_input(inp: dict, value, params: dict, body):
     p2 = dict(params)
     b2 = copy.deepcopy(body)
@@ -545,51 +526,37 @@ def _step(ep, params, headers, body, assertions, raw_body=None) -> dict:
             "request": request, "assertions": assertions, "extractions": []}
 
 
-def _generate_cases(req: Requirement, ep: Endpoint, depth: str,
-                    criterion: dict | None = None) -> list[dict]:
+def _generate_cases(req: Requirement, ep: Endpoint, depth: str) -> list[dict]:
     suffix = f"{ep.method.upper()} {ep.path}"
     req_ref = req.external_id or req.id[:8]
-    # Every case says, in its own description, which sentence it verifies — so the
-    # reviewer approving it and the developer reading the defect see the same claim
-    # (SRS §1 governing rule, FR-042 AC2).
-    if criterion:
-        description = (f"Covers {req_ref} / {criterion['index']}: "
-                       f"{criterion['statement'][:400]}")
-    else:
-        description = f"Covers requirement {req_ref}: {(req.description or '')[:400]}"
+    description = f"Covers requirement {req_ref}: {(req.description or '')[:400]}"
     preconditions = "Authenticated session" if (ep.security or []) else ""
     params, headers, body = _valid_request(ep)
     inputs = _constrained_inputs(ep)
     cases: list[dict] = []
 
-    def mk(title: str, technique: str, ctype: str, step: dict,
-           subject: str | list[str] | None = None) -> dict:
-        """`subject` is the input this case is ABOUT — not every field it happens to
-        send. A positive request sets every field, but it is about none of them in
-        particular; a boundary case on `age` is about `age`. Attribution reads this,
-        so a loose reading here would over-claim coverage."""
-        subjects = [subject] if isinstance(subject, str) else list(subject or [])
+    def mk(title: str, technique: str, ctype: str, step: dict) -> dict:
         return {"title": title[:500], "description": description, "preconditions": preconditions,
                 "type": ctype, "priority": req.priority or "medium", "technique": technique,
-                "steps": [step], "requirement_ids": [req.id], "subjects": subjects}
+                "steps": [step], "requirement_ids": [req.id]}
 
     # -- Positive (all depths): valid EP class with representative values
     cases.append(mk(f"Positive: valid request — {suffix}", "ep", "positive",
                     _step(ep, params, headers, body, _positive_assertions(ep))))
 
-    # -- Localisation (FR-034, all depths): Arabic round-trip through a free-text field
+    # -- Localisation (FR-034, all depths): Unicode round-trip through a free-text field
     free_text = _free_text_body_fields(ep)
     if free_text:
         loc_inp = free_text[0]
         sch = loc_inp["schema"]
-        arabic = ARABIC_SAMPLE
+        sample = UNICODE_SAMPLE
         mn, mx = sch.get("minLength"), sch.get("maxLength")
-        if isinstance(mn, int) and mn > len(arabic):
-            arabic = ARABIC_SAMPLE_LONG if mn <= len(ARABIC_SAMPLE_LONG) else None
-        if arabic is not None and isinstance(mx, int) and mx < len(arabic):
-            arabic = None
-        if arabic is not None:
-            p2, b2 = _apply_input(loc_inp, arabic, params, body)
+        if isinstance(mn, int) and mn > len(sample):
+            sample = UNICODE_SAMPLE_LONG if mn <= len(UNICODE_SAMPLE_LONG) else None
+        if sample is not None and isinstance(mx, int) and mx < len(sample):
+            sample = None
+        if sample is not None:
+            p2, b2 = _apply_input(loc_inp, sample, params, body)
             ok_code = _first_status(ep, 200, 299) or 200
             assertions: list[dict] = [{"type": "status_code", "expected": ok_code}]
             rss = _epget(ep, "response_schemas") or {}
@@ -597,12 +564,12 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str,
             if (isinstance(resp_sch, dict) and isinstance(resp_sch.get("properties"), dict)
                     and loc_inp["name"] in resp_sch["properties"]):
                 assertions.append({"type": "json_field", "path": loc_inp["name"],
-                                   "op": "eq", "expected": arabic})
+                                   "op": "eq", "expected": sample})
             assertions.append({"type": "header", "name": "Content-Type",
                                "op": "contains", "expected": "utf-8"})
-            cases.append(mk(f"Localisation: Arabic round-trip in {loc_inp['name']} — {suffix}",
+            cases.append(mk(f"Localisation: Unicode round-trip in {loc_inp['name']} — {suffix}",
                             "localisation", "positive",
-                            _step(ep, p2, headers, b2, assertions), loc_inp["name"]))
+                            _step(ep, p2, headers, b2, assertions)))
 
     if depth == "smoke":
         return cases
@@ -614,7 +581,7 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str,
             continue
         p2, b2 = _apply_input(inp, bad, params, body)
         cases.append(mk(f"EP: invalid {inp['name']} ({constraint}) — {suffix}", "ep", "negative",
-                        _step(ep, p2, headers, b2, [_error_assertion(ep)]), inp["name"]))
+                        _step(ep, p2, headers, b2, [_error_assertion(ep)])))
 
     # -- BVA: min / min+1 / max-1 / max — only explicit bounds (FR-GEN-04)
     for inp in inputs:
@@ -645,19 +612,19 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str,
             seen.add(key)
             p2, b2 = _apply_input(inp, val, params, body)
             cases.append(mk(f"BVA: {inp['name']} at {label} boundary — {suffix}", "bva", "boundary",
-                            _step(ep, p2, headers, b2, _positive_assertions(ep)), inp["name"]))
+                            _step(ep, p2, headers, b2, _positive_assertions(ep))))
 
     # -- Negative suite (FR-GEN-08)
     for missing in _required_inputs(ep):
         p2, b2 = _drop_input(missing, params, body)
         cases.append(mk(f"Negative: missing required {missing['name']} — {suffix}", "negative", "negative",
-                        _step(ep, p2, headers, b2, [_error_assertion(ep)]), missing["name"]))
+                        _step(ep, p2, headers, b2, [_error_assertion(ep)])))
 
     for inp in inputs:
         if inp["schema"].get("type") in ("integer", "number"):
             p2, b2 = _apply_input(inp, "not_a_number", params, body)
             cases.append(mk(f"Negative: wrong type for {inp['name']} — {suffix}", "negative", "negative",
-                            _step(ep, p2, headers, b2, [_error_assertion(ep)]), inp["name"]))
+                            _step(ep, p2, headers, b2, [_error_assertion(ep)])))
             break  # one wrong-type probe per endpoint
 
     if ep.security:
@@ -667,22 +634,6 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str,
                                [{"type": "status_code", "expected": 401, "expected_any": [401, 403]}]))
         unauth_case["preconditions"] = ""
         cases.append(unauth_case)
-
-        # FR-033 AC1: an expired credential and a wrong-role credential are distinct
-        # failure modes from "no credential" and must both be rejected. The values come
-        # from environment variables; when an environment does not define them the
-        # placeholder itself is an invalid credential, so the assertion still holds.
-        for var, label, expected_any in (
-                ("expired_token", "expired credential", [401, 403]),
-                ("wrong_role_token", "wrong-role credential", [403, 401])):
-            cred_headers = dict(headers)
-            cred_headers["Authorization"] = f"Bearer {{{{{var}}}}}"
-            cred_case = mk(f"Negative: {label} — {suffix}", "negative", "negative",
-                           _step(ep, params, cred_headers, body,
-                                 [{"type": "status_code", "expected": expected_any[0],
-                                   "expected_any": expected_any}]))
-            cred_case["preconditions"] = f"Environment variable '{var}' set on the environment"
-            cases.append(cred_case)
 
     if body is not None:
         cases.append(mk(f"Negative: malformed JSON body — {suffix}", "negative", "negative",
@@ -698,7 +649,7 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str,
                             "negative", "negative",
                             _step(ep, p2, headers, b2,
                                   [{"type": "status_code", "expected": 400,
-                                    "expected_any": [400, 413, 422]}]), inp["name"]))
+                                    "expected_any": [400, 413, 422]}])))
             break
 
     # -- FR-033: injection-shaped strings — must be handled, never a 5xx
@@ -711,7 +662,7 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str,
                             "negative", "negative",
                             _step(ep, p2, headers, b2,
                                   [{"type": "status_code", "expected": 200,
-                                    "expected_any": [200, 201, 400, 422]}]), inj_inp["name"]))
+                                    "expected_any": [200, 201, 400, 422]}])))
 
     if depth != "exhaustive":
         return cases
@@ -723,55 +674,45 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str,
             for val in enum[:MAX_ENUM_SWEEP]:
                 p2, b2 = _apply_input(inp, val, params, body)
                 cases.append(mk(f"EP: enum sweep {inp['name']}={val} — {suffix}", "ep", "positive",
-                                _step(ep, p2, headers, b2, _positive_assertions(ep)),
-                                inp["name"]))
+                                _step(ep, p2, headers, b2, _positive_assertions(ep))))
 
-    # -- Decision tables (FR-032): valid/invalid combinations across interacting inputs.
-    #    An input with no invalid representative cannot vary, so its "invalid" half of
-    #    the table is UNREACHABLE — it is reported on the cases, never generated (AC2).
-    variable_inputs = [i for i in inputs if _invalid_for(i["schema"])[0] is not None]
-    fixed_inputs = [i for i in inputs if _invalid_for(i["schema"])[0] is None]
-
-    if len(variable_inputs) >= 2:
-        total = 2 ** len(variable_inputs)
-        ceiling = max(2, settings.DECISION_TABLE_MAX_COMBOS)
-        if total <= ceiling:
-            combos = list(itertools.product([True, False], repeat=len(variable_inputs)))
-            disclosure = ""
-        else:
-            # AC3: pairwise reduction, and the reviewer is told it happened.
-            combos = pairwise_combinations(len(variable_inputs))
-            disclosure = (f" Pairwise reduction applied: {len(combos)} of {total} "
-                          f"combinations, covering every pair of conditions.")
-        if fixed_inputs:
-            disclosure += (" Held constant (no invalid value derivable): "
-                           + ", ".join(i["name"] for i in fixed_inputs) + ".")
-
+    # -- Decision tables: valid/invalid combinations when ≥2 constrained inputs interact
+    if len(inputs) >= 2:
+        combos = itertools.islice(itertools.product([True, False], repeat=len(inputs)), MAX_COMBOS)
         for ci, combo in enumerate(combos):
             p2, b2, labels = dict(params), copy.deepcopy(body), []
-            for inp, ok in zip(variable_inputs, combo):
+            for inp, ok in zip(inputs, combo):
                 if ok:
                     labels.append(f"{inp['name']}=valid")
-                    continue
-                bad, _c = _invalid_for(inp["schema"])
-                p2, b2 = _apply_input(inp, bad, p2, b2)
-                labels.append(f"{inp['name']}=invalid")
+                else:
+                    bad, _c = _invalid_for(inp["schema"])
+                    if bad is None:
+                        labels.append(f"{inp['name']}=valid")
+                        continue
+                    p2, b2 = _apply_input(inp, bad, p2, b2)
+                    labels.append(f"{inp['name']}=invalid")
             all_valid = all(combo)
             assertions = _positive_assertions(ep) if all_valid else [_error_assertion(ep)]
-            case = mk(f"Decision table {ci + 1}: {', '.join(labels)} — {suffix}",
-                      "decision_table", "positive" if all_valid else "negative",
-                      _step(ep, p2, headers, b2, assertions),
-                      # A decision-table row is about every input it varies.
-                      [i["name"] for i in variable_inputs])
-            if disclosure:
-                case["description"] = case["description"] + disclosure
-            cases.append(case)
+            cases.append(mk(f"Decision table {ci + 1}: {', '.join(labels)} — {suffix}",
+                            "decision_table", "positive" if all_valid else "negative",
+                            _step(ep, p2, headers, b2, assertions)))
     return cases
 
 
 # ---------------------------------------------------------------------------
 # Mapper — lexical prefilter + closed-list LLM pick (TRD §4.3)
 # ---------------------------------------------------------------------------
+
+def _is_page_grounded(req) -> bool:
+    """True when this requirement was extracted from a rendered page.
+
+    The web-target engine records the page it read in `source_location["url"]`;
+    document- and spec-derived requirements have no such key. This is a read of
+    stored provenance, not a guess from the text — a requirement that merely
+    mentions a URL is still an ordinary requirement."""
+    location = req.source_location if isinstance(req.source_location, dict) else {}
+    return bool(location.get("url"))
+
 
 def _tokens(text: str) -> set[str]:
     return set(_WORD_RE.findall((text or "").lower()))
@@ -796,92 +737,19 @@ def _prefilter(req_text: str, endpoints: list[Endpoint]) -> list[Endpoint]:
 # Job + route
 # ---------------------------------------------------------------------------
 
-def _attach_criterion(db: Session, requirement_id: str, case_id: str, index: str) -> None:
-    """Record a second (or third) criterion the same case verifies."""
-    link = db.scalar(select(RequirementTestCase).where(
-        RequirementTestCase.requirement_id == requirement_id,
-        RequirementTestCase.test_case_id == case_id))
-    if link is None:
-        return
-    current = list(link.criterion_indexes or [])
-    if index not in current:
-        link.criterion_indexes = current + [index]
-
-
-_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]+|[؀-ۿ]+")
-
-
-def _statement_tokens(text: str) -> set[str]:
-    """Lowercased word tokens, plus the parts of snake_case / camelCase names, so a
-    criterion writing "phone number" matches a field called `phone_number`."""
-    tokens: set[str] = set()
-    for raw in _TOKEN_RE.findall(text or ""):
-        low = raw.lower()
-        tokens.add(low)
-        tokens.update(part for part in re.split(r"[_\-]", low) if len(part) > 2)
-        tokens.update(part.lower() for part in re.findall(r"[A-Z]?[a-z]+", raw) if len(part) > 2)
-    return tokens
-
-
-def attribute_by_subject(criteria: list[dict], subjects: list[str],
-                         already_cited: list[str]) -> list[str]:
-    """Extra criteria this case demonstrably verifies, beyond the one that mapped it.
-
-    A criterion is added ONLY when the field the case is about is named in the
-    criterion's own words. "قيمة age أكبر من 120 تُرفض" names `age`, and the boundary
-    case on `age` is genuinely evidence for it — reporting that criterion as uncovered
-    would be a false gap. A criterion that names no field the suite touches
-    ("measured at the API gateway") matches nothing and stays uncovered, which is the
-    honest answer: no API assertion verifies it.
-
-    This is the one place attribution widens, and it is deliberately keyed on the
-    subject field alone — never on generic overlap, which would let any criterion
-    claim any case."""
-    if not subjects:
-        return []
-    extra: list[str] = []
-    for criterion in criteria:
-        if criterion["index"] in already_cited or criterion["index"] in extra:
-            continue
-        tokens = _statement_tokens(criterion["statement"])
-        if any(_statement_tokens(subject) & tokens for subject in subjects):
-            extra.append(criterion["index"])
-    return extra
-
-
-def _archive_orphaned_cases(db: Session, req: Requirement) -> int:
-    """SRS §4.3 regeneration rule: a case whose criterion no longer exists is
-    ARCHIVED, not deleted — its results are evidence of what was true at the time, and
-    deleting it would silently rewrite the run history it appears in.
-
-    Hand-written and hand-edited cases are never archived this way: a human chose to
-    keep them, and that choice outranks a re-parse."""
-    live = {c["index"] for c in numbered_criteria(req)}
-    if not live:
-        return 0
-    rows = (db.query(RequirementTestCase, TestCase)
-            .join(TestCase, TestCase.id == RequirementTestCase.test_case_id)
-            .filter(RequirementTestCase.requirement_id == req.id).all())
-    archived = 0
-    for link, tc in rows:
-        cited = list(link.criterion_indexes or [])
-        if not cited or tc.user_modified or not tc.generated or tc.state == "archived":
-            continue
-        if not any(index in live for index in cited):
-            tc.state = "archived"
-            archived += 1
-    return archived
-
-
 def _persist_case(db: Session, org_id: str, project_id: str, req: Requirement,
-                  case: dict, model_name: str,
-                  criterion_indexes: list[str] | None = None) -> TestCase:
+                  case: dict, model_name: str, edge_category: str | None = None) -> None:
+    """Persist one GROUNDED case as a draft plus its requirement link.
+
+    `edge_category` is only ever passed by the Insight engine (the sixth engine);
+    it stays NULL for everything this generator produces."""
     tc = TestCase(
         organisation_id=org_id, project_id=project_id,
         title=case["title"][:500], description=case["description"],
         preconditions=case["preconditions"], type=case["type"], priority=case["priority"],
         state="draft", generated=True, model=model_name,
         prompt_version=settings.PROMPT_VERSION, technique=case["technique"],
+        edge_category=edge_category,
     )
     db.add(tc)
     db.flush()
@@ -890,66 +758,7 @@ def _persist_case(db: Session, org_id: str, project_id: str, req: Requirement,
                         method=s["method"], path=s["path"], request=s["request"],
                         assertions=s["assertions"], extractions=s.get("extractions") or []))
     db.add(RequirementTestCase(requirement_id=req.id, test_case_id=tc.id,
-                               link_source="generated",
-                               criterion_indexes=list(criterion_indexes or []),
-                               requirement_version_at_link=req.version))
-    return tc
-
-
-def _step_signature(steps) -> str:
-    """Identity of what a case actually does, used to decide whether a regenerated
-    case differs from the one already stored."""
-    return json.dumps([{"m": (s.method if hasattr(s, "method") else s["method"]).upper(),
-                        "p": s.path if hasattr(s, "path") else s["path"],
-                        "r": s.request if hasattr(s, "request") else s["request"],
-                        "a": s.assertions if hasattr(s, "assertions") else s["assertions"]}
-                       for s in steps], sort_keys=True, default=str)
-
-
-def _refresh_case(db: Session, tc: TestCase, req: Requirement, case: dict,
-                  model_name: str, criterion_indexes: list[str] | None = None) -> bool:
-    """Update an existing generated, never-hand-edited case in place. Returns True
-    when something actually changed — that is what the run reports (FR-036 AC3).
-
-    A case the user touched never reaches this function: it is filtered out by the
-    `protected` index in _run_generation."""
-    current = sorted(tc.steps, key=lambda s: s.order)
-    if _step_signature(current) == _step_signature(case["steps"]):
-        # Identical proposal: keep the row (and its history) untouched.
-        if tc.state == "stale":
-            tc.state = "draft"  # the requirement change is reflected, nothing else to do
-            return True
-        return False
-
-    for step in current:
-        db.delete(step)
-    db.flush()
-    for i, s in enumerate(case["steps"]):
-        db.add(TestStep(test_case_id=tc.id, order=i, endpoint_id=s.get("endpoint_id"),
-                        method=s["method"], path=s["path"], request=s["request"],
-                        assertions=s["assertions"], extractions=s.get("extractions") or []))
-    tc.description = case["description"]
-    tc.preconditions = case["preconditions"]
-    tc.type = case["type"]
-    tc.priority = case["priority"]
-    tc.model = model_name
-    tc.prompt_version = settings.PROMPT_VERSION
-    tc.state = "draft"
-    tc.version += 1
-
-    link = db.scalar(select(RequirementTestCase).where(
-        RequirementTestCase.requirement_id == req.id,
-        RequirementTestCase.test_case_id == tc.id))
-    if link is None:
-        db.add(RequirementTestCase(requirement_id=req.id, test_case_id=tc.id,
-                                   link_source="generated",
-                                   criterion_indexes=list(criterion_indexes or []),
-                                   requirement_version_at_link=req.version))
-    else:
-        link.requirement_version_at_link = req.version
-        if criterion_indexes:
-            link.criterion_indexes = list(criterion_indexes)
-    return True
+                               link_source="generated", requirement_version_at_link=req.version))
 
 
 def _run_generation(job, org_id: str, user_id: str, project_id: str,
@@ -981,185 +790,132 @@ def _run_generation(job, org_id: str, user_id: str, project_id: str,
             Endpoint.excluded == False)).all()  # noqa: E712
         endpoints_by_key = {(e.method.upper(), e.path): e for e in endpoints}
 
-        # Index every existing case in the project by its identity
-        # (technique, method, path, title). Regeneration consults this index so a
-        # second run neither duplicates work nor discards human edits (FR-036 AC3).
-        dup_keys: set[tuple] = set()          # approved: a re-proposal is a duplicate
-        refreshable: dict[tuple, TestCase] = {}  # generated + untouched: safe to refresh
-        protected: set[tuple] = set()         # hand-edited or hand-written: never touched
-        existing_cases = db.scalars(select(TestCase).where(
+        # duplicate index over already-approved cases (FR-GEN-11)
+        dup_keys: set[tuple] = set()
+        approved = db.scalars(select(TestCase).where(
             TestCase.project_id == project_id,
             TestCase.organisation_id == org_id,
-            TestCase.state != "archived")).all()
-        for c in existing_cases:
+            TestCase.state == "approved")).all()
+        for c in approved:
             first = c.steps[0] if c.steps else None
-            key = (c.technique, first.method.upper() if first else "",
-                   first.path if first else "", c.title)
-            if c.user_modified or not c.generated:
-                protected.add(key)
-            elif c.state == "approved":
-                dup_keys.add(key)
-            elif c.state in ("draft", "stale"):
-                refreshable[key] = c
+            dup_keys.add((c.technique, first.method.upper() if first else "",
+                          first.path if first else "", c.title))
 
         provider = get_provider()
         generated = discarded = duplicates = 0
-        preserved = refreshed = archived = cross_attributed = 0
-        changed_cases: list[dict] = []
         total = max(len(reqs), 1)
 
         for idx, req in enumerate(reqs):
             job.progress = round(idx / total * 0.95, 3)
-            label = req.external_id or req.id[:8]
+            job.message = f"Mapping requirement {req.external_id or req.id[:8]}"
+            # A requirement extracted from a rendered PAGE is grounded in that
+            # page — a form selector or a design fact — not in an HTTP operation,
+            # so this generator has nothing to map it onto and never will. Saying
+            # "endpoint inventory is empty" here reads as a mistake the user made
+            # and sends them looking for a spec to import; the truth is that its
+            # cases are produced by the discovery itself, and re-running that is
+            # the action that regenerates them.
+            if _is_page_grounded(req):
+                unmappable.append({
+                    "requirement_id": req.id,
+                    "reason": ("grounded in a page, not an endpoint — its cases come from "
+                               "the discovery on Target, not from this generator")})
+                continue
             if not endpoints:
                 unmappable.append({"requirement_id": req.id, "reason": "endpoint inventory is empty"})
                 continue
-
-            # THE GOVERNING RULE (SRS §1): a case must be able to name the criterion it
-            # derives from and the endpoint it targets. So the criterion — not the
-            # requirement — is the unit generation iterates (FR-013 AC4).
-            criteria = numbered_criteria(req)
-            if not criteria:
-                unmappable.append({
-                    "requirement_id": req.id, "external_id": req.external_id,
-                    "reason": "no acceptance criteria — a case cannot name what it verifies"})
-                if not req.needs_criteria:
-                    req.needs_criteria = True  # FR-013 AC3: surface it for human input
+            req_text = " ".join([req.description or ""] + [str(a) for a in (req.acceptance_criteria or [])]).strip()
+            candidates = _prefilter(req_text, endpoints)
+            if not candidates:
+                unmappable.append({"requirement_id": req.id,
+                                   "reason": "no candidate endpoints matched the requirement text"})
                 continue
+            payload = {"requirement": frame_untrusted(req_text),
+                       "candidates": [{"method": e.method, "path": e.path, "summary": e.summary,
+                                       "operation_id": e.operation_id, "tags": e.tags or []}
+                                      for e in candidates]}
+            try:
+                result = provider.complete_json(
+                    "map_requirement",
+                    MAP_INSTRUCTIONS + "PAYLOAD:\n" + json.dumps(payload, ensure_ascii=False),
+                    MAP_SCHEMA)
+            except Exception as exc:  # noqa: BLE001 — one bad mapping must not sink the job
+                unmappable.append({"requirement_id": req.id, "reason": f"mapping failed: {exc}"})
+                continue
+            selected = [i for i in (result.data.get("selected") or [])
+                        if isinstance(i, int) and not isinstance(i, bool) and 0 <= i < len(candidates)]
+            confidence = float(result.data.get("confidence") or 0.0)
+            if not selected:
+                unmappable.append({"requirement_id": req.id, "reason": "mapper selected no endpoint"})
+                continue
+            if confidence < MIN_MAP_CONFIDENCE:
+                unmappable.append({"requirement_id": req.id,
+                                   "reason": f"mapping confidence {confidence:.2f} below {MIN_MAP_CONFIDENCE}"})
+                continue
+            model_name = getattr(result, "model", "") or "deterministic"
 
-            # key -> case id, so two criteria that produce the same case share it
-            # instead of duplicating it; the case then names both.
-            emitted_this_run: dict[tuple, str] = {}
-            subjects_by_case: dict[str, list[str]] = {}
-
-            for criterion in criteria:
-                job.message = f"Mapping {label} / {criterion['index']}"
-                criterion_text = " ".join(
-                    [req.description or "", criterion["statement"]]).strip()
-                candidates = _prefilter(criterion_text, endpoints)
-                if not candidates:
-                    unmappable.append({
-                        "requirement_id": req.id, "external_id": req.external_id,
-                        "criterion": criterion["index"],
-                        "reason": "no candidate endpoints matched this criterion"})
-                    continue
-                payload = {"requirement": criterion_text,
-                           "candidates": [{"method": e.method, "path": e.path,
-                                           "summary": e.summary,
-                                           "operation_id": e.operation_id,
-                                           "tags": e.tags or []}
-                                          for e in candidates]}
-                try:
-                    result = provider.complete_json(
-                        "map_requirement",
-                        MAP_INSTRUCTIONS + "PAYLOAD:\n" + json.dumps(payload, ensure_ascii=False),
-                        MAP_SCHEMA)
-                except Exception as exc:  # noqa: BLE001 — one bad mapping must not sink the job
-                    unmappable.append({"requirement_id": req.id,
-                                       "external_id": req.external_id,
-                                       "criterion": criterion["index"],
-                                       "reason": f"mapping failed: {exc}"})
-                    continue
-                selected = [i for i in (result.data.get("selected") or [])
-                            if isinstance(i, int) and not isinstance(i, bool)
-                            and 0 <= i < len(candidates)]
-                confidence = float(result.data.get("confidence") or 0.0)
-                if not selected:
-                    unmappable.append({"requirement_id": req.id,
-                                       "external_id": req.external_id,
-                                       "criterion": criterion["index"],
-                                       "reason": "mapper selected no endpoint for this criterion"})
-                    continue
-                if confidence < MIN_MAP_CONFIDENCE:
-                    unmappable.append({
-                        "requirement_id": req.id, "external_id": req.external_id,
-                        "criterion": criterion["index"],
-                        "reason": f"mapping confidence {confidence:.2f} below {MIN_MAP_CONFIDENCE}"})
-                    continue
-                model_name = getattr(result, "model", "") or "deterministic"
-
-                for ci in dict.fromkeys(selected):  # de-dup, keep order
-                    ep = candidates[ci]
-                    job.message = (f"Generating {label} / {criterion['index']} → "
-                                   f"{ep.method.upper()} {ep.path}")
-                    for case in _generate_cases(req, ep, depth, criterion):
-                        # HARD GATE — the model proposes, the system verifies (BR-09)
-                        if grounding_validate(case, endpoints_by_key):
-                            discarded += 1
-                            continue
-                        first = case["steps"][0]
-                        key = (case["technique"], first["method"], first["path"], case["title"])
-
-                        if key in emitted_this_run:
-                            # Same case, another criterion — record the second citation.
-                            _attach_criterion(db, req.id, emitted_this_run[key],
-                                              criterion["index"])
-                            continue
-                        if key in protected:
-                            # FR-036 AC3: a hand-edited case is authoritative.
-                            preserved += 1
-                            continue
-                        if key in dup_keys:
-                            duplicates += 1
-                            continue
-                        prior = refreshable.get(key)
-                        if prior is not None:
-                            emitted_this_run[key] = prior.id
-                            subjects_by_case[prior.id] = case.get("subjects") or []
-                            if _refresh_case(db, prior, req, case, model_name,
-                                             [criterion["index"]]):
-                                refreshed += 1
-                                changed_cases.append({"test_case_id": prior.id,
-                                                      "title": prior.title,
-                                                      "criterion": criterion["index"],
-                                                      "change": "regenerated"})
-                            continue
-                        new_case = _persist_case(db, org_id, project_id, req, case,
-                                                 model_name, [criterion["index"]])
-                        emitted_this_run[key] = new_case.id
-                        subjects_by_case[new_case.id] = case.get("subjects") or []
-                        generated += 1
-                        changed_cases.append({"test_case_id": new_case.id,
-                                              "title": new_case.title,
-                                              "criterion": criterion["index"],
-                                              "change": "added"})
-            # Second attribution pass: a case whose subject field is named by another
-            # criterion of this requirement is evidence for that criterion too.
-            # Without it the matrix shows a false gap — "age above 120 is rejected"
-            # reported as untested while the boundary case on `age` sits right there.
-            for case_id, subjects in subjects_by_case.items():
-                link = db.scalar(select(RequirementTestCase).where(
-                    RequirementTestCase.requirement_id == req.id,
-                    RequirementTestCase.test_case_id == case_id))
-                if link is None:
-                    continue
-                cited = list(link.criterion_indexes or [])
-                extra = attribute_by_subject(criteria, subjects, cited)
-                if extra:
-                    link.criterion_indexes = cited + extra
-                    cross_attributed += len(extra)
-
-            archived += _archive_orphaned_cases(db, req)
+            for ci in dict.fromkeys(selected):  # de-dup, keep order
+                ep = candidates[ci]
+                job.message = f"Generating cases for {ep.method.upper()} {ep.path}"
+                for case in _generate_cases(req, ep, depth):
+                    # HARD GATE — the model proposes, the system verifies (BR-09)
+                    if grounding_validate(case, endpoints_by_key):
+                        discarded += 1
+                        continue
+                    first = case["steps"][0]
+                    if (case["technique"], first["method"], first["path"], case["title"]) in dup_keys:
+                        duplicates += 1
+                        continue
+                    _persist_case(db, org_id, project_id, req, case, model_name)
+                    generated += 1
             db.commit()
 
         job.progress = 0.98
-        job.message = (f"Generated {generated}, refreshed {refreshed}, "
-                       f"preserved {preserved} edited, archived {archived} orphaned, "
-                       f"discarded {discarded} (grounding), {len(unmappable)} unmappable")
+        job.message = f"Generated {generated}, discarded {discarded} (grounding), {len(unmappable)} unmappable"
         audit(db, org_id, user_id, "generation.completed", "project", project_id,
               {"generated": generated, "discarded": discarded, "duplicates": duplicates,
-               "refreshed": refreshed, "preserved": preserved, "archived": archived,
-               "cross_attributed": cross_attributed,
                "unmappable": len(unmappable), "depth": depth})
         db.commit()
         # BO-07: discarded is reported as a count only — the cases themselves are never shown
         return {"generated": generated, "discarded": discarded,
-                "unmappable": unmappable, "duplicates": duplicates,
-                "refreshed": refreshed, "preserved_manual_edits": preserved,
-                "archived": archived, "cross_attributed": cross_attributed,
-                "changed_cases": changed_cases}
+                "unmappable": unmappable, "duplicates": duplicates}
     finally:
         db.close()
+
+
+def try_autopilot_generation(db: Session, org_id: str, actor_id: str,
+                             project_id: str) -> str | None:
+    """Autopilot generation trigger (contract 4b) — callers have already checked
+    project.automation == "auto".
+
+    Enqueues a standard-depth generation job over ALL confirmed requirements when
+    the project has >= 1 included endpoint, >= 1 confirmed requirement, and no
+    generation job for this project is currently queued/running. Returns the job
+    id, or None when a precondition fails. Runs the exact same job body as the
+    manual POST /projects/{id}/generate route. Approval stays manual (BO-07)."""
+    has_endpoint = db.query(Endpoint.id).filter(
+        Endpoint.project_id == project_id,
+        Endpoint.organisation_id == org_id,
+        Endpoint.excluded == False).first()  # noqa: E712
+    if has_endpoint is None:
+        return None
+    has_confirmed = db.query(Requirement.id).filter(
+        Requirement.project_id == project_id,
+        Requirement.organisation_id == org_id,
+        Requirement.state == "confirmed").first()
+    if has_confirmed is None:
+        return None
+    if jobstore.has_active("generate", project_id):
+        return None  # double-trigger guard
+
+    audit(db, org_id, actor_id, "auto.generate", "project", project_id,
+          {"depth": "standard"})
+    db.commit()
+    job = jobstore.submit(
+        "generate",
+        lambda job: _run_generation(job, org_id, actor_id, project_id, None, "standard"),
+        project_id=project_id)
+    return job.id
 
 
 class GenerateRequest(BaseModel):
@@ -1180,5 +936,6 @@ def start_generation(project_id: str, body: GenerateRequest,
     depth = body.depth
     job = jobstore.submit(
         "generate",
-        lambda job: _run_generation(job, org_id, user_id, project_id, requirement_ids, depth))
+        lambda job: _run_generation(job, org_id, user_id, project_id, requirement_ids, depth),
+        project_id=project_id)
     return {"job_id": job.id}

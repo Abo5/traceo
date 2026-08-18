@@ -159,6 +159,27 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
             "user": _user_payload(user, _org_name(db, user.organisation_id))}
 
 
+@router.post("/auth/dev-session")
+def dev_session(db: Session = Depends(get_db)):
+    """Hand out a session without credentials — development only.
+
+    Enabled by TRACEO_DEV_AUTOLOGIN=1; the production guard in config.py refuses
+    to boot with it set, so this can never be reachable on a production node.
+    """
+    if not settings.DEV_AUTOLOGIN:
+        raise HTTPException(404, detail={"code": "not_found", "message": "Not found"})
+    email = settings.DEV_AUTOLOGIN_EMAIL.strip().lower()
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(503, detail={
+            "code": "dev_session_unavailable",
+            "message": f"TRACEO_DEV_AUTOLOGIN is on but no user matches {email}"})
+    audit(db, user.organisation_id, user.id, "auth.dev_session", "user", user.id, {"email": email})
+    db.commit()
+    return {"token": create_token(user.id, user.organisation_id, user.role),
+            "user": _user_payload(user, _org_name(db, user.organisation_id))}
+
+
 # --- own profile -------------------------------------------------------------
 
 @router.get("/me")

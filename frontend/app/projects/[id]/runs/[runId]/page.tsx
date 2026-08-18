@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { useParams } from "next/navigation";
 import { API, api, getToken } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
 import { Badge, Button, Card, DateTimeText, Empty, PageHeader, Pill, RefChip, Select, SeverityBadge, StatCard, StatusDot, Table, fmtDateTime, stateTone } from "@/components/ui";
 
 type Tone = "success" | "warning" | "error" | "info" | "muted" | "accent";
@@ -16,7 +15,7 @@ function asList(x: any): any[] {
 
 function M({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
-    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12, ...style }}>
+    <span style={{ fontFamily: "'JetBrains Mono',ui-monospace,monospace", fontSize: 12, ...style }}>
       {children}
     </span>
   );
@@ -25,14 +24,13 @@ function M({ children, style }: { children: ReactNode; style?: CSSProperties }) 
 function JsonBlock({ value }: { value: any }) {
   return (
     <pre
-      dir="ltr"
       style={{
         background: "var(--bg)",
         border: "1px solid var(--border)",
         borderRadius: 10,
         padding: "10px 12px",
         margin: 0,
-        fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace",
+        fontFamily: "'JetBrains Mono',ui-monospace,monospace",
         fontSize: 11.5,
         lineHeight: 1.6,
         color: "var(--text-secondary)",
@@ -70,169 +68,56 @@ const OUTCOME_TONE: Record<string, Tone> = {
 
 export default function RunReportPage() {
   const { id, runId } = useParams<{ id: string; runId: string }>();
-  const { lang } = useLang();
 
-  const L =
-    lang === "ar"
-      ? {
-          title: "تقرير التشغيل",
-          env: "البيئة",
-          started: "البداية",
-          finished: "النهاية",
-          initiator: "المشغّل",
-          exportHtml: "تصدير HTML",
-          exportHint: "يُفتح التقرير في تبويب جديد (يتطلب جلسة موثّقة)",
-          reportLang: "لغة التقرير",
-          langAr: "العربية",
-          langEn: "الإنجليزية",
-          langBoth: "ثنائي اللغة",
-          syncXray: "مزامنة Xray",
-          syncing: "جارٍ المزامنة…",
-          synced: "تمت المزامنة",
-          total: "الكل",
-          passed: "ناجح",
-          failed: "فاشل",
-          errored: "خطأ",
-          duration: "المدة",
-          tabFailures: "الإخفاقات",
-          tabAll: "جميع النتائج",
-          tabCompare: "مقارنة",
-          noFailures: "لا توجد إخفاقات",
-          noFailuresHint: "جميع الحالات نجحت في هذا التشغيل",
-          stepsRepro: "خطوات إعادة الإنتاج",
-          request: "الطلب",
-          response: "الاستجابة",
-          expected: "المتوقع",
-          actual: "الفعلي",
-          evidence: "أدلة التحقّقات",
-          reqs: "المتطلبات",
-          caseCol: "الحالة",
-          outcome: "النتيجة",
-          durationCol: "المدة",
-          empty: "لا توجد نتائج",
-          emptyHint: "لم تكتمل أي حالة في هذا التشغيل بعد",
-          compareWith: "قارن مع تشغيل آخر",
-          pickRun: "اختر تشغيلًا…",
-          newlyFailing: "أخفق حديثًا",
-          newlyPassing: "نجح حديثًا",
-          noDiff: "لا فروقات",
-          loadError: "تعذّر تحميل التقرير",
-          retry: "إعادة المحاولة",
-          failReason: "سبب الإخفاق",
-          sevAll: "الكل",
-          sevCritical: "حرج",
-          sevMajor: "كبير",
-          sevMinor: "طفيف",
-          gate: "بوابة التسليم",
-          gatePassed: "اجتازت البوابة",
-          gateFailed: "أخفقت البوابة",
-          gateCoverage: "تغطية المتطلبات",
-          gateNewFailures: "إخفاقات جديدة",
-          gateExit: "رمز الخروج",
-          fixtures: "بيانات الاختبار",
-          fxCreated: "أُنشئت",
-          fxRemoved: "أُزيلت",
-          fxOrphans: "تعذّرت إزالتها",
-          exportJira: "تصدير إلى Jira",
-          exporting: "جارٍ التصدير…",
-          exported: "صُدِّر",
-          noJira: "لا يوجد تكامل Jira مهيّأ لهذا المشروع",
-          branch: "الفرع",
-          source: "المصدر",
-          perf: "الأداء",
-          perfEndpoint: "الواجهة",
-          perfCalls: "النداءات",
-          coverageDelta: "فرق التغطية",
-          reqDelta: "متطلبات تغيّر حكمها",
-          epDelta: "واجهات تغيّر حكمها",
-          regressed: "انحدر",
-          recovered: "تعافى",
-          noMove: "لم يتغيّر حكم أي متطلب أو واجهة",
-          unchanged: "دون تغيير",
-          pts: "نقطة",
-        }
-      : {
-          title: "Run report",
-          env: "Environment",
-          started: "Started",
-          finished: "Finished",
-          initiator: "Initiator",
-          exportHtml: "Export HTML",
-          exportHint: "Opens the report in a new tab (requires an authenticated session)",
-          reportLang: "Report language",
-          langAr: "Arabic",
-          langEn: "English",
-          langBoth: "Bilingual",
-          syncXray: "Sync to Xray",
-          syncing: "Syncing…",
-          synced: "Synced",
-          total: "Total",
-          passed: "Passed",
-          failed: "Failed",
-          errored: "Errored",
-          duration: "Duration",
-          tabFailures: "Failures",
-          tabAll: "All results",
-          tabCompare: "Compare",
-          noFailures: "No failures",
-          noFailuresHint: "Every case passed in this run",
-          stepsRepro: "Steps to reproduce",
-          request: "Request",
-          response: "Response",
-          expected: "Expected",
-          actual: "Actual",
-          evidence: "Assertion evidence",
-          reqs: "Requirements",
-          caseCol: "Case",
-          outcome: "Outcome",
-          durationCol: "Duration",
-          empty: "No results",
-          emptyHint: "No case has finished in this run yet",
-          compareWith: "Compare with another run",
-          pickRun: "Pick a run…",
-          newlyFailing: "Newly failing",
-          newlyPassing: "Newly passing",
-          noDiff: "No differences",
-          loadError: "Failed to load report",
-          retry: "Retry",
-          failReason: "Failure reason",
-          sevAll: "All",
-          sevCritical: "Critical",
-          sevMajor: "Major",
-          sevMinor: "Minor",
-          gate: "Delivery gate",
-          gatePassed: "Gate passed",
-          gateFailed: "Gate failed",
-          gateCoverage: "Requirement coverage",
-          gateNewFailures: "New failures",
-          gateExit: "Exit code",
-          fixtures: "Test data",
-          fxCreated: "Created",
-          fxRemoved: "Removed",
-          fxOrphans: "Could not be removed",
-          exportJira: "Export to Jira",
-          exporting: "Exporting…",
-          exported: "Exported",
-          noJira: "No Jira integration configured for this project",
-          branch: "Branch",
-          source: "Source",
-          perf: "Performance",
-          perfEndpoint: "Endpoint",
-          perfCalls: "Calls",
-          coverageDelta: "Coverage delta",
-          reqDelta: "Requirements that moved",
-          epDelta: "Endpoints that moved",
-          regressed: "regressed",
-          recovered: "recovered",
-          noMove: "No requirement or endpoint changed verdict",
-          unchanged: "Unchanged",
-          pts: "pts",
-        };
-
-  const outcomeLabel = (o: string) =>
-    lang === "ar"
-      ? ({ passed: "ناجح", failed: "فاشل", errored: "خطأ", skipped: "متجاوز" } as Record<string, string>)[o] ?? o
-      : o;
+  const L = {
+    title: "Run report",
+    env: "Environment",
+    started: "Started",
+    finished: "Finished",
+    initiator: "Initiator",
+    exportHtml: "Export HTML",
+    exportHint: "Opens the report in a new tab (requires an authenticated session)",
+    total: "Total",
+    passed: "Passed",
+    failed: "Failed",
+    errored: "Errored",
+    duration: "Duration",
+    tabFailures: "Failures",
+    tabAll: "All results",
+    tabCompare: "Compare",
+    noFailures: "No failures",
+    noFailuresHint: "Every case passed in this run",
+    stepsRepro: "Steps to reproduce",
+    request: "Request",
+    response: "Response",
+    expected: "Expected",
+    actual: "Actual",
+    evidence: "Assertion evidence",
+    reqs: "Requirements",
+    caseCol: "Case",
+    outcome: "Outcome",
+    durationCol: "Duration",
+    empty: "No results",
+    emptyHint: "No case has finished in this run yet",
+    compareWith: "Compare with another run",
+    pickRun: "Pick a run…",
+    newlyFailing: "Newly failing",
+    newlyPassing: "Newly passing",
+    noDiff: "No differences",
+    loadError: "Failed to load report",
+    retry: "Retry",
+    failReason: "Failure reason",
+    sevAll: "All",
+    sevCritical: "Critical",
+    sevMajor: "Major",
+    sevMinor: "Minor",
+    perf: "Performance",
+    perfEndpoint: "Endpoint",
+    perfCalls: "Calls",
+    coverageDelta: "Coverage delta",
+    unchanged: "Unchanged",
+    pts: "pts",
+  };
 
   const [report, setReport] = useState<any | null>(null);
   const [results, setResults] = useState<any[]>([]);
@@ -249,15 +134,6 @@ export default function RunReportPage() {
   const [compareLoading, setCompareLoading] = useState(false);
   const [compareError, setCompareError] = useState<string | null>(null);
 
-  const [gate, setGate] = useState<any | null>(null);
-  const [jira, setJira] = useState<any | null>(null);
-  const [xray, setXray] = useState<any | null>(null);
-  const [xraySync, setXraySync] = useState<"idle" | "busy" | "done">("idle");
-  // FR-071 AC3 — the bilingual deliverable is a user choice, not a hidden default.
-  const [reportLang, setReportLang] = useState<"ar" | "en" | "both">("both");
-  const [exports, setExports] = useState<Record<string, any>>({});
-  const [exporting, setExporting] = useState<string | null>(null);
-
   function load() {
     setLoading(true);
     setError(null);
@@ -265,53 +141,14 @@ export default function RunReportPage() {
       api(`/runs/${runId}/report`),
       api(`/runs/${runId}/results`).catch(() => null),
       api(`/projects/${id}/runs`).catch(() => null),
-      api(`/runs/${runId}/gate`).catch(() => null),
-      api(`/integrations?project_id=${id}`).catch(() => null),
-      api(`/runs/${runId}/exports`).catch(() => null),
     ])
-      .then(([rep, res, pr, gateVerdict, ints, exp]) => {
+      .then(([rep, res, pr]) => {
         setReport(rep ?? {});
         setResults(res ? asList(res) : []);
         setProjRuns(pr ? asList(pr) : []);
-        setGate(gateVerdict);
-        setJira((ints?.integrations ?? []).find((i: any) => i.type === "jira") ?? null);
-        setXray((ints?.integrations ?? []).find((i: any) => i.type === "xray") ?? null);
-        const byCase: Record<string, any> = {};
-        for (const e of exp?.exports ?? []) byCase[e.test_case_id] = e;
-        setExports(byCase);
       })
       .catch((e) => setError(e?.message || String(e)))
       .finally(() => setLoading(false));
-  }
-
-  /** FR-070 AC3 — create an Xray test execution and sync every verdict into it. */
-  async function syncToXray() {
-    if (!xray) return;
-    setXraySync("busy");
-    try {
-      await api(`/runs/${runId}/xray/sync`, { body: { integration_id: xray.id } });
-      setXraySync("done");
-    } catch (e: any) {
-      setError(e?.message || String(e));
-      setXraySync("idle");
-    }
-  }
-
-  /** FR-070 — push one failure to Jira; a repeat export updates that same issue. */
-  async function exportToJira(caseIdValue: string) {
-    const result = resultByCase[caseIdValue];
-    if (!jira || !result?.id) return;
-    setExporting(caseIdValue);
-    try {
-      const res = await api(`/runs/${runId}/results/${result.id}/export`, {
-        body: { integration_id: jira.id },
-      });
-      setExports((prev) => ({ ...prev, [caseIdValue]: { ...res, test_case_id: caseIdValue } }));
-    } catch (e: any) {
-      setError(e?.message || String(e));
-    } finally {
-      setExporting(null);
-    }
   }
 
   useEffect(() => {
@@ -340,7 +177,7 @@ export default function RunReportPage() {
   async function openHtmlReport() {
     try {
       const token = getToken();
-      const res = await fetch(`${API}/runs/${runId}/report.html?lang=${reportLang}`, {
+      const res = await fetch(`${API}/runs/${runId}/report.html`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -415,9 +252,6 @@ export default function RunReportPage() {
   const compareRuns = projRuns.filter((r) => r.id !== runId);
   const newlyFailing: any[] = Array.isArray(compare?.newly_failing) ? compare.newly_failing : [];
   const newlyPassing: any[] = Array.isArray(compare?.newly_passing) ? compare.newly_passing : [];
-  // FR-053 AC3 — a pass-rate delta says a number moved; these say what moved.
-  const reqDelta: any[] = Array.isArray(compare?.requirement_delta) ? compare.requirement_delta : [];
-  const epDelta: any[] = Array.isArray(compare?.endpoint_delta) ? compare.endpoint_delta : [];
 
   function compareItemLabel(x: any): string {
     if (typeof x === "string") return x;
@@ -425,7 +259,7 @@ export default function RunReportPage() {
   }
 
   if (loading) {
-    return <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 13 }}>…</div>;
+    return <div style={{ padding: 24, color: "var(--text-secondary)", fontSize: 13 }}>…</div>;
   }
 
   if (error && !report) {
@@ -442,8 +276,9 @@ export default function RunReportPage() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div data-testid="runs-report-page-root" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <PageHeader
+        testId="runs-report-page-header"
         title={
           <span style={{ display: "inline-flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
             {L.title}{" "}
@@ -452,8 +287,8 @@ export default function RunReportPage() {
             </M>
             {run.state && (
               <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                <StatusDot state={run.state} />
-                <Badge tone={stateTone(run.state)}>{run.state}</Badge>
+                <StatusDot state={run.state} testId="runs-report-status-dot" />
+                <Badge tone={stateTone(run.state)} testId="runs-report-state-badge" state={run.state}>{run.state}</Badge>
               </span>
             )}
           </span>
@@ -475,140 +310,30 @@ export default function RunReportPage() {
           </span>
         }
         actions={
-          <div className="row" style={{ gap: 8, alignItems: "center" }}>
-            <Select
-              aria-label={L.reportLang}
-              value={reportLang}
-              onChange={(e) => setReportLang(e.target.value as "ar" | "en" | "both")}
-              style={{ height: 34, fontSize: 12, minWidth: 130 }}
-            >
-              <option value="both">{L.langBoth}</option>
-              <option value="ar">{L.langAr}</option>
-              <option value="en">{L.langEn}</option>
-            </Select>
-            <Button variant="secondary" onClick={openHtmlReport} title={L.exportHint}>
-              {L.exportHtml}
-            </Button>
-            {xray && (
-              <Button variant="secondary" disabled={xraySync === "busy"} onClick={syncToXray}>
-                {xraySync === "busy" ? L.syncing : xraySync === "done" ? L.synced : L.syncXray}
-              </Button>
-            )}
-          </div>
+          <Button variant="secondary" testId="runs-report-export-button" onClick={openHtmlReport} title={L.exportHint}>
+            {L.exportHtml}
+          </Button>
         }
       />
 
       {error && <div style={{ fontSize: 13, color: "var(--error)" }}>{error}</div>}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
-        <StatCard value={counts.total ?? cases.length} label={L.total} />
-        <StatCard value={counts.passed ?? 0} label={L.passed} color="var(--success)" />
-        <StatCard value={counts.failed ?? 0} label={L.failed} color="var(--error)" />
-        <StatCard value={counts.errored ?? 0} label={L.errored} color="var(--warning)" />
-        <StatCard value={fmtDur(durationMs)} label={L.duration} />
+        <StatCard value={counts.total ?? cases.length} label={L.total} testId="runs-report-total-stat" />
+        <StatCard value={counts.passed ?? 0} label={L.passed} color="var(--success)" testId="runs-report-passed-stat" />
+        <StatCard value={counts.failed ?? 0} label={L.failed} color="var(--error)" testId="runs-report-failed-stat" />
+        <StatCard value={counts.errored ?? 0} label={L.errored} color="var(--warning)" testId="runs-report-errored-stat" />
+        <StatCard value={fmtDur(durationMs)} label={L.duration} testId="runs-report-duration-stat" />
       </div>
 
-      {/* Delivery gate verdict (FR-061) */}
-      {gate && (
-        <Card
-          title={
-            <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-              {L.gate} <RefChip id="FR-061" />
-              <Badge tone={gate.passed ? "success" : "error"}>
-                {gate.passed ? L.gatePassed : L.gateFailed}
-              </Badge>
-            </span>
-          }
-        >
-          <div style={{ display: "flex", gap: 18, flexWrap: "wrap", fontSize: 13 }}>
-            <span>
-              {L.gateCoverage}:{" "}
-              <strong>{gate.coverage_pct}%</strong>{" "}
-              <span style={{ color: "var(--text-muted)" }}>
-                ({gate.covered_requirements}/{gate.total_requirements})
-              </span>
-            </span>
-            <span>
-              {L.gateNewFailures}: <strong>{gate.new_failures}</strong>
-            </span>
-            <span>
-              {L.gateExit}: <M>{gate.exit_code}</M>
-            </span>
-            {gate.branch && (
-              <span>
-                {L.branch}: <M>{gate.branch}</M>
-              </span>
-            )}
-            <span>
-              {L.source}: <Badge tone="muted">{gate.source}</Badge>
-            </span>
-          </div>
-          {gate.breaches?.length > 0 && (
-            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-              {gate.breaches.map((b: any) => (
-                <div
-                  key={b.code}
-                  style={{
-                    border: "1px solid var(--error)",
-                    borderRadius: 10,
-                    padding: "10px 14px",
-                  }}
-                >
-                  <div style={{ fontSize: 13, color: "var(--error)" }}>{b.message}</div>
-                  {b.requirements?.length > 0 && (
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
-                      {b.requirements.map((r: any) => (
-                        <RefChip key={r.requirement_id} id={r.external_id || r.requirement_id.slice(0, 8)} />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-      )}
-
-      {/* Test-data lifecycle (FR-043) */}
-      {run.fixtures && (run.fixtures.created?.length || run.fixtures.orphans?.length) ? (
-        <Card
-          title={
-            <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-              {L.fixtures} <RefChip id="FR-043" />
-            </span>
-          }
-        >
-          <div style={{ display: "flex", gap: 18, flexWrap: "wrap", fontSize: 13 }}>
-            <span>
-              {L.fxCreated}: <M>{(run.fixtures.created ?? []).join(", ") || "—"}</M>
-            </span>
-            <span>
-              {L.fxRemoved}: <M>{(run.fixtures.removed ?? []).join(", ") || "—"}</M>
-            </span>
-          </div>
-          {run.fixtures.orphans?.length > 0 && (
-            <div style={{ marginTop: 10 }}>
-              <Badge tone="warning">{L.fxOrphans}</Badge>
-              <ul style={{ margin: "6px 0 0", paddingInlineStart: 18 }}>
-                {run.fixtures.orphans.map((o: any, i: number) => (
-                  <li key={i} style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                    <M>{o.name}</M> — {o.reason}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </Card>
-      ) : null}
-
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        <Pill active={tab === "failures"} onClick={() => setTab("failures")}>
+        <Pill active={tab === "failures"} testId="runs-report-tab-failures-pill" onClick={() => setTab("failures")}>
           {L.tabFailures} ({failures.length})
         </Pill>
-        <Pill active={tab === "all"} onClick={() => setTab("all")}>
+        <Pill active={tab === "all"} testId="runs-report-tab-all-pill" onClick={() => setTab("all")}>
           {L.tabAll} ({cases.length})
         </Pill>
-        <Pill active={tab === "compare"} onClick={() => setTab("compare")}>
+        <Pill active={tab === "compare"} testId="runs-report-tab-compare-pill" onClick={() => setTab("compare")}>
           {L.tabCompare}
         </Pill>
       </div>
@@ -617,7 +342,7 @@ export default function RunReportPage() {
       {tab === "failures" &&
         (failures.length === 0 ? (
           <Card>
-            <Empty icon="✓" title={L.noFailures} hint={L.noFailuresHint} />
+            <Empty icon="✓" title={L.noFailures} hint={L.noFailuresHint} testId="runs-report-no-failures-empty" />
           </Card>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -628,10 +353,10 @@ export default function RunReportPage() {
                 ["major", L.sevMajor],
                 ["minor", L.sevMinor],
               ].map(([v, label]) => (
-                <Pill key={v} active={sevF === v} onClick={() => setSevF(v)}>
+                <Pill key={v} active={sevF === v} testId={`runs-report-severity-${v}-pill`} onClick={() => setSevF(v)}>
                   {label}
                   {v !== "all" && (
-                    <M style={{ fontSize: 10, marginInlineStart: 4 }}>
+                    <M style={{ fontSize: 10, marginLeft: 4 }}>
                       {failures.filter((c) => c.severity === v).length}
                     </M>
                   )}
@@ -650,6 +375,7 @@ export default function RunReportPage() {
               return (
                 <div
                   key={key}
+                  data-testid="runs-report-failure-row"
                   style={{
                     border: `1px solid ${isOpen ? toneColor : "var(--border)"}`,
                     borderRadius: 14,
@@ -659,6 +385,7 @@ export default function RunReportPage() {
                 >
                   <button
                     type="button"
+                    data-testid="runs-report-failure-toggle-button"
                     onClick={() =>
                       setExpanded((prev) => {
                         const n = new Set(prev);
@@ -676,7 +403,7 @@ export default function RunReportPage() {
                       background: "transparent",
                       border: "none",
                       cursor: "pointer",
-                      textAlign: "start",
+                      textAlign: "left",
                     }}
                   >
                     <M style={{ color: toneColor, fontWeight: 700 }}>{shortId(cid)}</M>
@@ -686,9 +413,9 @@ export default function RunReportPage() {
                         {r.external_id ?? r.id}
                       </M>
                     ))}
-                    <SeverityBadge severity={c.severity ?? c.test_case?.severity} />
-                    <Badge tone={tone}>{outcomeLabel(c.outcome)}</Badge>
-                    <span style={{ color: "var(--text-muted)", fontSize: 12 }}>{isOpen ? "▴" : "▾"}</span>
+                    <SeverityBadge severity={c.severity ?? c.test_case?.severity} testId="runs-report-failure-severity-badge" />
+                    <Badge tone={tone} testId="runs-report-failure-outcome-badge" state={c.outcome}>{c.outcome}</Badge>
+                    <span style={{ color: "var(--text-secondary)", fontSize: 12 }}>{isOpen ? "▴" : "▾"}</span>
                   </button>
 
                   {isOpen && (
@@ -704,57 +431,19 @@ export default function RunReportPage() {
                     >
                       {c.failure_reason && (
                         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }}>
+                          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-secondary)" }}>
                             {L.failReason}
                           </div>
                           {renderFailureReason(c.failure_reason)}
                         </div>
                       )}
 
-                      {/* FR-070 — one action sends this defect to Jira */}
-                      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                        {exports[cid] ? (
-                          <>
-                            <Badge tone="success">{L.exported}</Badge>
-                            <a
-                              href={exports[cid].external_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              style={{ color: "var(--accent)", fontSize: 12 }}
-                            >
-                              <M>{exports[cid].external_key}</M>
-                            </a>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              disabled={!jira || exporting === cid}
-                              onClick={() => exportToJira(cid)}
-                            >
-                              {exporting === cid ? L.exporting : L.exportJira}
-                            </Button>
-                          </>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            disabled={!jira || exporting === cid}
-                            onClick={() => exportToJira(cid)}
-                            title={jira ? undefined : L.noJira}
-                          >
-                            {exporting === cid ? L.exporting : L.exportJira}
-                          </Button>
-                        )}
-                        {!jira && (
-                          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{L.noJira}</span>
-                        )}
-                      </div>
-
                       {reproSteps.length > 0 && (
                         <div>
-                          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)", marginBottom: 6 }}>
+                          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-secondary)", marginBottom: 6 }}>
                             {L.stepsRepro}
                           </div>
-                          <ol style={{ margin: 0, paddingInlineStart: 20, display: "flex", flexDirection: "column", gap: 4 }}>
+                          <ol style={{ margin: 0, paddingLeft: 20, display: "flex", flexDirection: "column", gap: 4 }}>
                             {reproSteps.map((s: any, j: number) => (
                               <li key={j} style={{ fontSize: 12, color: "var(--text-secondary)" }}>
                                 <M style={{ fontSize: 11, color: "var(--text)", whiteSpace: "nowrap" }}>
@@ -770,7 +459,7 @@ export default function RunReportPage() {
                         <div key={j} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                           {ev.request && (
                             <div>
-                              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>
+                              <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>
                                 {L.request} <M style={{ fontSize: 10 }}>#{j + 1}</M>
                               </div>
                               <JsonBlock value={ev.request} />
@@ -778,12 +467,12 @@ export default function RunReportPage() {
                           )}
                           {ev.response && (
                             <div>
-                              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>
+                              <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>
                                 {L.response}
                                 {typeof ev.elapsed_ms === "number" && (
                                   <>
                                     {" — "}
-                                    <M style={{ fontSize: 10, color: "var(--text-muted)", whiteSpace: "nowrap" }}>{ev.elapsed_ms} ms</M>
+                                    <M style={{ fontSize: 10, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{ev.elapsed_ms} ms</M>
                                   </>
                                 )}
                               </div>
@@ -792,7 +481,7 @@ export default function RunReportPage() {
                           )}
                           {Array.isArray(ev.assertions) && ev.assertions.length > 0 && (
                             <div>
-                              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>{L.evidence}</div>
+                              <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>{L.evidence}</div>
                               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                                 {ev.assertions.map((a: any, k: number) => (
                                   <div key={k} style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
@@ -837,19 +526,19 @@ export default function RunReportPage() {
       {tab === "all" && (
         <Card pad={false}>
           {cases.length === 0 ? (
-            <Empty title={L.empty} hint={L.emptyHint} />
+            <Empty title={L.empty} hint={L.emptyHint} testId="runs-report-results-empty" />
           ) : (
-            <Table head={["ID", L.caseCol, L.outcome, L.durationCol, L.reqs]}>
+            <Table head={["ID", L.caseCol, L.outcome, L.durationCol, L.reqs]} testId="runs-report-table-root">
               {cases.map((c, i) => (
-                <tr key={caseId(c) || i}>
+                <tr key={caseId(c) || i} data-testid="runs-report-result-row">
                   <td>
-                    <M style={{ color: "var(--text-muted)" }}>{shortId(caseId(c))}</M>
+                    <M style={{ color: "var(--text-secondary)" }}>{shortId(caseId(c))}</M>
                   </td>
                   <td style={{ fontSize: 13, color: "var(--text)" }}>{caseTitle(c)}</td>
                   <td>
                     <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                      <StatusDot state={c.outcome} />
-                      <Badge tone={OUTCOME_TONE[c.outcome] ?? "muted"}>{outcomeLabel(c.outcome)}</Badge>
+                      <StatusDot state={c.outcome} testId="runs-report-result-status-dot" />
+                      <Badge tone={OUTCOME_TONE[c.outcome] ?? "muted"} testId="runs-report-result-outcome-badge" state={c.outcome}>{c.outcome}</Badge>
                     </span>
                   </td>
                   <td>
@@ -876,7 +565,7 @@ export default function RunReportPage() {
         <Card title={L.compareWith}>
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div style={{ maxWidth: 420 }}>
-              <Select value={otherRun} onChange={(e: any) => setOtherRun(e.target.value)}>
+              <Select testId="runs-report-compare-select" value={otherRun} onChange={(e: any) => setOtherRun(e.target.value)}>
                 <option value="">{L.pickRun}</option>
                 {compareRuns.map((r) => (
                   <option key={r.id} value={r.id}>
@@ -886,7 +575,7 @@ export default function RunReportPage() {
               </Select>
             </div>
 
-            {compareLoading && <div style={{ color: "var(--text-muted)", fontSize: 13 }}>…</div>}
+            {compareLoading && <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>…</div>}
             {compareError && <div style={{ color: "var(--error)", fontSize: 13 }}>{compareError}</div>}
 
             {compare && !compareLoading && (
@@ -939,7 +628,7 @@ export default function RunReportPage() {
                     {L.newlyFailing} ({newlyFailing.length})
                   </div>
                   {newlyFailing.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{L.noDiff}</div>
+                    <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{L.noDiff}</div>
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       {newlyFailing.map((x, i) => (
@@ -963,60 +652,12 @@ export default function RunReportPage() {
                     {L.newlyPassing} ({newlyPassing.length})
                   </div>
                   {newlyPassing.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{L.noDiff}</div>
+                    <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{L.noDiff}</div>
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       {newlyPassing.map((x, i) => (
                         <div key={i} style={{ fontSize: 13, color: "var(--text)" }}>
                           {compareItemLabel(x)}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {compare && !compareLoading && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
-                    {L.reqDelta} ({reqDelta.length})
-                  </div>
-                  {reqDelta.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{L.noDiff}</div>
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      {reqDelta.map((r: any) => (
-                        <div key={r.requirement_id} className="row" style={{ gap: 8, alignItems: "center" }}>
-                          <RefChip id={r.external_id || r.requirement_id.slice(0, 8)} />
-                          <Badge tone={r.direction === "regressed" ? "error" : "success"}>
-                            {r.direction === "regressed" ? L.regressed : L.recovered}
-                          </Badge>
-                          <M style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                            {r.previous_verdict} → {r.verdict}
-                          </M>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
-                    {L.epDelta} ({epDelta.length})
-                  </div>
-                  {epDelta.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{L.noDiff}</div>
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      {epDelta.map((e: any) => (
-                        <div key={e.endpoint_id} className="row" style={{ gap: 8, alignItems: "center" }}>
-                          <M style={{ fontWeight: 700 }}>{e.method}</M>
-                          <M>{e.path}</M>
-                          <Badge tone={e.direction === "regressed" ? "error" : "success"}>
-                            {e.direction === "regressed" ? L.regressed : L.recovered}
-                          </Badge>
                         </div>
                       ))}
                     </div>
@@ -1038,7 +679,7 @@ export default function RunReportPage() {
           }
           pad={false}
         >
-          <Table head={[L.perfEndpoint, "p50", "p95", "max", L.perfCalls]}>
+          <Table head={[L.perfEndpoint, "p50", "p95", "max", L.perfCalls]} testId="runs-report-perf-table">
             {perf.map((p: any, i: number) => (
               <tr key={i}>
                 <td>

@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Orders Platform — Sign in</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+      body {
+        background: #12131a;
+        color: #f2eff6;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+        min-height: 800px;
+      }
+      /* No transitions or animations anywhere: the screenshot must be a pure
+         function of the markup, or the design facts extracted from it would
+         differ run to run. The sidecar disables animation as well — belt and
+         braces, because a flaky palette is a flaky requirement. */
+      * { transition: none !important; animation: none !important; }
+      .page { padding: 64px 0; display: flex; justify-content: center; }
+      .card {
+        background: #1e2029;
+        width: 640px;
+        padding: 48px;
+      }
+      h1 { margin: 0 0 32px 0; font-size: 32px; color: #f2eff6; }
+      label { display: block; margin: 0 0 8px 0; font-size: 14px; color: #f2eff6; }
+      input[type="text"], input[type="password"] {
+        display: block;
+        width: 544px;
+        height: 48px;
+        margin: 0 0 24px 0;
+        padding: 0 16px;
+        background: #2a2d3a;
+        border: 0;
+        color: #f2eff6;
+        font-size: 16px;
+      }
+      .primary {
+        display: block;
+        width: 544px;
+        height: 56px;
+        margin: 16px 0 0 0;
+        border: 0;
+        background: #f0903f;
+        color: #12131a;
+        font-size: 18px;
+        font-weight: 700;
+      }
+      /* Deliberately below WCAG AA on this surface: the extracted contrast fact
+         is expected to FAIL, which is what gives the design box a real finding
+         and `nearest_accessible` something to suggest. */
+      .muted { color: #6b6f7a; font-size: 22px; line-height: 32px; margin: 24px 0 0 0; }
+      .danger { margin: 32px 0 0 0; background: #1e2029; color: #6b6f7a; border: 0; font-size: 22px; }
+      a { color: #f0903f; }
+    </style>
+  </head>
+  <body>
+    <!--
+      SERVER-RENDERED HTML CONTAINS NO FORM, NO INPUT AND NO BUTTON — on purpose.
+
+      This page is the hermetic stand-in for the measured constraint that
+      motivated the whole feature: the OrangeHRM demo login is a Vue SPA whose
+      plain HTTP GET returns ~3.4KB with 0 forms, 0 inputs and 0 buttons. A
+      server-side HTML parser discovers nothing here either, so any inventory
+      the suite observes is proof that the page was really rendered in a
+      browser rather than string-parsed.
+    -->
+    <div id="app" data-state="loading">Loading…</div>
+
+    <script>
+      const APP = document.getElementById('app');
+
+      /**
+       * The markup is built with DOM calls, never as an HTML string: the bytes
+       * this server sends contain no "form", "input" or "button" tag text at
+       * all, so even a regex-based reader finds nothing. Only something that
+       * EXECUTED the page can see the fields.
+       */
+      function el(tag, props, children) {
+        const node = document.createElement(tag);
+        for (const [key, value] of Object.entries(props || {})) {
+          if (value === true) node.setAttribute(key, '');
+          else if (value !== null && value !== false) node.setAttribute(key, String(value));
+        }
+        for (const child of children || []) {
+          node.appendChild(typeof child === 'string' ? document.createTextNode(child) : child);
+        }
+        return node;
+      }
+
+      function field(id, type, label, attrs) {
+        return [
+          el('label', { for: id }, [label]),
+          el(
+            'input',
+            Object.assign({ id: id, name: id, type: type, required: true }, attrs),
+            [],
+          ),
+        ];
+      }
+
+      function render() {
+        APP.setAttribute('data-state', 'ready');
+        APP.textContent = '';
+
+        const form = el(
+          'form',
+          { id: 'signin', name: 'signin', action: '/api/v2/auth/login', method: 'post' },
+          [
+            ...field('username', 'text', 'Username', {
+              maxlength: 64,
+              placeholder: 'you@example.com',
+              pattern: '[^@]+@[^@]+',
+            }),
+            ...field('password', 'password', 'Password', {
+              maxlength: 72,
+              placeholder: 'Your password',
+            }),
+            el('button', { id: 'signin-submit', type: 'submit', class: 'primary' }, ['Sign in']),
+          ],
+        );
+
+        // The muted paragraph is deliberately large: the contrast fact only
+        // exists if the ink covers enough of the canvas to be extracted, and a
+        // failing fact is what gives the design box a finding to suggest a fix
+        // for (visual.nearest_accessible).
+        const help = el('p', { class: 'muted' }, [
+          'Trouble signing in with your account? ',
+          el('a', { id: 'help-link', href: '/help' }, ['Read the guide']),
+        ]);
+
+        const destructive = el(
+          'button',
+          { id: 'delete-account', type: 'button', 'data-action': 'delete', class: 'danger' },
+          ['Delete this account permanently'],
+        );
+        destructive.addEventListener('click', () =>
+          fetch('/api/v2/account', { method: 'DELETE' }),
+        );
+
+        const card = el('div', { class: 'card' }, [
+          el('h1', {}, ['Orders Platform']),
+          form,
+          help,
+          destructive,
+        ]);
+        APP.appendChild(el('div', { class: 'page' }, [card]));
+
+        loadInventory();
+      }
+
+      /**
+       * The XHR/fetch inventory the discovery sidecar must capture. Two of the
+       * three paths carry a CONCRETE id (an integer and a canonical UUID) —
+       * exactly the values the collections importer templates to `{id}`, so the
+       * suite can assert the same templating rule applies to DOM-discovered
+       * traffic instead of persisting one endpoint per row of production data.
+       */
+      function loadInventory() {
+        fetch('/api/v2/orders?status=pending&page=1');
+        fetch('/api/v2/orders/1042');
+        fetch('/api/v2/customers/3f0f8e2c-4d1a-4a53-9f4b-6a2c9b7e1d55');
+      }
+
+      // A tick after DOMContentLoaded: nothing that reads the initial HTML
+      // response body can see the form, only something that ran the script.
+      window.addEventListener('DOMContentLoaded', () => setTimeout(render, 30));
+    </script>
+  </body>
+</html>

@@ -1,8 +1,8 @@
 """Requirements Parser (TRD §4.1, FR-REQ).
 
 Pipeline: upload -> async job -> text extraction (pdf/docx/md/txt) -> deterministic
-segmentation (Arabic + English, Arabic-Indic digit normalization) -> per-segment
-`extract_requirement` LLM call -> persist Requirements with provenance.
+segmentation -> per-segment `extract_requirement` LLM call -> persist Requirements
+with provenance.
 
 Re-upload of an existing filename bumps the document version and diffs the extraction
 against the previous inventory by external_id, then content_hash (FR-REQ-06, FR-TRC-04).
@@ -20,20 +20,27 @@ from .. import jobs as jobstore
 from ..config import settings
 from ..db import SessionLocal, get_db
 from ..deps import audit, get_project_scoped, require
-from ..llm import get_provider
-from ..models import Requirement, RequirementTestCase, SourceDocument, User
+from ..llm import UNTRUSTED_NOTE, frame_untrusted, get_provider
+from ..models import Project, Requirement, RequirementTestCase, SourceDocument, User
+from .generation import try_autopilot_generation
 
 router = APIRouter()
 
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".md", ".txt"}
+ALLOWED_EXTENSIONS = {".pdf", ".docx", ".md", ".txt"}
 MAX_SEGMENTS = 500
 MIN_SEGMENT_CHARS = 15
 
 REQUIREMENT_TYPES = {"functional", "business_rule", "data", "interface", "non_functional"}
 
+# The segment comes from a file the user uploaded, so it is untrusted input: it is
+# framed by llm.frame_untrusted and introduced by UNTRUSTED_NOTE before the
+# "SEGMENT:\n" sentinel. The sentinel itself is unchanged — MockProvider splits on
+# it (app/llm/mock.py) and strips the frame, so the offline path is unaffected.
 EXTRACT_PROMPT = (
     "Extract the software requirement from this segment. "
-    "Preserve the original language.\nSEGMENT:\n"
+    "Answer in English.\n"
+    + UNTRUSTED_NOTE
+    + "SEGMENT:\n"
 )
 
 EXTRACT_SCHEMA = {
@@ -52,163 +59,21 @@ EXTRACT_SCHEMA = {
 
 # --- deterministic text utilities -------------------------------------------------
 
-_ARABIC_INDIC = "٠١٢٣٤٥٦٧٨٩"        # U+0660..U+0669
-_EXTENDED_INDIC = "۰۱۲۳۴۵۶۷۸۹"      # U+06F0..U+06F9
-_DIGIT_TRANS = {ord(ch): str(i % 10) for i, ch in enumerate(_ARABIC_INDIC + _EXTENDED_INDIC)}
-
-
-def normalize_digits(text: str) -> str:
-    """Normalize Arabic-Indic and Extended Arabic-Indic digits to ASCII (٠-٩/۰-۹ -> 0-9)."""
-    return text.translate(_DIGIT_TRANS)
-
-
-# --- Hijri dates (FR-012 AC4) -------------------------------------------------------
-#
-# Saudi requirement documents date obligations in Hijri: "يبدأ سريان الغرامة في
-# 1447/03/15هـ". A test that has to assert a deadline needs a Gregorian equivalent, and
-# a reviewer needs to see the original untouched — so recognised Hijri dates are
-# ANNOTATED in place rather than replaced.
-#
-# The conversion is the tabular (civil) Islamic calendar. It can differ from the
-# Umm al-Qura calendar by a day around month boundaries because Umm al-Qura follows
-# observation; that limitation is stated on the annotation itself, so nobody mistakes
-# an approximation for an authority.
-
-_HIJRI_MONTHS = {
-    "محرم": 1, "المحرم": 1, "صفر": 2, "ربيع الأول": 3, "ربيع اول": 3,
-    "ربيع الآخر": 4, "ربيع الثاني": 4, "جمادى الأولى": 5, "جمادى الاولى": 5,
-    "جمادى الآخرة": 6, "جمادى الثانية": 6, "رجب": 7, "شعبان": 8, "رمضان": 9,
-    "شوال": 10, "ذو القعدة": 11, "ذي القعدة": 11, "ذو الحجة": 12, "ذي الحجة": 12,
-}
-
-# 1447/03/15 هـ  ·  15-03-1447هـ  ·  1447-03-15 هجري
-_HIJRI_NUMERIC_RE = re.compile(
-    r"(?<![\d/-])(\d{1,4})[/\-](\d{1,2})[/\-](\d{1,4})\s*(هـ|هجري|هجرية|ھ)(?![\w])")
-# 15 رمضان 1446 هـ
-_HIJRI_NAMED_RE = re.compile(
-    r"(?<!\d)(\d{1,2})\s+(" + "|".join(sorted(_HIJRI_MONTHS, key=len, reverse=True)) +
-    r")\s+(\d{3,4})\s*(?:هـ|هجري|هجرية|ھ)?(?!\d)")
-
-# Julian day of 1 Muharram 1 AH. The civil epoch (Friday 16 July 622 CE) tracks
-# Umm al-Qura more closely than the astronomical one for the years this product sees.
-_HIJRI_EPOCH_JD = 1948440
-
-
-def hijri_to_gregorian(year: int, month: int, day: int) -> tuple[int, int, int] | None:
-    """Tabular Islamic calendar -> (y, m, d) Gregorian. None when out of range."""
-    if not (1 <= month <= 12 and 1 <= day <= 30 and 1 <= year <= 2000):
-        return None
-    jd = (day + ((month - 1) * 29) + (month // 2)
-          + ((month - 1) // 2 if month % 2 == 0 else 0)
-          + (year - 1) * 354 + (3 + 11 * year) // 30 + _HIJRI_EPOCH_JD - 1)
-    # Julian day -> Gregorian (Fliegel–Van Flandern)
-    l = jd + 68569
-    n = (4 * l) // 146097
-    l -= (146097 * n + 3) // 4
-    i = (4000 * (l + 1)) // 1461001
-    l = l - (1461 * i) // 4 + 31
-    j = (80 * l) // 2447
-    d = l - (2447 * j) // 80
-    l = j // 11
-    m = j + 2 - 12 * l
-    y = 100 * (n - 49) + i + l
-    return y, m, d
-
-
-def annotate_hijri_dates(text: str) -> str:
-    """Append `(≈ YYYY-MM-DD م)` after each recognised Hijri date. Idempotent: a date
-    already carrying an annotation is skipped, so re-parsing a document does not
-    stack annotations and change its content hash."""
-    if not text:
-        return text
-
-    def _fmt(y: int, m: int, d: int) -> str:
-        return f"{y:04d}-{m:02d}-{d:02d}"
-
-    def _numeric(match: re.Match) -> str:
-        a, b, cc = int(match.group(1)), int(match.group(2)), int(match.group(3))
-        # Year first when the leading group is 3-4 digits, else day first.
-        year, month, day = (a, b, cc) if a > 31 else (cc, b, a)
-        converted = hijri_to_gregorian(year, month, day)
-        if not converted:
-            return match.group(0)
-        return f"{match.group(0)} (≈ {_fmt(*converted)} م)"
-
-    def _named(match: re.Match) -> str:
-        day, month_name, year = int(match.group(1)), match.group(2), int(match.group(3))
-        converted = hijri_to_gregorian(year, _HIJRI_MONTHS[month_name], day)
-        if not converted:
-            return match.group(0)
-        return f"{match.group(0)} (≈ {_fmt(*converted)} م)"
-
-    if "(≈" in text:
-        return text
-    text = _HIJRI_NUMERIC_RE.sub(_numeric, text)
-    return _HIJRI_NAMED_RE.sub(_named, text)
-
-
-# Requirement-ID openers: REQ-1 / FR-01 / BR_2 / NFR 3 / م-1 / numbered clauses "3.1.2"
+# Requirement-ID openers: REQ-1 / FR-01 / BR_2 / NFR 3 / numbered clauses "3.1.2"
 REQ_ID_LINE = re.compile(
     r"^\s*(?:"
     r"(?:REQ|FR|BR|NFR|UC|SRS|BUS)[-_ ]?\d+(?:[.-]\d+)*"
-    r"|م[-_ ]?\d+"
     r"|\d+(?:\.\d+)+"
     r")\b[.:)\-–—]?",
     re.IGNORECASE,
 )
 HEADING_RE = re.compile(r"^\s*#{1,6}\s+\S")
-BULLET_RE = re.compile(r"^\s*(?:[-*•▪◦]|\d+[.)]|[a-hأ-ي][.)])\s+\S")
+BULLET_RE = re.compile(r"^\s*(?:[-*•▪◦]|\d+[.)]|[a-h][.)])\s+\S")
 
 
 def _content_hash(description: str, criteria: list) -> str:
     payload = (description or "") + "\n" + "\n".join(str(c) for c in (criteria or []))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-# --- acceptance criteria as addressable units (FR-013) -------------------------------
-
-def criterion_key(statement: str) -> str:
-    """Identity of a criterion = its normalised statement. Whitespace and casing
-    changes must not look like a different criterion."""
-    return hashlib.sha256(" ".join(str(statement or "").split()).lower().encode()).hexdigest()[:16]
-
-
-def assign_criteria_numbers(criteria: list, existing: dict | None = None) -> dict:
-    """statement-hash -> "AC1". A number, once given to a statement, is never reused
-    for a different one and never changes (FR-013 AC2) — the matrix, the generated
-    cases and the defect reports all cite these labels, so renumbering on re-parse
-    would silently re-point evidence at the wrong sentence.
-
-    Inserting a criterion at the top therefore appends AC(n+1) rather than shifting
-    everything down; a removed criterion retires its number permanently."""
-    numbering = dict(existing or {})
-    used = {int(v[2:]) for v in numbering.values() if str(v).startswith("AC") and v[2:].isdigit()}
-    next_number = max(used) + 1 if used else 1
-    for statement in criteria or []:
-        key = criterion_key(statement)
-        if key in numbering:
-            continue
-        numbering[key] = f"AC{next_number}"
-        next_number += 1
-    return numbering
-
-
-def numbered_criteria(requirement) -> list[dict]:
-    """[{index: "AC1", statement: "..."}] in document order, for the API and the UI."""
-    numbering = requirement.criteria_numbering or {}
-    out = []
-    for position, statement in enumerate(requirement.acceptance_criteria or [], start=1):
-        key = criterion_key(statement)
-        out.append({"index": numbering.get(key, f"AC{position}"),
-                    "statement": str(statement), "key": key})
-    return out
-
-
-def criterion_statement(requirement, index: str) -> str | None:
-    for entry in numbered_criteria(requirement):
-        if entry["index"] == index:
-            return entry["statement"]
-    return None
 
 
 # --- text extraction ---------------------------------------------------------------
@@ -224,47 +89,10 @@ def _extract_text(path: Path, ext: str) -> list[tuple[int | None, str]]:
                 "it is not installed on this server."
             )
         pages: list[tuple[int | None, str]] = []
-        try:
-            doc = fitz.open(path)
-        except Exception as exc:  # noqa: BLE001
-            raise RuntimeError(f"This PDF could not be opened: {exc}")
-        with doc:
-            if getattr(doc, "needs_pass", False):
-                raise RuntimeError(
-                    "This PDF is password-protected. Remove the encryption and upload it "
-                    "again — Traceo will not attempt to break document protection.")
+        with fitz.open(path) as doc:
             for page_index, page in enumerate(doc):
                 pages.append((page_index + 1, page.get_text("text") or ""))
-        if not any(text.strip() for _no, text in pages):
-            # SRS §4.1: image-only PDFs are rejected by name; OCR is out of scope for 2.0.
-            raise RuntimeError(
-                "This PDF contains no extractable text — it is most likely a scan. "
-                "OCR is not supported; upload a text PDF, DOCX, XLSX or Markdown file.")
         return pages
-
-    if ext == ".xlsx":
-        try:
-            from openpyxl import load_workbook
-        except ImportError:
-            raise RuntimeError(
-                "XLSX support requires the 'openpyxl' package (pip install openpyxl); "
-                "it is not installed on this server.")
-        # One "page" per worksheet, rows flattened to pipe-separated lines so the
-        # requirement-table shape survives segmentation (FR-010 AC1).
-        workbook = load_workbook(str(path), read_only=True, data_only=True)
-        sheets: list[tuple[int | None, str]] = []
-        try:
-            for index, sheet in enumerate(workbook.worksheets, start=1):
-                lines = []
-                for row in sheet.iter_rows(values_only=True):
-                    cells = [str(c).strip() for c in row if c is not None and str(c).strip()]
-                    if cells:
-                        lines.append(" | ".join(cells))
-                if lines:
-                    sheets.append((index, "\n".join(lines)))
-        finally:
-            workbook.close()
-        return sheets or [(1, "")]
 
     if ext == ".docx":
         try:
@@ -347,7 +175,8 @@ def _structure_segment(provider, segment_text: str) -> dict:
     with confidence 0.3 — it is never silently dropped."""
     try:
         result = provider.complete_json(
-            "extract_requirement", EXTRACT_PROMPT + segment_text, EXTRACT_SCHEMA)
+            "extract_requirement", EXTRACT_PROMPT + frame_untrusted(segment_text),
+            EXTRACT_SCHEMA)
         data = dict(result.data)
     except Exception:
         return {
@@ -369,6 +198,22 @@ def _structure_segment(provider, segment_text: str) -> dict:
     except (TypeError, ValueError):
         data["confidence"] = 0.5
     return data
+
+
+def confirm_all_extracted(db: Session, org_id: str, project_id: str) -> int:
+    """Flip every 'extracted' requirement to 'confirmed'; returns how many.
+
+    The single code path shared by the manual confirm_all endpoint and the
+    autopilot chain (contract 4a) — auditing is the caller's responsibility
+    because the action name differs (requirement.confirm_all vs
+    auto.requirements.confirm_all)."""
+    reqs = db.query(Requirement).filter(
+        Requirement.project_id == project_id,
+        Requirement.organisation_id == org_id,
+        Requirement.state == "extracted").all()
+    for r in reqs:
+        r.state = "confirmed"
+    return len(reqs)
 
 
 def _mark_stale(db: Session, requirement_id: str) -> None:
@@ -437,10 +282,6 @@ def _persist_requirements(db: Session, doc: SourceDocument, extractions: list[di
                 match.external_id = data["external_id"] or match.external_id
                 match.description = data["description"]
                 match.acceptance_criteria = data["acceptance_criteria"]
-                # AC numbers follow statements across re-parses (FR-013 AC2).
-                match.criteria_numbering = assign_criteria_numbers(
-                    data["acceptance_criteria"], match.criteria_numbering)
-                match.needs_criteria = not data["acceptance_criteria"]
                 match.type = data["type"]
                 match.priority = data["priority"]
                 match.confidence = data["confidence"]
@@ -457,8 +298,6 @@ def _persist_requirements(db: Session, doc: SourceDocument, extractions: list[di
                 external_id=data["external_id"],
                 description=data["description"],
                 acceptance_criteria=data["acceptance_criteria"],
-                criteria_numbering=assign_criteria_numbers(data["acceptance_criteria"]),
-                needs_criteria=not data["acceptance_criteria"],  # FR-013 AC3
                 type=data["type"],
                 priority=data["priority"],
                 state="extracted",
@@ -498,10 +337,6 @@ def _run_ingest(job, document_id: str, project_id: str, org_id: str, actor_id: s
             db.commit()
             raise
 
-        # Arabic-Indic digits first, so a Hijri date written ١٤٤٧/٠٣/١٥ is recognised
-        # by the same patterns as its ASCII form (FR-012 AC2/AC4).
-        pages = [(page_no, annotate_hijri_dates(normalize_digits(text)))
-                 for page_no, text in pages]
         segments = segment_pages(pages)
         job.message = f"Segmented document into {len(segments)} candidate requirements"
 
@@ -523,8 +358,30 @@ def _run_ingest(job, document_id: str, project_id: str, org_id: str, actor_id: s
         audit(db, org_id, actor_id, "document.parsed", "source_document", doc.id,
               {"filename": doc.filename, "version": doc.version,
                "segments": total, **counts})
+
+        result = {"document_id": doc.id, "segments": total, **counts}
+        # sessions run with autoflush=False — flush so the freshly persisted
+        # requirements are visible to the autopilot chain's queries below
+        db.flush()
+        project = db.get(Project, project_id)
+
+        # -- autopilot chain (contract 4a): confirm ALL extracted requirements,
+        #    then try the generation trigger (4b). Auto stops at draft cases —
+        #    approval and runs stay manual (BO-07).
+        automation_on = project is not None and project.automation == "auto"
+        if automation_on:
+            job.message = "Autopilot: confirming extracted requirements"
+            confirmed = confirm_all_extracted(db, org_id, project_id)
+            audit(db, org_id, actor_id, "auto.requirements.confirm_all", "project",
+                  project_id, {"count": confirmed})
+            result["auto_confirmed"] = confirmed
         db.commit()
-        return {"document_id": doc.id, "segments": total, **counts}
+
+        if automation_on:
+            gen_job_id = try_autopilot_generation(db, org_id, actor_id, project_id)
+            if gen_job_id:
+                result["generation_job_id"] = gen_job_id
+        return result
     finally:
         db.close()
 
@@ -544,10 +401,7 @@ def _req_dict(r: Requirement) -> dict:
     return {
         "id": r.id, "project_id": r.project_id, "source_document_id": r.source_document_id,
         "external_id": r.external_id, "description": r.description,
-        "acceptance_criteria": r.acceptance_criteria,
-        "criteria": numbered_criteria(r),          # FR-013 AC2 — addressable units
-        "needs_criteria": bool(r.needs_criteria),  # FR-013 AC3
-        "type": r.type,
+        "acceptance_criteria": r.acceptance_criteria, "type": r.type,
         "priority": r.priority, "state": r.state, "version": r.version,
         "source_location": r.source_location, "source_text": r.source_text,
         "confidence": r.confidence, "content_hash": r.content_hash,
@@ -585,7 +439,7 @@ async def upload_document(project_id: str, file: UploadFile = File(...),
     if not content:
         raise HTTPException(422, detail={"code": "empty_file", "message": "Uploaded file is empty."})
 
-    safename = re.sub(r"[^\w.\-؀-ۿ]", "_", filename)[:120]
+    safename = re.sub(r"[^\w.\-]", "_", filename)[:120]
     storage_key = f"{uuid.uuid4()}_{safename}"
     (settings.STORAGE_DIR / storage_key).write_bytes(content)
 
@@ -598,7 +452,7 @@ async def upload_document(project_id: str, file: UploadFile = File(...),
     doc = SourceDocument(
         organisation_id=user.organisation_id, project_id=project_id,
         filename=filename, mime_type=file.content_type or "", size=len(content),
-        storage_key=storage_key, language=project.language,
+        storage_key=storage_key, language="en",
         version=prior_max + 1, parse_status="pending",
     )
     db.add(doc)
@@ -608,57 +462,6 @@ async def upload_document(project_id: str, file: UploadFile = File(...),
     job = jobstore.submit(
         "ingest", lambda j: _run_ingest(j, doc_id, project_id, org_id, actor_id))
     return {"job_id": job.id, "document_id": doc_id}
-
-
-def ingest_text(db: Session, project, filename: str, text: str, actor_id: str,
-                mime_type: str = "text/markdown") -> tuple[str, str]:
-    """Store `text` as a source document and queue the same parse pipeline an upload
-    uses. Shared by the Confluence import (FR-011 AC2) and the paste-requirements
-    fallback (FR-010 AC4). Returns (job_id, document_id).
-
-    Re-ingesting the same `filename` bumps the version, so the existing diff logic
-    detects changed content and marks affected requirements stale (FR-011 AC3)."""
-    content = (text or "").encode("utf-8")
-    safename = re.sub(r"[^\w.\-؀-ۿ]", "_", filename)[:120]
-    storage_key = f"{uuid.uuid4()}_{safename}"
-    (settings.STORAGE_DIR / storage_key).write_bytes(content)
-
-    prior_max = db.query(func.max(SourceDocument.version)).filter(
-        SourceDocument.project_id == project.id,
-        SourceDocument.organisation_id == project.organisation_id,
-        SourceDocument.filename == filename,
-    ).scalar() or 0
-
-    doc = SourceDocument(
-        organisation_id=project.organisation_id, project_id=project.id,
-        filename=filename, mime_type=mime_type, size=len(content),
-        storage_key=storage_key, language=project.language,
-        version=prior_max + 1, parse_status="pending")
-    db.add(doc)
-    db.commit()
-
-    doc_id, org_id, project_id = doc.id, project.organisation_id, project.id
-    job = jobstore.submit(
-        "ingest", lambda j: _run_ingest(j, doc_id, project_id, org_id, actor_id))
-    return job.id, doc_id
-
-
-@router.post("/projects/{project_id}/requirements/paste", status_code=202)
-def paste_requirements(project_id: str, body: dict = Body(...),
-                       user: User = Depends(require("upload_documents")),
-                       db: Session = Depends(get_db)):
-    """FR-010 AC4 — the escape hatch offered by the zero-requirements empty state."""
-    project = get_project_scoped(project_id, user, db)
-    text = str(body.get("text") or "").strip()
-    if not text:
-        raise HTTPException(422, detail={"code": "empty_text",
-                                         "message": "Provide the requirement text to parse."})
-    title = str(body.get("title") or "pasted-requirements").strip()[:100]
-    job_id, doc_id = ingest_text(db, project, f"{title}.md", text, user.id, "text/plain")
-    audit(db, user.organisation_id, user.id, "document.pasted", "source_document", doc_id,
-          {"title": title, "chars": len(text)})
-    db.commit()
-    return {"job_id": job_id, "document_id": doc_id}
 
 
 @router.get("/projects/{project_id}/documents")
@@ -730,9 +533,6 @@ def update_requirement(requirement_id: str, body: dict = Body(...),
             and body["acceptance_criteria"] != req.acceptance_criteria:
         changes["acceptance_criteria"] = True
         req.acceptance_criteria = body["acceptance_criteria"]
-        req.criteria_numbering = assign_criteria_numbers(
-            body["acceptance_criteria"], req.criteria_numbering)
-        req.needs_criteria = not body["acceptance_criteria"]
         content_changed = True
     if body.get("external_id") is not None and body["external_id"] != req.external_id:
         changes["external_id"] = {"from": req.external_id, "to": body["external_id"]}
@@ -783,8 +583,6 @@ def create_requirement(body: dict = Body(...),
         source_document_id=None,
         external_id=str(body.get("external_id") or "").strip(),
         description=description, acceptance_criteria=criteria,
-        criteria_numbering=assign_criteria_numbers(criteria),
-        needs_criteria=not criteria,
         type=rtype, priority=str(body.get("priority") or "medium"),
         state="confirmed",  # human-authored — no extraction review needed
         version=1, source_location={}, source_text=description,
@@ -817,13 +615,8 @@ def confirm_all_requirements(project_id: str,
                              user: User = Depends(require("edit_requirements")),
                              db: Session = Depends(get_db)):
     get_project_scoped(project_id, user, db)
-    reqs = db.query(Requirement).filter(
-        Requirement.project_id == project_id,
-        Requirement.organisation_id == user.organisation_id,
-        Requirement.state == "extracted").all()
-    for r in reqs:
-        r.state = "confirmed"
+    count = confirm_all_extracted(db, user.organisation_id, project_id)
     audit(db, user.organisation_id, user.id, "requirement.confirm_all",
-          "project", project_id, {"count": len(reqs)})
+          "project", project_id, {"count": count})
     db.commit()
-    return {"confirmed": len(reqs)}
+    return {"confirmed": count}

@@ -1,0 +1,2 @@
+# Served at the site root by Next.js. Kept in git so the container build's
+# `COPY /app/public ./public` has something to copy even when empty.

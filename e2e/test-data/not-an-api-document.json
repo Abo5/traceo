@@ -1,0 +1,14 @@
+{
+  "_comment": "Reference seed for the import refusal path (e2e/tests/collections.spec.ts). Valid JSON, and deliberately NONE of the five supported API documents: no `openapi`/`swagger` version marker, no `paths`, no `info.schema`, no `log.entries`, no `_type: export`. Uploading it must yield 422 {code: 'invalid_spec'} whose `errors` list NAMES the formats that would be accepted. A malformed file would instead be refused as `parse_error` — a different, already-covered contract.",
+  "name": "team-notes",
+  "version": 3,
+  "owner": "platform",
+  "endpoints": [
+    "we keep a list here but this file is not an API specification",
+    "the importer must not guess its way into treating it as one"
+  ],
+  "settings": {
+    "retention_days": 30,
+    "notify": true
+  }
+}

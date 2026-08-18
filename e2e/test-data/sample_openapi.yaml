@@ -1,0 +1,335 @@
+openapi: 3.0.3
+info:
+  title: "Orders Platform API"
+  version: "2.0.0"
+  description: >-
+    The Orders Platform API: login, customer management, orders and invoices.
+    Every endpoint is protected by a Bearer token except login.
+    Paths here are relative — the environment base URL carries the /api/v2 prefix.
+
+servers:
+  - url: http://localhost:9000/api/v2
+    description: "Test environment — the system under test (Demo SUT)"
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: auth
+    description: "Authentication and login"
+  - name: customers
+    description: "Customer management"
+  - name: orders
+    description: "Order management"
+  - name: invoices
+    description: "Invoices"
+
+paths:
+  /auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: "Log in with a mobile number and a password"
+      description: "The only unprotected endpoint — returns an access token for valid credentials."
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, password]
+              properties:
+                phone:
+                  type: string
+                  pattern: '^05[0-9]{8}$'
+                  minLength: 10
+                  maxLength: 10
+                  description: "Mobile number: starts with 05 and is exactly 10 digits"
+                password:
+                  type: string
+                  description: "Account password"
+      responses:
+        '200':
+          description: "Logged in successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                    description: "Access token used in the Authorization header"
+        '401':
+          description: "Wrong mobile number or password"
+
+  /customers:
+    post:
+      tags: [customers]
+      operationId: createCustomer
+      summary: "Create a new customer"
+      description: "Validates the mobile number format, the email format and the customer age before creating."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, phone, email, age]
+              properties:
+                name:
+                  type: string
+                  minLength: 2
+                  description: "Customer name (any script)"
+                phone:
+                  type: string
+                  pattern: '^05[0-9]{8}$'
+                  description: "Mobile number: starts with 05 and is exactly 10 digits"
+                email:
+                  type: string
+                  format: email
+                  description: "A well-formed email address"
+                age:
+                  type: integer
+                  minimum: 18
+                  maximum: 120
+                  description: "Customer age between 18 and 120 (inclusive bounds)"
+      responses:
+        '201':
+          description: "Customer created"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '422':
+          description: "Invalid input — phone, email or age outside its constraints"
+
+  /customers/{id}:
+    get:
+      tags: [customers]
+      operationId: getCustomer
+      summary: "Fetch a customer by id"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: "Customer id, e.g. CUST-001"
+          schema:
+            type: string
+      responses:
+        '200':
+          description: "Customer record"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '404':
+          description: "Customer not found"
+
+  /orders:
+    get:
+      tags: [orders]
+      operationId: listOrders
+      summary: "List orders with status filtering and pagination"
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: "Filter orders by status — any other value is rejected with 422"
+          schema:
+            type: string
+            enum: [pending, confirmed, dispatched, delivered, cancelled]
+        - name: page
+          in: query
+          required: false
+          description: "Page number — starts at 1"
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+      responses:
+        '200':
+          description: "A page of orders"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    description: "Orders matching the filter"
+                    items:
+                      $ref: '#/components/schemas/Order'
+                  page:
+                    type: integer
+                    description: "Current page number"
+        '422':
+          description: "Unknown status or a page number below 1"
+    post:
+      tags: [orders]
+      operationId: createOrder
+      summary: "Create a new order"
+      description: "An order requires at least one item and a total greater than zero."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customer_id, items, total]
+              properties:
+                customer_id:
+                  type: string
+                  description: "Id of the customer placing the order"
+                items:
+                  type: array
+                  minItems: 1
+                  description: "Order items — at least one"
+                  items:
+                    type: object
+                    required: [sku, qty]
+                    properties:
+                      sku:
+                        type: string
+                        description: "Item sku"
+                      qty:
+                        type: integer
+                        minimum: 1
+                        description: "Quantity"
+                total:
+                  type: number
+                  minimum: 0.01
+                  description: "Order total — must be greater than zero"
+      responses:
+        '201':
+          description: "Order created in state pending"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '422':
+          description: "Empty items or a non-positive total"
+
+  /orders/{id}/cancel:
+    post:
+      tags: [orders]
+      operationId: cancelOrder
+      summary: "Cancel an order before dispatch"
+      description: "Cancellation is allowed before dispatch only — a dispatched or delivered order is refused."
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: "Order id, e.g. ORD-1001"
+          schema:
+            type: string
+      responses:
+        '200':
+          description: "Order cancelled"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  status:
+                    type: string
+                    description: "State after cancellation: cancelled"
+                  message:
+                    type: string
+                    description: "Confirmation message"
+        '409':
+          description: "A dispatched or delivered order cannot be cancelled"
+
+  /invoices/{id}:
+    get:
+      tags: [invoices]
+      operationId: getInvoice
+      summary: "Fetch an invoice by id"
+      description: "The invoice returns the customer name in valid UTF-8, rendered left to right."
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: "Invoice id, e.g. INV-2001"
+          schema:
+            type: string
+      responses:
+        '200':
+          description: "Invoice record"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  customer_name:
+                    type: string
+                    description: "Customer name in valid UTF-8, any script"
+                  total:
+                    type: number
+                    description: "Invoice total"
+                  rendered_direction:
+                    type: string
+                    enum: [ltr]
+                    description: "Rendering direction of the invoice — always ltr"
+        '404':
+          description: "Invoice not found"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: "A Bearer token is required on every endpoint except login /auth/login"
+
+  schemas:
+    Customer:
+      type: object
+      description: "Customer record"
+      properties:
+        id:
+          type: string
+          description: "Customer id"
+        name:
+          type: string
+          description: "Customer name"
+        phone:
+          type: string
+          description: "Mobile number"
+        email:
+          type: string
+          description: "Email address"
+        age:
+          type: integer
+          description: "Age"
+
+    Order:
+      type: object
+      description: "Order record"
+      properties:
+        id:
+          type: string
+          description: "Order id"
+        customer_id:
+          type: string
+          description: "Customer id"
+        status:
+          type: string
+          enum: [pending, confirmed, dispatched, delivered, cancelled]
+          description: "Order status"
+        items:
+          type: array
+          description: "Order items"
+          items:
+            type: object
+            properties:
+              sku:
+                type: string
+              qty:
+                type: integer
+        total:
+          type: number
+          description: "Order total"

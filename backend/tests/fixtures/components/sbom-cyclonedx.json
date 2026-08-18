@@ -1,0 +1,47 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:3e671687-395b-41f5-a30f-a58921a69b79",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "customers-api",
+      "version": "2.0.0"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "express",
+      "version": "4.18.2",
+      "purl": "pkg:npm/express@4.18.2"
+    },
+    {
+      "type": "library",
+      "group": "@angular",
+      "name": "core",
+      "version": "16.2.0",
+      "purl": "pkg:npm/@angular/core@16.2.0",
+      "cpe": "cpe:2.3:a:angular:angular:16.2.0:*:*:*:*:*:*:*"
+    },
+    {
+      "type": "framework",
+      "name": "fastapi",
+      "version": "0.111.0",
+      "purl": "pkg:pypi/fastapi@0.111.0",
+      "components": [
+        {
+          "type": "library",
+          "name": "starlette",
+          "version": "0.37.2",
+          "purl": "pkg:pypi/starlette@0.37.2"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "vendored-blob"
+    }
+  ]
+}

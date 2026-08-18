@@ -1,6 +1,6 @@
-"""منصة الطلبات — Demo System Under Test for Traceo.
+"""Orders Platform — Demo System Under Test for Traceo.
 
-A self-contained Arabic e-commerce orders platform mounted under /api/v2.
+A self-contained e-commerce orders platform mounted under /api/v2.
 Run from demo/sut:  uvicorn main:app --port 9000
 
 INTENTIONAL BUGS (for demo bug-discovery):
@@ -15,7 +15,7 @@ import uuid
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
-app = FastAPI(title="منصة الطلبات — Orders Platform (Demo SUT)", version="2.0.0")
+app = FastAPI(title="Orders Platform (Demo SUT)", version="2.0.0")
 
 DEMO_PHONE = "0512345678"
 DEMO_PASSWORD = "demo"
@@ -23,12 +23,12 @@ ORDER_STATUSES = {"pending", "confirmed", "dispatched", "delivered", "cancelled"
 
 # ---------------------------------------------------------------- seed data
 CUSTOMERS: dict[str, dict] = {
-    "CUST-001": {"id": "CUST-001", "name": "أحمد العتيبي", "phone": "0512345678",
-                 "email": "ahmed@example.sa", "age": 34},
-    "CUST-002": {"id": "CUST-002", "name": "سارة القحطاني", "phone": "0559876543",
-                 "email": "sara@example.sa", "age": 27},
-    "CUST-003": {"id": "CUST-003", "name": "محمد الشمري", "phone": "0533334444",
-                 "email": "mohammed@example.sa", "age": 45},
+    "CUST-001": {"id": "CUST-001", "name": "Alice Hartley", "phone": "0512345678",
+                 "email": "alice@example.com", "age": 34},
+    "CUST-002": {"id": "CUST-002", "name": "Bruno Oliveira", "phone": "0559876543",
+                 "email": "bruno@example.com", "age": 27},
+    "CUST-003": {"id": "CUST-003", "name": "José Ångström", "phone": "0533334444",
+                 "email": "jose@example.com", "age": 45},
 }
 
 ORDERS: dict[str, dict] = {
@@ -45,10 +45,12 @@ ORDERS: dict[str, dict] = {
 }
 
 INVOICES: dict[str, dict] = {
-    "INV-2001": {"id": "INV-2001", "customer_name": "محمد الشمري", "total": 59.99,
-                 "rendered_direction": "rtl"},
-    "INV-2002": {"id": "INV-2002", "customer_name": "محمد الشمري", "total": 320.75,
-                 "rendered_direction": "rtl"},
+    # The non-ASCII name is deliberate: it is what the UTF-8 round-trip
+    # requirement (REQ-010) is checked against.
+    "INV-2001": {"id": "INV-2001", "customer_name": "José Ångström", "total": 59.99,
+                 "encoding": "utf-8"},
+    "INV-2002": {"id": "INV-2002", "customer_name": "José Ångström", "total": 320.75,
+                 "encoding": "utf-8"},
 }
 
 
@@ -60,7 +62,7 @@ def _err(status: int, code: str, message: str):
 def require_token(authorization: str = Header(default="")):
     """Any non-empty bearer token is accepted on protected routes."""
     if not authorization.startswith("Bearer ") or not authorization.removeprefix("Bearer ").strip():
-        _err(401, "unauthenticated", "مطلوب رمز دخول — Bearer token required")
+        _err(401, "unauthenticated", "A Bearer token is required")
 
 
 # ---------------------------------------------------------------- schemas
@@ -91,7 +93,7 @@ secured = APIRouter(prefix="/api/v2", dependencies=[Depends(require_token)])
 def login(body: LoginIn):
     if body.phone == DEMO_PHONE and body.password == DEMO_PASSWORD:
         return {"access_token": f"sut-{uuid.uuid4().hex}"}
-    _err(401, "invalid_credentials", "رقم الجوال أو كلمة المرور غير صحيحة")
+    _err(401, "invalid_credentials", "Phone number or password is incorrect")
 
 
 @secured.post("/customers", status_code=201)
@@ -100,11 +102,11 @@ def create_customer(body: CustomerIn):
     # INTENTIONAL BUG #1: 11-digit phones starting with 05 are wrongly accepted.
     buggy_phone = re.fullmatch(r"05[0-9]{9}", body.phone)
     if not (valid_phone or buggy_phone):
-        _err(422, "invalid_phone", "رقم الجوال يجب أن يطابق الصيغة 05XXXXXXXX")
+        _err(422, "invalid_phone", "Phone number must match the format 05XXXXXXXX")
     if body.age < 18 or body.age > 120:
-        _err(422, "invalid_age", "العمر يجب أن يكون بين 18 و 120")
+        _err(422, "invalid_age", "Age must be between 18 and 120")
     if "@" not in body.email:
-        _err(422, "invalid_email", "البريد الإلكتروني غير صالح")
+        _err(422, "invalid_email", "Email address is not valid")
     cid = f"CUST-{uuid.uuid4().hex[:6].upper()}"
     customer = {"id": cid, "name": body.name, "phone": body.phone,
                 "email": body.email, "age": body.age}
@@ -116,7 +118,7 @@ def create_customer(body: CustomerIn):
 def get_customer(customer_id: str):
     customer = CUSTOMERS.get(customer_id)
     if not customer:
-        _err(404, "not_found", "العميل غير موجود")
+        _err(404, "not_found", "Customer not found")
     return customer
 
 
@@ -136,9 +138,9 @@ def delete_customer(customer_id: str):
 def list_orders(status: str | None = None, page: int = 1):
     if status is not None and status not in ORDER_STATUSES:
         _err(422, "invalid_status",
-             f"حالة الطلب يجب أن تكون إحدى: {', '.join(sorted(ORDER_STATUSES))}")
+             f"Order status must be one of: {', '.join(sorted(ORDER_STATUSES))}")
     if page < 1:
-        _err(422, "invalid_page", "رقم الصفحة يجب أن يكون 1 أو أكثر")
+        _err(422, "invalid_page", "Page number must be 1 or greater")
     items = [o for o in ORDERS.values() if status is None or o["status"] == status]
     return {"items": items, "page": page}
 
@@ -146,9 +148,9 @@ def list_orders(status: str | None = None, page: int = 1):
 @secured.post("/orders", status_code=201)
 def create_order(body: OrderIn):
     if not body.items:
-        _err(422, "empty_items", "الطلب يجب أن يحتوي على عنصر واحد على الأقل")
+        _err(422, "empty_items", "An order must contain at least one item")
     if body.total <= 0:
-        _err(422, "invalid_total", "إجمالي الطلب يجب أن يكون أكبر من صفر")
+        _err(422, "invalid_total", "Order total must be greater than zero")
     oid = f"ORD-{uuid.uuid4().hex[:6].upper()}"
     order = {"id": oid, "customer_id": body.customer_id, "status": "pending",
              "items": body.items, "total": body.total}
@@ -160,19 +162,19 @@ def create_order(body: OrderIn):
 def cancel_order(order_id: str):
     order = ORDERS.get(order_id)
     if not order:
-        _err(404, "not_found", "الطلب غير موجود")
+        _err(404, "not_found", "Order not found")
     # INTENTIONAL BUG #2: 'dispatched' orders are wrongly cancellable (should be 409).
     if order["status"] in ("pending", "confirmed", "dispatched"):
         order["status"] = "cancelled"
-        return {"id": order["id"], "status": "cancelled", "message": "تم إلغاء الطلب"}
-    _err(409, "not_cancellable", f"لا يمكن إلغاء طلب في حالة {order['status']}")
+        return {"id": order["id"], "status": "cancelled", "message": "Order cancelled"}
+    _err(409, "not_cancellable", f"An order in state {order['status']} cannot be cancelled")
 
 
 @secured.get("/invoices/{invoice_id}")
 def get_invoice(invoice_id: str):
     invoice = INVOICES.get(invoice_id)
     if not invoice:
-        _err(404, "not_found", "الفاتورة غير موجودة")
+        _err(404, "not_found", "Invoice not found")
     return invoice
 
 
@@ -182,7 +184,7 @@ app.include_router(secured)
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "app": "منصة الطلبات"}
+    return {"status": "ok", "app": "Orders Platform"}
 
 
 if __name__ == "__main__":

@@ -1,13 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { api, ApiError } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
+import { API, api, getToken } from "@/lib/api";
+import { useCan } from "@/lib/permissions";
 import {
   Badge,
   Button,
   Card,
+  DateTimeText,
   Empty,
   Field,
   Input,
@@ -16,748 +17,671 @@ import {
   PageHeader,
   RefChip,
   Select,
-  Table,
 } from "@/components/ui";
 
-type Integration = {
+type Webhook = {
   id: string;
-  type: "jira" | "xray" | "confluence" | "slack";
   name: string;
-  project_id: string | null;
-  config: Record<string, any>;
-  secret_set: boolean;
-  secret_rotated_at: string | null;
-  state: "configured" | "connected" | "error";
-  last_error: string | null;
-  last_checked_at: string | null;
-  alert_level: string;
+  url: string;
+  enabled: boolean;
+  last_status?: number | null;
+  last_fired_at?: string | null;
+  secret_set?: boolean;
 };
 
 type Gate = {
-  enabled: boolean;
-  min_coverage_pct: number;
-  max_new_failures: number;
-  block_on: string;
+  pass: boolean;
+  coverage_pct?: number;
+  open_defects?: { total?: number; critical?: number };
+  latest_run?: { id?: string; display_id?: number | string; counts?: Record<string, number> };
+  breaches?: { check: string; limit: number | string; actual: number | string; requirement_external_ids?: string[] }[];
 };
 
-type Schedule = {
-  id: string;
-  environment_id: string;
-  cron: string;
-  timezone: string;
-  branch: string;
-  enabled: boolean;
-  next_due_at: string | null;
-  last_fired_at: string | null;
-};
+type Run = { id: string; display_id?: number | string; state?: string };
 
-type Env = { id: string; name: string };
+function asList(x: any): any[] {
+  if (Array.isArray(x)) return x;
+  return x?.items ?? x?.runs ?? [];
+}
 
-/** Which non-secret fields each integration type needs, and which key is the secret. */
-const TYPE_FIELDS: Record<string, { config: string[]; secret: string | null }> = {
-  jira: { config: ["base_url", "project_key", "email", "issue_type"], secret: "api_token" },
-  xray: { config: ["base_url"], secret: "api_token" },
-  confluence: { config: ["base_url", "space_key", "email"], secret: "api_token" },
-  slack: { config: ["webhook_url"], secret: "webhook_url" },
-};
+async function downloadFile(path: string, filename: string): Promise<void> {
+  const token = getToken();
+  const res = await fetch(API + path, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
-const STATE_TONE = { connected: "success", error: "error", configured: "muted" } as const;
+function CopyButton({ text, label, copied }: { text: string; label: string; copied: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <Button
+      variant="secondary"
+      size="sm"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setDone(true);
+          setTimeout(() => setDone(false), 1600);
+        } catch {
+          /* clipboard unavailable */
+        }
+      }}
+    >
+      {done ? copied : label}
+    </Button>
+  );
+}
 
 export default function IntegrationsPage() {
-  const { id: projectId } = useParams<{ id: string }>();
-  const { lang } = useLang();
-  const ar = lang === "ar";
+  const { id } = useParams<{ id: string }>();
+  const canDo = useCan();
 
-  const L = ar
-    ? {
-        title: "التكاملات",
-        sub: "أوصل Traceo بالأدوات التي يعمل عليها الفريق — Jira وXray وConfluence وSlack — واضبط بوابة التسليم",
-        add: "تكامل جديد",
-        edit: "تعديل التكامل",
-        type: "النوع",
-        name: "الاسم",
-        state: "الحالة",
-        lastChecked: "آخر فحص",
-        actions: "إجراءات",
-        check: "فحص الاتصال",
-        checking: "جارٍ الفحص…",
-        del: "حذف",
-        save: "حفظ",
-        cancel: "إلغاء",
-        create: "إنشاء",
-        secret: "السر",
-        secretHint: "يُحفظ مشفّراً ولا يُعرض بعد الحفظ — اتركه فارغاً للإبقاء على السر الحالي",
-        secretSet: "سر محفوظ",
-        rotated: "آخر تدوير",
-        alertLevel: "مستوى التنبيه",
-        alertLevels: { all: "كل التشغيلات", failures: "الإخفاقات فقط", regressions: "الانحدارات فقط" } as Record<string, string>,
-        empty: "لا توجد تكاملات بعد",
-        emptyHint: "أضف Jira لتصدير العيوب، أو Confluence لاستيراد المتطلبات، أو Slack للتنبيهات",
-        gate: "بوابة التسليم",
-        gateSub: "تفشل خطوة CI عندما تنخفض التغطية أو ينحدر متطلب",
-        gateEnabled: "مفعّلة",
-        minCoverage: "الحد الأدنى للتغطية %",
-        maxNewFailures: "أقصى إخفاقات جديدة",
-        blockOn: "المنع عند",
-        blockOnOpts: { any: "أي إخفاق", high_priority: "متطلب عالي الأولوية", none: "لا شيء" } as Record<string, string>,
-        gateSaved: "حُفظت السياسة",
-        ci: "خطوة CI",
-        ciHint: "انسخ هذه الخطوة إلى خط الأنابيب — تحتاج رمز API من الإعدادات",
-        schedules: "التشغيل المجدول",
-        schedulesSub: "cron لكل بيئة — التوقيت الافتراضي بتوقيت السعودية",
-        cron: "تعبير cron",
-        timezone: "المنطقة الزمنية",
-        branch: "الفرع",
-        environment: "البيئة",
-        nextDue: "التشغيل القادم",
-        addSchedule: "جدولة جديدة",
-        enabled: "مفعّل",
-        disabled: "معطّل",
-        confluence: "استيراد من Confluence",
-        loadPages: "عرض الصفحات",
-        importSelected: "استيراد المحدد",
-        pages: "الصفحات",
-        noPages: "لا توجد صفحات في هذا الفضاء",
-        imported: "بدأ استيراد الصفحات المحددة",
-        loading: "جارٍ التحميل…",
-      }
-    : {
-        title: "Integrations",
-        sub: "Connect Traceo to where the team already works — Jira, Xray, Confluence, Slack — and set the delivery gate",
-        add: "New integration",
-        edit: "Edit integration",
-        type: "Type",
-        name: "Name",
-        state: "State",
-        lastChecked: "Last checked",
-        actions: "Actions",
-        check: "Check connection",
-        checking: "Checking…",
-        del: "Delete",
-        save: "Save",
-        cancel: "Cancel",
-        create: "Create",
-        secret: "Secret",
-        secretHint: "Stored encrypted and never shown again — leave blank to keep the current one",
-        secretSet: "Secret stored",
-        rotated: "Last rotated",
-        alertLevel: "Alert level",
-        alertLevels: { all: "All runs", failures: "Failures only", regressions: "Regressions only" } as Record<string, string>,
-        empty: "No integrations yet",
-        emptyHint: "Add Jira to export defects, Confluence to import requirements, or Slack for alerts",
-        gate: "Delivery gate",
-        gateSub: "Fail the pipeline when coverage drops or a requirement regresses",
-        gateEnabled: "Enabled",
-        minCoverage: "Minimum coverage %",
-        maxNewFailures: "Max new failures",
-        blockOn: "Block on",
-        blockOnOpts: { any: "Any failure", high_priority: "High-priority requirement", none: "Nothing" } as Record<string, string>,
-        gateSaved: "Policy saved",
-        ci: "CI step",
-        ciHint: "Copy this into your pipeline — it needs an API token from Settings",
-        schedules: "Scheduled runs",
-        schedulesSub: "Cron per environment — Arabia Standard Time by default",
-        cron: "Cron expression",
-        timezone: "Timezone",
-        branch: "Branch",
-        environment: "Environment",
-        nextDue: "Next due",
-        addSchedule: "New schedule",
-        enabled: "Enabled",
-        disabled: "Disabled",
-        confluence: "Import from Confluence",
-        loadPages: "List pages",
-        importSelected: "Import selected",
-        pages: "Pages",
-        noPages: "No pages in this space",
-        imported: "Import started for the selected pages",
-        loading: "Loading…",
-      };
+  const L = {
+    title: "Integrations",
+    sub: "Connect Traceo to your team's tools — notifications, CI/CD gate and Jira/Xray export",
+    loading: "Loading…",
+    retry: "Retry",
+    loadError: "Failed to load",
+    whTitle: "Webhooks",
+    whSub: "Notify on run completion — works with Slack Incoming Webhooks",
+    whSlackHint: "Tip: paste a Slack Incoming Webhook URL to get a run summary posted to your channel",
+    newWh: "Add webhook",
+    editWh: "Edit webhook",
+    whName: "Name",
+    whUrl: "URL",
+    whSecret: "Secret (optional)",
+    whSecretHint: "Used for the HMAC-SHA256 X-Traceo-Signature header — leave blank to keep the current one",
+    enabled: "Enabled",
+    disabled: "Disabled",
+    test: "Test",
+    testing: "Testing…",
+    lastStatus: "Last status",
+    lastFired: "Last fired",
+    edit: "Edit",
+    del: "Delete",
+    delWhTitle: "Delete webhook",
+    delWhConfirm: "This webhook will be permanently deleted. Continue?",
+    confirm: "Confirm",
+    cancel: "Cancel",
+    create: "Create",
+    save: "Save",
+    saving: "Saving…",
+    whEmpty: "No webhooks yet",
+    whEmptyHint: "Add a URL to get notified when runs complete",
+    gateTitle: "CI/CD Gate",
+    gateSub: "Block merges when coverage drops or critical defects exist",
+    minCoverage: "Min coverage %",
+    maxCritical: "Max critical defects",
+    checkGate: "Check gate",
+    checking: "Checking…",
+    gatePass: "Gate passing ✓",
+    gateFail: "Gate blocking the merge",
+    coverage: "Coverage",
+    criticalDefects: "critical defects",
+    breach: "Breach",
+    limit: "Limit",
+    actual: "Actual",
+    curlHint: "Add this command to your CI pipeline — create an API key on the Settings page",
+    copy: "Copy",
+    copied: "Copied ✓",
+    xrayTitle: "Jira / Xray",
+    xraySub: "Export run results as Xray import or a Jira-importable defects file",
+    pickRun: "Pick a run…",
+    run: "Run",
+    dlXray: "Download xray.json",
+    dlDefects: "Download defects.csv",
+    dlError: "Download failed",
+    noRuns: "No runs yet — execute approved cases first",
+    soon: "Coming soon",
+    confluenceTitle: "Confluence",
+    confluenceSub: "Pull requirement pages directly instead of uploading files",
+    jiraSyncTitle: "Jira sync",
+    jiraSyncSub: "Live two-way sync with Jira projects",
+  };
 
-  const [rows, setRows] = useState<Integration[]>([]);
-  const [envs, setEnvs] = useState<Env[]>([]);
+  // ---- webhooks ----
+  const [hooks, setHooks] = useState<Webhook[]>([]);
+  const [whLoading, setWhLoading] = useState(true);
+  const [whError, setWhError] = useState<string | null>(null);
+  const [whModalOpen, setWhModalOpen] = useState(false);
+  const [whEditing, setWhEditing] = useState<Webhook | null>(null);
+  const [whForm, setWhForm] = useState({ name: "", url: "", secret: "", enabled: true });
+  const [whBusy, setWhBusy] = useState(false);
+  const [whFormError, setWhFormError] = useState<string | null>(null);
+  const [whDeleting, setWhDeleting] = useState<Webhook | null>(null);
+  const [whDeleteBusy, setWhDeleteBusy] = useState(false);
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; status?: number; error?: string }>>({});
+
+  // ---- gate ----
+  const [minCoverage, setMinCoverage] = useState("80");
+  const [maxCritical, setMaxCritical] = useState("0");
   const [gate, setGate] = useState<Gate | null>(null);
-  const [schedules, setSchedules] = useState<Schedule[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [gateLoading, setGateLoading] = useState(false);
+  const [gateError, setGateError] = useState<string | null>(null);
 
-  const [modal, setModal] = useState<{ open: boolean; editing: Integration | null }>({
-    open: false,
-    editing: null,
-  });
-  const [form, setForm] = useState<Record<string, string>>({ type: "jira", name: "" });
-  const [scheduleModal, setScheduleModal] = useState(false);
-  const [scheduleForm, setScheduleForm] = useState({
-    environment_id: "",
-    cron: "0 2 * * *",
-    timezone: "Asia/Riyadh",
-    branch: "",
-  });
-  const [pages, setPages] = useState<{ integration: string; items: any[] } | null>(null);
-  const [selectedPages, setSelectedPages] = useState<string[]>([]);
+  // ---- xray ----
+  const [runs, setRuns] = useState<Run[]>([]);
+  const [runsError, setRunsError] = useState<string | null>(null);
+  const [runId, setRunId] = useState("");
+  const [dlBusy, setDlBusy] = useState<string | null>(null);
+  const [dlError, setDlError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  function loadHooks() {
+    setWhLoading(true);
+    setWhError(null);
+    api(`/projects/${id}/webhooks`)
+      .then((r) => setHooks(asList(r)))
+      .catch((e) => setWhError(e?.message || String(e)))
+      .finally(() => setWhLoading(false));
+  }
+
+  function loadRuns() {
+    setRunsError(null);
+    api(`/projects/${id}/runs`)
+      .then((r) => {
+        const list = asList(r);
+        setRuns(list);
+        if (list.length > 0) setRunId((prev) => prev || list[0].id);
+      })
+      .catch((e) => setRunsError(e?.message || String(e)));
+  }
+
+  async function loadGate() {
+    setGateLoading(true);
+    setGateError(null);
     try {
-      const [ints, gatePolicy, scheds, envList] = await Promise.all([
-        api<{ integrations: Integration[] }>(`/integrations?project_id=${projectId}`),
-        api<Gate>(`/projects/${projectId}/gate`),
-        api<{ schedules: Schedule[] }>(`/projects/${projectId}/schedules`),
-        api<any>(`/projects/${projectId}/environments`),
-      ]);
-      setRows(ints.integrations ?? []);
-      setGate(gatePolicy);
-      setSchedules(scheds.schedules ?? []);
-      setEnvs(Array.isArray(envList) ? envList : envList?.environments ?? []);
+      const params = new URLSearchParams();
+      if (minCoverage.trim()) params.set("min_coverage", minCoverage.trim());
+      if (maxCritical.trim()) params.set("max_critical", maxCritical.trim());
+      const g = await api<Gate>(`/projects/${id}/gate?${params.toString()}`);
+      setGate(g);
     } catch (e: any) {
-      setError(e instanceof ApiError ? e.message : String(e));
+      setGateError(e?.message || String(e));
     } finally {
-      setLoading(false);
+      setGateLoading(false);
     }
-  }, [projectId]);
+  }
 
   useEffect(() => {
-    load();
-  }, [load]);
+    loadHooks();
+    loadRuns();
+    loadGate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
-  function openCreate() {
-    setForm({ type: "jira", name: "" });
-    setModal({ open: true, editing: null });
+  function openWhCreate() {
+    setWhEditing(null);
+    setWhForm({ name: "", url: "", secret: "", enabled: true });
+    setWhFormError(null);
+    setWhModalOpen(true);
   }
 
-  function openEdit(row: Integration) {
-    const next: Record<string, string> = { type: row.type, name: row.name };
-    for (const key of TYPE_FIELDS[row.type].config) next[key] = row.config?.[key] ?? "";
-    next.alert_level = row.alert_level;
-    setForm(next);
-    setModal({ open: true, editing: row });
+  function openWhEdit(w: Webhook) {
+    setWhEditing(w);
+    setWhForm({ name: w.name, url: w.url, secret: "", enabled: w.enabled });
+    setWhFormError(null);
+    setWhModalOpen(true);
   }
 
-  async function submit() {
-    const spec = TYPE_FIELDS[form.type];
-    const config: Record<string, string> = {};
-    for (const key of spec.config) if (form[key]) config[key] = form[key];
-    const secretValue = spec.secret ? form.__secret : "";
-
-    setBusy("form");
-    setError(null);
+  async function saveWh(e: React.FormEvent) {
+    e.preventDefault();
+    setWhBusy(true);
+    setWhFormError(null);
+    const body: any = {
+      name: whForm.name.trim(),
+      url: whForm.url.trim(),
+      enabled: whForm.enabled,
+    };
+    if (whForm.secret.trim()) body.secret = whForm.secret.trim();
     try {
-      if (modal.editing) {
-        const body: Record<string, any> = { name: form.name, config };
-        if (form.type === "slack") body.alert_level = form.alert_level;
-        if (secretValue) body.secret = { [spec.secret as string]: secretValue };
-        await api(`/integrations/${modal.editing.id}`, { method: "PATCH", body });
+      if (whEditing) {
+        await api(`/webhooks/${whEditing.id}`, { method: "PATCH", body });
       } else {
-        await api(`/integrations`, {
-          body: {
-            type: form.type,
-            name: form.name || form.type,
-            project_id: projectId,
-            config,
-            alert_level: form.alert_level || "failures",
-            ...(secretValue ? { secret: { [spec.secret as string]: secretValue } } : {}),
-          },
-        });
+        await api(`/projects/${id}/webhooks`, { body });
       }
-      setModal({ open: false, editing: null });
-      await load();
+      setWhModalOpen(false);
+      loadHooks();
+    } catch (err: any) {
+      setWhFormError(err?.message || String(err));
+    } finally {
+      setWhBusy(false);
+    }
+  }
+
+  async function deleteWh() {
+    if (!whDeleting) return;
+    setWhDeleteBusy(true);
+    try {
+      await api(`/webhooks/${whDeleting.id}`, { method: "DELETE" });
+      setWhDeleting(null);
+      loadHooks();
     } catch (e: any) {
-      setError(e instanceof ApiError ? e.message : String(e));
+      setWhError(e?.message || String(e));
+      setWhDeleting(null);
     } finally {
-      setBusy(null);
+      setWhDeleteBusy(false);
     }
   }
 
-  async function check(row: Integration) {
-    setBusy(row.id);
+  async function testWh(w: Webhook) {
+    setTestingId(w.id);
     try {
-      await api(`/integrations/${row.id}/check`, { body: {} });
-      await load();
+      const res = await api<any>(`/webhooks/${w.id}/test`, { method: "POST", body: {} });
+      const status = res?.status ?? res?.last_status;
+      const ok = res?.ok ?? (typeof status === "number" && status >= 200 && status < 300);
+      setTestResults((t) => ({ ...t, [w.id]: { ok, status } }));
+      loadHooks();
     } catch (e: any) {
-      setError(e instanceof ApiError ? e.message : String(e));
+      setTestResults((t) => ({ ...t, [w.id]: { ok: false, error: e?.message || String(e) } }));
     } finally {
-      setBusy(null);
+      setTestingId(null);
     }
   }
 
-  async function remove(row: Integration) {
-    setBusy(row.id);
+  async function download(kind: "xray" | "defects") {
+    if (!runId) return;
+    setDlBusy(kind);
+    setDlError(null);
     try {
-      await api(`/integrations/${row.id}`, { method: "DELETE" });
-      await load();
+      if (kind === "xray") await downloadFile(`/runs/${runId}/exports/xray.json`, "xray.json");
+      else await downloadFile(`/runs/${runId}/exports/defects.csv`, "defects.csv");
     } catch (e: any) {
-      setError(e instanceof ApiError ? e.message : String(e));
+      setDlError(`${L.dlError} — ${e?.message || String(e)}`);
     } finally {
-      setBusy(null);
+      setDlBusy(null);
     }
   }
 
-  async function saveGate() {
-    if (!gate) return;
-    setBusy("gate");
-    setError(null);
-    try {
-      const saved = await api<Gate>(`/projects/${projectId}/gate`, { method: "PUT", body: gate });
-      setGate(saved);
-      setNote(L.gateSaved);
-      setTimeout(() => setNote(null), 2500);
-    } catch (e: any) {
-      setError(e instanceof ApiError ? e.message : String(e));
-    } finally {
-      setBusy(null);
-    }
-  }
+  const curl = `curl -f -H "X-API-Key: $TRACEO_KEY" \\\n  "${API}/projects/${id}/gate?min_coverage=${minCoverage.trim() || "80"}&max_critical=${maxCritical.trim() || "0"}&exit=1"`;
 
-  async function addSchedule() {
-    setBusy("schedule");
-    setError(null);
-    try {
-      await api(`/projects/${projectId}/schedules`, { body: scheduleForm });
-      setScheduleModal(false);
-      await load();
-    } catch (e: any) {
-      setError(e instanceof ApiError ? e.message : String(e));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function toggleSchedule(s: Schedule) {
-    setBusy(s.id);
-    try {
-      await api(`/schedules/${s.id}`, { method: "PATCH", body: { enabled: !s.enabled } });
-      await load();
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function deleteSchedule(s: Schedule) {
-    setBusy(s.id);
-    try {
-      await api(`/schedules/${s.id}`, { method: "DELETE" });
-      await load();
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function listPages(row: Integration) {
-    setBusy(row.id);
-    setError(null);
-    try {
-      const res = await api<any>(`/integrations/${row.id}/confluence/pages`);
-      setPages({ integration: row.id, items: res.pages ?? [] });
-      setSelectedPages([]);
-    } catch (e: any) {
-      setError(e instanceof ApiError ? e.message : String(e));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function importPages() {
-    if (!pages) return;
-    setBusy("import");
-    setError(null);
-    try {
-      await api(`/projects/${projectId}/confluence/import`, {
-        body: { integration_id: pages.integration, page_ids: selectedPages },
-      });
-      setPages(null);
-      setNote(L.imported);
-      setTimeout(() => setNote(null), 3000);
-    } catch (e: any) {
-      setError(e instanceof ApiError ? e.message : String(e));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  const ciSnippet = `- name: Traceo gate
-  run: |
-    RUN=$(curl -sf -X POST "$TRACEO_URL/v1/projects/${projectId}/ci/runs" \\
-      -H "Authorization: Bearer $TRACEO_TOKEN" -H "Content-Type: application/json" \\
-      -d '{"environment_id":"<env-id>","branch":"'"$GITHUB_REF_NAME"'"}' | jq -r .run_id)
-    until [ "$(curl -sf "$TRACEO_URL/v1/runs/$RUN" -H "Authorization: Bearer $TRACEO_TOKEN" \\
-      | jq -r .state)" != "running" ]; do sleep 5; done
-    curl -sf "$TRACEO_URL/v1/runs/$RUN/gate" -H "Authorization: Bearer $TRACEO_TOKEN" \\
-      | tee gate.json | jq -e '.passed' >/dev/null || { jq -r '.breaches[].message' gate.json; exit 1; }`;
-
-  const spec = TYPE_FIELDS[form.type] ?? TYPE_FIELDS.jira;
-  const confluence = rows.filter((r) => r.type === "confluence");
+  const statusTone = (s?: number | null) =>
+    typeof s === "number" ? (s >= 200 && s < 300 ? "success" : "error") : "muted";
 
   return (
-    <>
-      <PageHeader
-        title={
-          <>
-            {L.title} <RefChip id="FR-070" />
-          </>
-        }
-        sub={L.sub}
-        actions={<Button onClick={openCreate}>{L.add}</Button>}
-      />
+    <div className="stack" data-testid="integrations-page-root">
+      <PageHeader title={L.title} sub={L.sub} testId="integrations-page-header" />
 
-      {error && (
-        <div className="card" style={{ borderColor: "var(--error)", marginBottom: 16 }}>
-          <div className="card-body" style={{ color: "var(--error)" }}>{error}</div>
-        </div>
-      )}
-      {note && (
-        <div className="card" style={{ borderColor: "var(--success)", marginBottom: 16 }}>
-          <div className="card-body" style={{ color: "var(--success)" }}>{note}</div>
-        </div>
-      )}
-
-      {/* ---------------- connected systems ---------------- */}
-      <Card title={L.title} pad={false}>
-        {loading ? (
-          <div className="card-body">{L.loading}</div>
-        ) : rows.length === 0 ? (
-          <div className="card-body">
-            <Empty icon="🔌" title={L.empty} hint={L.emptyHint} />
-          </div>
-        ) : (
-          <Table head={[L.type, L.name, L.state, L.lastChecked, L.actions]}>
-            {rows.map((row) => (
-              <tr key={row.id}>
-                <td>
-                  <Badge tone="accent">{row.type}</Badge>
-                </td>
-                <td>
-                  <div>{row.name}</div>
-                  <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }} dir="ltr">
-                    {row.config?.base_url || row.config?.webhook_url || ""}
-                  </div>
-                  {row.secret_set && (
-                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                      {L.secretSet} · {L.rotated}:{" "}
-                      {row.secret_rotated_at ? row.secret_rotated_at.slice(0, 10) : "—"}
-                    </div>
-                  )}
-                  {row.type === "slack" && (
-                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                      {L.alertLevel}: {L.alertLevels[row.alert_level] ?? row.alert_level}
-                    </div>
-                  )}
-                </td>
-                <td>
-                  <Badge tone={STATE_TONE[row.state] ?? "muted"}>{row.state}</Badge>
-                  {row.last_error && (
-                    <div style={{ fontSize: 11, color: "var(--error)", maxWidth: 320 }}>
-                      {row.last_error}
-                    </div>
-                  )}
-                </td>
-                <td className="mono" style={{ fontSize: 11 }}>
-                  {row.last_checked_at ? row.last_checked_at.slice(0, 16).replace("T", " ") : "—"}
-                </td>
-                <td>
-                  <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
-                    <Button size="sm" variant="ghost" onClick={() => check(row)} disabled={busy === row.id}>
-                      {busy === row.id ? L.checking : L.check}
-                    </Button>
-                    {row.type === "confluence" && (
-                      <Button size="sm" variant="ghost" onClick={() => listPages(row)} disabled={busy === row.id}>
-                        {L.loadPages}
-                      </Button>
-                    )}
-                    <Button size="sm" variant="ghost" onClick={() => openEdit(row)}>
-                      {ar ? "تعديل" : "Edit"}
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => remove(row)} disabled={busy === row.id}>
-                      {L.del}
-                    </Button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </Table>
-        )}
-      </Card>
-
-      {/* ---------------- Confluence page picker ---------------- */}
-      {pages && (
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))",
+          gap: 16,
+          alignItems: "start",
+        }}
+      >
+        {/* ---------- Webhooks ---------- */}
         <Card
           title={
-            <>
-              {L.confluence} <RefChip id="FR-011" />
-            </>
+            <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+              {L.whTitle} <RefChip id="FR-070" />
+            </span>
           }
           action={
-            <Button onClick={importPages} disabled={!selectedPages.length || busy === "import"}>
-              {L.importSelected} ({selectedPages.length})
-            </Button>
+            canDo("manage_projects") ? (
+              <Button variant="secondary" size="sm" testId="integrations-webhooks-new-button" onClick={openWhCreate}>
+                + {L.newWh}
+              </Button>
+            ) : undefined
           }
-          style={{ marginTop: 16 }}
         >
-          {pages.items.length === 0 ? (
-            <Empty icon="📄" title={L.noPages} />
-          ) : (
-            <div style={{ display: "grid", gap: 6 }}>
-              {pages.items.map((p: any) => (
-                <label key={p.id} className="row" style={{ gap: 8, alignItems: "center" }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedPages.includes(p.id)}
-                    onChange={(e) =>
-                      setSelectedPages((prev) =>
-                        e.target.checked ? [...prev, p.id] : prev.filter((x) => x !== p.id)
-                      )
-                    }
-                  />
-                  <span>{p.title}</span>
-                  <Badge tone="muted">v{p.version}</Badge>
-                </label>
-              ))}
-            </div>
-          )}
-        </Card>
-      )}
-
-      {/* ---------------- delivery gate ---------------- */}
-      <Card
-        title={
-          <>
-            {L.gate} <RefChip id="FR-061" />
-          </>
-        }
-        action={
-          <Button onClick={saveGate} disabled={busy === "gate" || !gate}>
-            {L.save}
-          </Button>
-        }
-        style={{ marginTop: 16 }}
-      >
-        <div className="page-sub" style={{ marginBottom: 12 }}>{L.gateSub}</div>
-        {gate && (
-          <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))" }}>
-            <Field label={L.gateEnabled}>
-              <Select
-                value={gate.enabled ? "1" : "0"}
-                onChange={(e) => setGate({ ...gate, enabled: e.target.value === "1" })}
-              >
-                <option value="1">{L.enabled}</option>
-                <option value="0">{L.disabled}</option>
-              </Select>
-            </Field>
-            <Field label={L.minCoverage}>
-              <Input
-                type="number"
-                min={0}
-                max={100}
-                value={gate.min_coverage_pct}
-                onChange={(e) => setGate({ ...gate, min_coverage_pct: Number(e.target.value) })}
-              />
-            </Field>
-            <Field label={L.maxNewFailures}>
-              <Input
-                type="number"
-                min={0}
-                value={gate.max_new_failures}
-                onChange={(e) => setGate({ ...gate, max_new_failures: Number(e.target.value) })}
-              />
-            </Field>
-            <Field label={L.blockOn}>
-              <Select value={gate.block_on} onChange={(e) => setGate({ ...gate, block_on: e.target.value })}>
-                {["any", "high_priority", "none"].map((v) => (
-                  <option key={v} value={v}>
-                    {L.blockOnOpts[v]}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          </div>
-        )}
-
-        <div style={{ marginTop: 18 }}>
-          <div className="eyebrow" style={{ marginBottom: 6 }}>{L.ci}</div>
-          <div className="field-hint" style={{ marginBottom: 6 }}>{L.ciHint}</div>
-          <pre
-            className="mono"
-            dir="ltr"
-            style={{
-              background: "var(--surface-2)",
-              border: "1px solid var(--border)",
-              borderRadius: 8,
-              padding: "12px 14px",
-              overflowX: "auto",
-              fontSize: 11.5,
-              lineHeight: 1.6,
-              margin: 0,
-              textAlign: "left",
-            }}
-          >
-            {ciSnippet}
-          </pre>
-        </div>
-      </Card>
-
-      {/* ---------------- schedules ---------------- */}
-      <Card
-        title={
-          <>
-            {L.schedules} <RefChip id="FR-060" />
-          </>
-        }
-        action={
-          <Button
-            onClick={() => {
-              setScheduleForm((f) => ({ ...f, environment_id: envs[0]?.id ?? "" }));
-              setScheduleModal(true);
-            }}
-            disabled={!envs.length}
-          >
-            {L.addSchedule}
-          </Button>
-        }
-        style={{ marginTop: 16 }}
-        pad={schedules.length === 0}
-      >
-        {schedules.length === 0 ? (
-          <>
-            <div className="page-sub" style={{ marginBottom: 8 }}>{L.schedulesSub}</div>
-            <Empty icon="⏱" title={L.schedulesSub} />
-          </>
-        ) : (
-          <Table head={[L.cron, L.environment, L.branch, L.nextDue, L.state, L.actions]}>
-            {schedules.map((s) => (
-              <tr key={s.id}>
-                <td className="mono" dir="ltr">{s.cron}</td>
-                <td>{envs.find((e) => e.id === s.environment_id)?.name ?? s.environment_id.slice(0, 8)}</td>
-                <td className="mono">{s.branch || "—"}</td>
-                <td className="mono" style={{ fontSize: 11 }} dir="ltr">
-                  {s.next_due_at ? s.next_due_at.slice(0, 16).replace("T", " ") : "—"}
-                  <div style={{ color: "var(--text-muted)" }}>{s.timezone}</div>
-                </td>
-                <td>
-                  <Badge tone={s.enabled ? "success" : "muted"}>
-                    {s.enabled ? L.enabled : L.disabled}
-                  </Badge>
-                </td>
-                <td>
-                  <div className="row" style={{ gap: 6 }}>
-                    <Button size="sm" variant="ghost" onClick={() => toggleSchedule(s)} disabled={busy === s.id}>
-                      {s.enabled ? L.disabled : L.enabled}
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => deleteSchedule(s)} disabled={busy === s.id}>
-                      {L.del}
-                    </Button>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{L.whSub}</div>
+            {whLoading ? (
+              <div style={{ color: "var(--text-secondary)", fontSize: 13, padding: 8 }}>{L.loading}</div>
+            ) : whError ? (
+              <div className="row" style={{ gap: 10 }}>
+                <span className="error-text" style={{ fontSize: 13 }}>
+                  {L.loadError} — {whError}
+                </span>
+                <Button variant="secondary" size="sm" onClick={loadHooks}>
+                  {L.retry}
+                </Button>
+              </div>
+            ) : hooks.length === 0 ? (
+              <Empty title={L.whEmpty} hint={L.whEmptyHint} testId="integrations-webhooks-empty-state" />
+            ) : (
+              hooks.map((w) => {
+                const tr = testResults[w.id];
+                return (
+                  <div
+                    key={w.id}
+                    data-testid="integrations-webhook-card"
+                    style={{
+                      background: "var(--surface-2)",
+                      borderRadius: 10,
+                      padding: "10px 12px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 8,
+                    }}
+                  >
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{w.name}</span>
+                      <Badge tone={w.enabled ? "success" : "muted"} testId="integrations-webhook-enabled-badge">{w.enabled ? L.enabled : L.disabled}</Badge>
+                      {typeof w.last_status === "number" && (
+                        <Badge tone={statusTone(w.last_status)}>
+                          {L.lastStatus} · <Mono style={{ fontSize: 10.5 }}>{w.last_status}</Mono>
+                        </Badge>
+                      )}
+                      <span style={{ marginLeft: "auto", display: "inline-flex", gap: 6 }}>
+                        {canDo("manage_projects") && (
+                          <Button variant="secondary" size="sm" testId="integrations-webhook-test-button" disabled={testingId === w.id} onClick={() => testWh(w)}>
+                            {testingId === w.id ? L.testing : L.test}
+                          </Button>
+                        )}
+                        {canDo("manage_projects") && (
+                          <Button variant="ghost" size="sm" testId="integrations-webhook-edit-button" onClick={() => openWhEdit(w)}>
+                            {L.edit}
+                          </Button>
+                        )}
+                        {canDo("manage_projects") && (
+                          <Button variant="danger" size="sm" testId="integrations-webhook-delete-button" onClick={() => setWhDeleting(w)}>
+                            {L.del}
+                          </Button>
+                        )}
+                      </span>
+                    </div>
+                    <Mono style={{ fontSize: 11.5, color: "var(--text-secondary)", overflowWrap: "anywhere", display: "block" }}>
+                      {w.url}
+                    </Mono>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                      {w.last_fired_at && (
+                        <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+                          {L.lastFired} <DateTimeText value={w.last_fired_at} style={{ color: "var(--text-secondary)" }} />
+                        </span>
+                      )}
+                      {tr && (
+                        <Badge tone={tr.ok ? "success" : "error"}>
+                          {tr.ok ? "✓" : "✕"}{" "}
+                          {tr.status !== undefined ? <Mono style={{ fontSize: 10.5 }}>{tr.status}</Mono> : tr.error}
+                        </Badge>
+                      )}
+                    </div>
                   </div>
-                </td>
-              </tr>
-            ))}
-          </Table>
-        )}
-      </Card>
+                );
+              })
+            )}
+            <div style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>{L.whSlackHint}</div>
+          </div>
+        </Card>
 
-      {/* ---------------- modals ---------------- */}
-      <Modal
-        open={modal.open}
-        onClose={() => setModal({ open: false, editing: null })}
-        title={modal.editing ? L.edit : L.add}
-      >
-        <div style={{ display: "grid", gap: 12 }}>
-          <Field label={L.type}>
-            <Select
-              value={form.type}
-              disabled={!!modal.editing}
-              onChange={(e) => setForm({ type: e.target.value, name: form.name })}
-            >
-              {Object.keys(TYPE_FIELDS).map((t) => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </Select>
+        {/* ---------- CI/CD Gate ---------- */}
+        <Card
+          title={
+            <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+              {L.gateTitle} <RefChip id="FR-061" />
+            </span>
+          }
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{L.gateSub}</div>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+              <div style={{ width: 160 }}>
+                <Field label={L.minCoverage}>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    testId="integrations-gate-min-coverage-input"
+                    value={minCoverage}
+                    onChange={(e) => setMinCoverage(e.target.value)}
+                  />
+                </Field>
+              </div>
+              <div style={{ width: 160 }}>
+                <Field label={L.maxCritical}>
+                  <Input
+                    type="number"
+                    min={0}
+                    testId="integrations-gate-max-critical-input"
+                    value={maxCritical}
+                    onChange={(e) => setMaxCritical(e.target.value)}
+                  />
+                </Field>
+              </div>
+              <div style={{ paddingBottom: 2 }}>
+                <Button variant="secondary" size="sm" testId="integrations-gate-check-button" disabled={gateLoading} onClick={loadGate}>
+                  {gateLoading ? L.checking : L.checkGate}
+                </Button>
+              </div>
+            </div>
+
+            {gateError ? (
+              <div className="row" style={{ gap: 10 }}>
+                <span className="error-text" style={{ fontSize: 13 }}>
+                  {L.loadError} — {gateError}
+                </span>
+                <Button variant="secondary" size="sm" onClick={loadGate}>
+                  {L.retry}
+                </Button>
+              </div>
+            ) : gate ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <Badge tone={gate.pass ? "success" : "error"} testId="integrations-gate-result-badge">{gate.pass ? L.gatePass : L.gateFail}</Badge>
+                  {gate.coverage_pct !== undefined && (
+                    <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                      {L.coverage} <Mono style={{ fontSize: 12, color: "var(--accent)" }}>{Math.round(gate.coverage_pct)}%</Mono>
+                    </span>
+                  )}
+                  {gate.open_defects && (
+                    <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                      <Mono style={{ fontSize: 12, color: (gate.open_defects.critical ?? 0) > 0 ? "var(--error)" : "var(--success)" }}>
+                        {gate.open_defects.critical ?? 0}
+                      </Mono>{" "}
+                      {L.criticalDefects}
+                    </span>
+                  )}
+                  {gate.latest_run?.display_id !== undefined && (
+                    <Mono style={{ fontSize: 11, color: "var(--text-secondary)" }}>#{gate.latest_run.display_id}</Mono>
+                  )}
+                </div>
+                {!gate.pass &&
+                  (gate.breaches ?? []).map((b, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        background: "var(--error-subtle)",
+                        borderRadius: 10,
+                        padding: "8px 12px",
+                        fontSize: 12,
+                        color: "var(--text-secondary)",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 4,
+                      }}
+                    >
+                      <span>
+                        <span style={{ color: "var(--error)", fontWeight: 600 }}>{L.breach}</span>{" "}
+                        <Mono style={{ fontSize: 11.5 }}>{b.check}</Mono> — {L.limit}{" "}
+                        <Mono style={{ fontSize: 11.5 }}>{String(b.limit)}</Mono> · {L.actual}{" "}
+                        <Mono style={{ fontSize: 11.5, color: "var(--error)" }}>{String(b.actual)}</Mono>
+                      </span>
+                      {b.requirement_external_ids && b.requirement_external_ids.length > 0 && (
+                        <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          {b.requirement_external_ids.map((r) => (
+                            <Mono key={r} style={{ fontSize: 10.5, color: "var(--accent)" }}>
+                              {r}
+                            </Mono>
+                          ))}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+              </div>
+            ) : gateLoading ? (
+              <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>{L.loading}</div>
+            ) : null}
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div className="code-block" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                {curl}
+              </div>
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <CopyButton text={curl} label={L.copy} copied={L.copied} />
+                <span style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>{L.curlHint}</span>
+              </div>
+            </div>
+          </div>
+        </Card>
+
+        {/* ---------- Jira / Xray export ---------- */}
+        <Card
+          title={
+            <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+              {L.xrayTitle} <RefChip id="FR-070" />
+            </span>
+          }
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{L.xraySub}</div>
+            {runsError ? (
+              <div className="row" style={{ gap: 10 }}>
+                <span className="error-text" style={{ fontSize: 13 }}>
+                  {L.loadError} — {runsError}
+                </span>
+                <Button variant="secondary" size="sm" onClick={loadRuns}>
+                  {L.retry}
+                </Button>
+              </div>
+            ) : runs.length === 0 ? (
+              <div style={{ fontSize: 12.5, color: "var(--warning)" }}>{L.noRuns}</div>
+            ) : (
+              <>
+                <Field label={L.run}>
+                  <Select testId="integrations-xray-run-select" value={runId} onChange={(e) => setRunId(e.target.value)}>
+                    <option value="">{L.pickRun}</option>
+                    {runs.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.display_id !== undefined ? `#${r.display_id}` : String(r.id).slice(0, 8)}
+                        {r.state ? ` · ${r.state}` : ""}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <Button variant="secondary" size="sm" testId="integrations-xray-download-button" disabled={!runId || dlBusy !== null} onClick={() => download("xray")}>
+                    ⇩ {L.dlXray}
+                  </Button>
+                  <Button variant="secondary" size="sm" testId="integrations-defects-download-button" disabled={!runId || dlBusy !== null} onClick={() => download("defects")}>
+                    ⇩ {L.dlDefects}
+                  </Button>
+                </div>
+                {dlError && <div className="error-text" style={{ fontSize: 12.5 }}>{dlError}</div>}
+              </>
+            )}
+          </div>
+        </Card>
+
+        {/* ---------- Coming soon ---------- */}
+        <div style={{ display: "grid", gap: 16 }}>
+          <Card
+            title={
+              <span style={{ display: "inline-flex", gap: 8, alignItems: "center", color: "var(--text-secondary)" }}>
+                {L.confluenceTitle} <RefChip id="FR-011" />
+              </span>
+            }
+            action={<Badge tone="muted">{L.soon}</Badge>}
+          >
+            <div style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>{L.confluenceSub}</div>
+          </Card>
+          <Card
+            title={<span style={{ color: "var(--text-secondary)" }}>{L.jiraSyncTitle}</span>}
+            action={<Badge tone="muted">{L.soon}</Badge>}
+          >
+            <div style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>{L.jiraSyncSub}</div>
+          </Card>
+        </div>
+      </div>
+
+      {/* ---------- Webhook modal ---------- */}
+      <Modal open={whModalOpen} onClose={() => setWhModalOpen(false)} title={whEditing ? L.editWh : L.newWh} testId="integrations-webhook-modal">
+        <form onSubmit={saveWh} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <Field label={L.whName}>
+            <Input
+              required
+              maxLength={100}
+              testId="integrations-webhook-name-input"
+              placeholder="e.g. QA Slack channel"
+              value={whForm.name}
+              onChange={(e) => setWhForm((f) => ({ ...f, name: e.target.value }))}
+            />
           </Field>
-          <Field label={L.name}>
-            <Input value={form.name ?? ""} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          <Field label={L.whUrl} hint={L.whSlackHint}>
+            <Input
+              required
+              testId="integrations-webhook-url-input"
+              placeholder="https://hooks.slack.com/services/…"
+              value={whForm.url}
+              onChange={(e) => setWhForm((f) => ({ ...f, url: e.target.value }))}
+            />
           </Field>
-          {spec.config.map((key) => (
-            <Field key={key} label={key.replace(/_/g, " ")}>
-              <Input
-                dir="ltr"
-                value={form[key] ?? ""}
-                onChange={(e) => setForm({ ...form, [key]: e.target.value })}
-              />
-            </Field>
-          ))}
-          {form.type === "slack" && (
-            <Field label={L.alertLevel}>
-              <Select
-                value={form.alert_level ?? "failures"}
-                onChange={(e) => setForm({ ...form, alert_level: e.target.value })}
-              >
-                {["all", "failures", "regressions"].map((v) => (
-                  <option key={v} value={v}>{L.alertLevels[v]}</option>
-                ))}
-              </Select>
-            </Field>
-          )}
-          {spec.secret && (
-            <Field label={L.secret} hint={L.secretHint}>
-              <Input
-                dir="ltr"
-                type="password"
-                autoComplete="new-password"
-                value={form.__secret ?? ""}
-                onChange={(e) => setForm({ ...form, __secret: e.target.value })}
-              />
-            </Field>
-          )}
-          <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
-            <Button variant="ghost" onClick={() => setModal({ open: false, editing: null })}>
+          <Field label={L.whSecret} hint={L.whSecretHint}>
+            <Input
+              type="password"
+              autoComplete="off"
+              testId="integrations-webhook-secret-input"
+              value={whForm.secret}
+              onChange={(e) => setWhForm((f) => ({ ...f, secret: e.target.value }))}
+            />
+          </Field>
+          <label
+            style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)", cursor: "pointer" }}
+          >
+            <input
+              type="checkbox"
+              data-testid="integrations-webhook-enabled-checkbox"
+              checked={whForm.enabled}
+              onChange={(e) => setWhForm((f) => ({ ...f, enabled: e.target.checked }))}
+              style={{ accentColor: "var(--accent)" }}
+            />
+            {L.enabled}
+          </label>
+          {whFormError && <div className="error-text" style={{ fontSize: 13 }}>{whFormError}</div>}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <Button variant="ghost" testId="integrations-webhook-cancel-button" onClick={() => setWhModalOpen(false)}>
               {L.cancel}
             </Button>
-            <Button onClick={submit} disabled={busy === "form"}>
-              {modal.editing ? L.save : L.create}
+            <Button
+              type="submit"
+              variant="primary"
+              testId="integrations-webhook-submit-button"
+              disabled={whBusy || !whForm.name.trim() || !whForm.url.trim()}
+            >
+              {whBusy ? L.saving : whEditing ? L.save : L.create}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* ---------- Webhook delete confirm ---------- */}
+      <Modal open={!!whDeleting} onClose={() => setWhDeleting(null)} title={L.delWhTitle} testId="integrations-webhook-delete-modal">
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ fontSize: 13.5, color: "var(--text-secondary)" }}>
+            <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>{whDeleting?.name}</div>
+            {L.delWhConfirm}
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <Button variant="ghost" testId="integrations-webhook-delete-cancel-button" onClick={() => setWhDeleting(null)}>
+              {L.cancel}
+            </Button>
+            <Button variant="danger" testId="integrations-webhook-delete-confirm-button" disabled={whDeleteBusy} onClick={deleteWh}>
+              {L.confirm}
             </Button>
           </div>
         </div>
       </Modal>
-
-      <Modal open={scheduleModal} onClose={() => setScheduleModal(false)} title={L.addSchedule}>
-        <div style={{ display: "grid", gap: 12 }}>
-          <Field label={L.environment}>
-            <Select
-              value={scheduleForm.environment_id}
-              onChange={(e) => setScheduleForm({ ...scheduleForm, environment_id: e.target.value })}
-            >
-              {envs.map((e) => (
-                <option key={e.id} value={e.id}>{e.name}</option>
-              ))}
-            </Select>
-          </Field>
-          <Field label={L.cron} hint="m h dom mon dow — 0 2 * * *">
-            <Input
-              dir="ltr"
-              value={scheduleForm.cron}
-              onChange={(e) => setScheduleForm({ ...scheduleForm, cron: e.target.value })}
-            />
-          </Field>
-          <Field label={L.timezone}>
-            <Input
-              dir="ltr"
-              value={scheduleForm.timezone}
-              onChange={(e) => setScheduleForm({ ...scheduleForm, timezone: e.target.value })}
-            />
-          </Field>
-          <Field label={L.branch}>
-            <Input
-              dir="ltr"
-              value={scheduleForm.branch}
-              onChange={(e) => setScheduleForm({ ...scheduleForm, branch: e.target.value })}
-            />
-          </Field>
-          <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
-            <Button variant="ghost" onClick={() => setScheduleModal(false)}>{L.cancel}</Button>
-            <Button onClick={addSchedule} disabled={busy === "schedule"}>{L.create}</Button>
-          </div>
-        </div>
-      </Modal>
-    </>
+    </div>
   );
 }

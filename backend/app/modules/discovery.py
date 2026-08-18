@@ -1,13 +1,23 @@
-"""OpenAPI/Swagger Discovery Engine (TRD §4.2) — fully deterministic, NO LLM.
+"""Discovery Engine (TRD §4.2) — fully deterministic, NO LLM.
 
-Imports an OpenAPI 3.x or Swagger 2.0 specification (multipart file or URL), resolves
-internal $refs cycle-safely, and flattens every operation into an Endpoint inventory row.
-That inventory is the ground truth the generation module's grounding gate validates
-against — which is why this engine is deterministic end to end.
+Imports an API description (multipart file or URL) and flattens every operation into
+an Endpoint inventory row. That inventory is the ground truth the generation module's
+grounding gate validates against — which is why this engine is deterministic end to
+end. Five input formats share ONE route:
+
+  * OpenAPI 3.x / Swagger 2.0 — parsed here, internal $refs resolved cycle-safely.
+  * Postman Collection v2.0/v2.1, HAR 1.2, Insomnia v4 — converted by
+    modules/collections.py into the identical inventory shape.
 
 Broken/unresolvable operations are recorded as warnings and skipped, never fatal
 (FR-DSC-04). URL fetches are SSRF-guarded. Re-import bumps the spec version and
-REPLACES the endpoint inventory, returning an added/removed/changed diff.
+rewrites the endpoint inventory, returning an added/removed/changed diff — subject
+to the fidelity order spec > traffic > dom > postman (SRS §L2): an import never
+overwrites or deletes rows discovered by a higher-fidelity mode.
+
+Collection imports may additionally be annotated by the optional AI enrichment step
+(modules/enrichment.py) when the project runs on automation=auto. That step can only
+add commentary to rows this file already created — see the gate documented there.
 """
 import ipaddress
 import json
@@ -22,7 +32,12 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from ..db import get_db
 from ..deps import audit, get_project_scoped, require
-from ..models import ApiSpec, Endpoint, TestCase, TestResult, TestStep, User
+from ..models import ApiSpec, Endpoint, Environment, TestCase, TestResult, TestStep, User
+from .collections import (COLLECTION_FORMATS, SUPPORTED_FORMATS_HINT, convert,
+                          derive_environment, detect_format, imported_environment_name)
+from .enrichment import enrich
+from .generation import try_autopilot_generation
+from .projects import EnvironmentCreate, create_environment_record
 
 router = APIRouter()
 
@@ -30,7 +45,16 @@ MAX_SPEC_BYTES = 5 * 1024 * 1024
 FETCH_TIMEOUT_S = 10.0
 MAX_REDIRECTS = 3
 HTTP_METHODS = ("get", "post", "put", "patch", "delete", "head", "options")
-CONSTRAINT_KEYS = ("format", "minimum", "maximum", "minLength", "maxLength", "pattern", "enum")
+# "example"/"default" are not constraints, but they are the document's own
+# statement of a usable value — the generator prefers them over a synthesised
+# one, which is what makes a path parameter address a real resource.
+CONSTRAINT_KEYS = ("format", "minimum", "maximum", "minLength", "maxLength", "pattern", "enum",
+                   "example", "default")
+
+# Discovery-mode fidelity (SRS §L2). A declared contract beats observed traffic,
+# which beats a crawled DOM, which beats a hand-curated request collection. The
+# ranking decides who wins when two modes describe the same method+path.
+FIDELITY = {"spec": 3, "traffic": 2, "dom": 1, "postman": 0}
 
 
 # --- SSRF-guarded URL fetch ----------------------------------------------------------
@@ -128,10 +152,17 @@ def _parse_spec_bytes(raw: bytes) -> object:
 
 
 def _validate_structure(spec: object) -> str:
-    """Return 'openapi3' | 'swagger2', or raise 422 with a specific errors list."""
+    """Return 'openapi3' | 'swagger2', or raise 422 with a specific errors list.
+
+    Only reached once collection detection has already declined the document, so
+    every rejection names the formats that WOULD have been accepted — a 422 that
+    just says "invalid" leaves the owner guessing why their real Postman export
+    was refused.
+    """
     errors: list[str] = []
     if not isinstance(spec, dict):
         errors.append("Specification root must be a mapping/object.")
+        errors.append(SUPPORTED_FORMATS_HINT)
         raise HTTPException(422, detail={
             "code": "invalid_spec", "message": "Not a valid API specification.",
             "errors": errors})
@@ -148,6 +179,7 @@ def _validate_structure(spec: object) -> str:
     elif not paths:
         errors.append("'paths' object is empty — nothing to import.")
     if errors:
+        errors.append(SUPPORTED_FORMATS_HINT)
         raise HTTPException(422, detail={
             "code": "invalid_spec", "message": "Not a valid API specification.",
             "errors": errors})
@@ -215,24 +247,25 @@ def _collect_params(raw_params: list, fmt: str) -> tuple[list, dict | None]:
             continue
         # openapi3 keeps the schema nested; swagger2 non-body params carry it inline
         schema_src = p.get("schema") if isinstance(p.get("schema"), dict) else p
+        constraints = _constraints_from(schema_src)
+        # OpenAPI 3 allows example/examples beside the schema, not only inside it.
+        if "example" not in constraints and p.get("example") is not None:
+            constraints["example"] = p["example"]
+        if "example" not in constraints and isinstance(p.get("examples"), dict) and p["examples"]:
+            first = next(iter(p["examples"].values()))
+            if isinstance(first, dict) and "value" in first:
+                constraints["example"] = first["value"]
         params.append({
             "name": p.get("name", ""),
             "location": location,  # path|query|header|cookie|formData
             "type": schema_src.get("type", ""),
             "required": bool(p.get("required", location == "path")),
-            "constraints": _constraints_from(schema_src),
+            "constraints": constraints,
         })
     return params, request_schema
 
 
 def _response_schemas(op: dict, fmt: str) -> dict:
-    """Every DECLARED status becomes a key, whether or not it carries a body schema.
-
-    A `422 Validation error` with only a description is still a documented branch of
-    the endpoint, and FR-024 AC2 measures branches exercised — dropping the schema-less
-    ones would quietly report an endpoint as fully covered while its rejection path
-    was never asserted. A branch with no schema is stored as `{}`, which validates
-    anything, so it adds a coverage obligation without inventing an assertion."""
     out = {}
     for status, robj in (op.get("responses") or {}).items():
         if not isinstance(robj, dict):
@@ -242,7 +275,8 @@ def _response_schemas(op: dict, fmt: str) -> dict:
             schema = schema if isinstance(schema, dict) else None
         else:
             schema = _json_media_schema(robj)
-        out[str(status)] = schema if schema is not None else {}
+        if schema is not None:
+            out[str(status)] = schema
     return out
 
 
@@ -311,11 +345,71 @@ def _endpoint_dict(e: Endpoint) -> dict:
         "summary": e.summary, "parameters": e.parameters,
         "request_schema": e.request_schema, "response_schemas": e.response_schemas,
         "security": e.security, "tags": e.tags, "excluded": e.excluded,
-        "discovery_source": e.discovery_source or "openapi",
-        "times_seen": e.times_seen or 0,
-        "inferred": bool(e.inferred),
-        "dom_fields": e.dom_fields or [],
+        # Which discovery mode found this endpoint, and how many times traffic
+        # capture observed it — shown on the coverage map (FR-024) once the
+        # non-spec modes land (FR-021/022/023).
+        "source": e.source, "observed_count": e.observed_count,
+        # Optional AI annotations (nullable). Commentary only — every one was
+        # matched back to this exact method+path before being stored.
+        "ai_description": e.ai_description, "ai_group": e.ai_group,
+        "ai_criticality": e.ai_criticality,
     }
+
+
+# --- environment auto-creation (contract item 3) -------------------------------------------
+
+def _autocreate_environment(db: Session, user: User, project_id: str, spec: object,
+                            fmt: str, title: str) -> dict | None:
+    """Fill an EMPTY Environments list from the document that was just imported.
+
+    "I only added a Postman collection for the API connection" — and the New run
+    screen still had nothing to run against, because the base URL sitting in the
+    uploaded file was never turned into an environment. This closes that gap.
+
+    Three conditions, all required, none negotiable:
+      * the project currently has ZERO environments — this fills a void, it never
+        touches, overwrites or shadows an environment the owner already has;
+      * a base URL could be DERIVED from the document (collections.derive_environment,
+        deterministic, no LLM, no invented host);
+      * creation goes through the projects module's write path, so the derived
+        environment is validated and audited exactly like a hand-typed one.
+
+    Returns the {id, name, base_url} payload, or None when nothing was created.
+    The caller commits; a failure here is not worth failing an otherwise good
+    import over, so it degrades to None.
+    """
+    # Derivation and request-model validation are pure and may be swallowed.
+    # The database write below deliberately is NOT wrapped: a half-failed flush
+    # must surface, not poison the transaction the caller is about to commit.
+    try:
+        derived = derive_environment(spec, fmt)
+        body = EnvironmentCreate(
+            name=imported_environment_name(title),
+            base_url=derived["base_url"],
+            auth_type="none",  # the document proves a URL, it never proves a credential
+            variables=derived["variables"],
+            tls_strict=True,
+        ) if derived else None
+    except Exception:  # noqa: BLE001 — a convenience must never sink the import
+        return None
+    if body is None:
+        return None
+
+    existing = db.query(Environment.id).filter(
+        Environment.project_id == project_id,
+        Environment.organisation_id == user.organisation_id).first()
+    if existing is not None:
+        return None
+
+    env = create_environment_record(
+        db, org_id=user.organisation_id, user_id=user.id, project_id=project_id, body=body,
+        action="environment.autocreated",
+        # the source format is what makes this entry auditable; variable NAMES
+        # are recorded, values never are (credentials arrive empty by design).
+        extra_audit={"format": fmt, "base_url": body.base_url,
+                     "variables": sorted(body.variables)},
+    )
+    return {"id": env.id, "name": env.name, "base_url": env.base_url}
 
 
 # --- routes -------------------------------------------------------------------------------
@@ -324,7 +418,7 @@ def _endpoint_dict(e: Endpoint) -> dict:
 async def import_api_spec(project_id: str, request: Request,
                           user: User = Depends(require("import_spec")),
                           db: Session = Depends(get_db)):
-    get_project_scoped(project_id, user, db)
+    project = get_project_scoped(project_id, user, db)
 
     content_type = (request.headers.get("content-type") or "").lower()
     if content_type.startswith("multipart/"):
@@ -353,8 +447,17 @@ async def import_api_spec(project_id: str, request: Request,
         source = url
 
     spec = _parse_spec_bytes(raw)
-    fmt = _validate_structure(spec)
-    operations, warnings = _flatten(spec, fmt)
+    # ONE route, five formats: collection formats are converted deterministically
+    # into the same inventory _flatten produces; anything else takes the original
+    # OpenAPI/Swagger path, unchanged.
+    fmt = detect_format(spec)
+    if fmt in COLLECTION_FORMATS:
+        operations, warnings, title, incoming_source = convert(spec, fmt)
+    else:
+        fmt = _validate_structure(spec)
+        operations, warnings = _flatten(spec, fmt)
+        title = str((spec.get("info") or {}).get("title") or "")
+        incoming_source = "spec"
 
     # swagger2 host/basePath are recorded as spec source metadata
     if fmt == "swagger2":
@@ -362,26 +465,35 @@ async def import_api_spec(project_id: str, request: Request,
         if notes:
             source = f"{source} [{'; '.join(notes)}]"
     source = source[:500]
-    title = str((spec.get("info") or {}).get("title") or "")[:300]
+    title = title[:300]
 
-    # Only the specification-derived slice is replaced: endpoints contributed by a
-    # traffic capture, a DOM crawl or a Postman import survive a spec re-import and
-    # keep their observation counts (SRS §4.2 — one surface, many sources).
-    all_rows = db.query(Endpoint).filter(
+    old_rows = db.query(Endpoint).filter(
         Endpoint.project_id == project_id,
         Endpoint.organisation_id == user.organisation_id).all()
-    old_rows = [e for e in all_rows if (e.discovery_source or "openapi") == "openapi"]
-    observed_by_key = {_op_key(e.method, e.path): e
-                       for e in all_rows if (e.discovery_source or "openapi") != "openapi"}
     old_by_key = {_op_key(e.method, e.path): e for e in old_rows}
     new_by_key = {_op_key(op["method"], op["path"]): op for op in operations}
 
+    # FIDELITY GATE (SRS §L2). An incoming operation is written only when its mode
+    # ranks at least as high as the mode that produced the existing row — so a
+    # Postman import can never downgrade an endpoint already known from a spec,
+    # while a later spec import overwrites collection-derived rows. Rows this
+    # import does not cover are deleted only when they came from the SAME mode:
+    # importing a spec must not delete endpoints discovered from a collection.
+    incoming_rank = FIDELITY.get(incoming_source, 0)
+    writable = {
+        k for k in new_by_key
+        if k not in old_by_key
+        or incoming_rank >= FIDELITY.get(old_by_key[k].source or "spec", 0)
+    }
+    superseded = [k for k in old_by_key if k not in new_by_key
+                  and (old_by_key[k].source or "spec") == incoming_source]
+
     diff = {
         "added": sorted(k for k in new_by_key if k not in old_by_key),
-        "removed": sorted(k for k in old_by_key if k not in new_by_key),
+        "removed": sorted(superseded),
         "changed": sorted(
             k for k, op in new_by_key.items()
-            if k in old_by_key and _signature(
+            if k in old_by_key and k in writable and _signature(
                 op["parameters"], op["request_schema"],
                 op["response_schemas"], op["security"],
             ) != _signature(
@@ -406,74 +518,107 @@ async def import_api_spec(project_id: str, request: Request,
         db.add(spec_row)
     db.flush()
 
-    # REPLACE the inventory: detach grounding links, drop old rows, insert fresh ones
-    old_ids = [e.id for e in old_rows]
+    # REWRITE the inventory: detach grounding links, drop the rows this import
+    # replaces or supersedes, insert fresh ones. Rows held by a higher-fidelity
+    # mode, and rows of another mode this document simply does not mention, are
+    # left exactly as they are.
+    old_ids = [old_by_key[k].id for k in set(superseded) | (writable & set(old_by_key))]
     if old_ids:
         db.query(TestStep).filter(TestStep.endpoint_id.in_(old_ids)).update(
             {TestStep.endpoint_id: None}, synchronize_session=False)
         db.query(Endpoint).filter(Endpoint.id.in_(old_ids)).delete(synchronize_session=False)
 
+    rows_by_key: dict[tuple[str, str], Endpoint] = {}
     for key, op in new_by_key.items():
+        if key not in writable:
+            continue  # a higher-fidelity mode already owns this method+path
         prior = old_by_key.get(key)
-        observed = observed_by_key.pop(key, None)
-        if observed is not None:
-            # The spec is the higher-fidelity source: it now owns the declaration,
-            # but the observation count it was never able to know is preserved.
-            observed.api_spec_id = spec_row.id
-            observed.discovery_source = "openapi"
-            observed.inferred = False
-            observed.operation_id = op["operation_id"]
-            observed.summary = op["summary"]
-            observed.parameters = op["parameters"]
-            observed.request_schema = op["request_schema"]
-            observed.response_schemas = op["response_schemas"]
-            observed.security = op["security"]
-            observed.tags = op["tags"]
-            continue
-        db.add(Endpoint(
+        row = Endpoint(
             organisation_id=user.organisation_id, api_spec_id=spec_row.id,
             project_id=project_id, method=op["method"], path=op["path"],
             operation_id=op["operation_id"], summary=op["summary"],
             parameters=op["parameters"], request_schema=op["request_schema"],
             response_schemas=op["response_schemas"], security=op["security"],
-            tags=op["tags"], discovery_source="openapi",
-            times_seen=prior.times_seen if prior else 0,
+            tags=op["tags"],
             excluded=prior.excluded if prior else False,  # FR-DSC-05 survives re-import
-        ))
+            source=op.get("source", "spec"),
+            observed_count=op.get("observed_count", 0),
+            # annotations survive a re-import the same way `excluded` does
+            ai_description=prior.ai_description if prior else None,
+            ai_group=prior.ai_group if prior else None,
+            ai_criticality=prior.ai_criticality if prior else None,
+        )
+        db.add(row)
+        rows_by_key[(op["method"].upper(), op["path"])] = row
+
+    # AI ENRICHMENT (contract item 3) — collection imports only, automation=auto
+    # only, and strictly after the deterministic inventory exists. The model sees
+    # the derived inventory, never the uploaded file; every annotation it returns
+    # is matched back to a method+path above or discarded. A failure here costs
+    # annotations, never the import.
+    enriched = enrichment_discarded = 0
+    if fmt in COLLECTION_FORMATS and project.automation == "auto":
+        annotations, enrichment_discarded = enrich(
+            [op for k, op in new_by_key.items() if k in writable])
+        for key, annotation in annotations.items():
+            row = rows_by_key.get(key)
+            if row is None:
+                enrichment_discarded += 1
+                continue
+            row.ai_description = annotation["ai_description"]
+            row.ai_group = annotation["ai_group"] or None
+            row.ai_criticality = annotation["ai_criticality"]
+            enriched += 1
 
     audit(db, user.organisation_id, user.id, "spec.imported", "api_spec", spec_row.id,
           {"source": source, "format": fmt, "version": spec_row.version,
-           "endpoints": len(new_by_key), "warnings": len(warnings)})
+           "endpoints": len(new_by_key), "warnings": len(warnings),
+           "enriched": enriched, "enrichment_discarded": enrichment_discarded})
+
+    environment_created = _autocreate_environment(db, user, project_id, spec, fmt, title)
     db.commit()
+
+    total = db.query(Endpoint).filter(
+        Endpoint.project_id == project_id,
+        Endpoint.organisation_id == user.organisation_id).count()
+
+    # Autopilot (contract 4b): a successful spec import may complete the
+    # "endpoints + confirmed requirements" precondition — try the generation
+    # trigger, attributed to the importing user. No-op unless automation=auto.
+    if project.automation == "auto":
+        try_autopilot_generation(db, user.organisation_id, user.id, project_id)
 
     return {
         "spec_id": spec_row.id,
         "version": spec_row.version,
+        # endpoints_count keeps its original meaning: operations found in THIS
+        # document. `total` is the project inventory after the fidelity rules ran.
         "endpoints_count": len(new_by_key),
         "warnings": warnings,
         "diff": diff,
+        "format": fmt,
+        "added": len(diff["added"]),
+        "updated": len(writable & set(old_by_key)),
+        "removed": len(diff["removed"]),
+        "total": total,
+        "enriched": enriched,
+        "enrichment_discarded": enrichment_discarded,
+        # null unless THIS import filled an empty Environments list (contract 4).
+        "environment_created": environment_created,
     }
 
 
 def _endpoint_coverage(db: Session, project_id: str, org_id: str,
                        endpoints: list[Endpoint]) -> dict[str, dict]:
-    """FR-024 endpoint coverage map, computed at read time from approved-case steps.
-
-    AC2: coverage is what the suite EXERCISES, not how many requests it sends — so it
-    is the mean of two things, parameters referenced and declared response branches
-    asserted. Ten cases that all assert 200 leave a documented 404 branch uncovered,
-    and this number says so."""
-    out = {e.id: {"test_count": 0, "covered_params_pct": 100.0,
-                  "covered_responses_pct": 100.0, "coverage_pct": 100.0,
-                  "covered_statuses": [], "uncovered_statuses": [],
-                  "last_outcome": None}
+    """FR-024 endpoint coverage map, computed at read time from approved-case steps:
+    test_count, covered_params_pct (100 when the endpoint has no params), last_outcome."""
+    out = {e.id: {"test_count": 0, "covered_params_pct": 100.0, "last_outcome": None}
            for e in endpoints}
     ep_ids = list(out)
     if not ep_ids:
         return out
 
-    step_rows = (db.query(TestStep.endpoint_id, TestStep.test_case_id, TestStep.request,
-                          TestStep.assertions)
+    step_rows = (db.query(TestStep.endpoint_id, TestStep.test_case_id, TestStep.request)
                  .join(TestCase, TestCase.id == TestStep.test_case_id)
                  .filter(TestStep.endpoint_id.in_(ep_ids),
                          TestCase.state == "approved",
@@ -483,50 +628,20 @@ def _endpoint_coverage(db: Session, project_id: str, org_id: str,
     cases_by_ep: dict[str, set] = {}
     eps_by_case: dict[str, set] = {}
     referenced: dict[str, set] = {}
-    asserted_status: dict[str, set] = {}
-    for ep_id, case_id, request, assertions in step_rows:
+    for ep_id, case_id, request in step_rows:
         cases_by_ep.setdefault(ep_id, set()).add(case_id)
         eps_by_case.setdefault(case_id, set()).add(ep_id)
         req = request or {}
         names = set(req.get("params") or {}) | set(req.get("headers") or {})
-        body = req.get("body")
-        if isinstance(body, dict):
-            names |= set(body)
         referenced.setdefault(ep_id, set()).update(str(n).lower() for n in names)
-
-        statuses = asserted_status.setdefault(ep_id, set())
-        for assertion in assertions or []:
-            if not isinstance(assertion, dict) or assertion.get("type") != "status_code":
-                continue
-            expected = assertion.get("expected")
-            if isinstance(expected, int):
-                statuses.add(expected)
-            for alternative in assertion.get("expected_any") or []:
-                if isinstance(alternative, int):
-                    statuses.add(alternative)
 
     for e in endpoints:
         out[e.id]["test_count"] = len(cases_by_ep.get(e.id, ()))
-
         params = [p for p in (e.parameters or []) if isinstance(p, dict) and p.get("name")]
         if params:
             refs = referenced.get(e.id, set())
             covered = sum(1 for p in params if str(p["name"]).lower() in refs)
             out[e.id]["covered_params_pct"] = round(covered / len(params) * 100, 1)
-
-        declared = sorted({int(code) for code in (e.response_schemas or {})
-                           if str(code).isdigit()})
-        if declared:
-            hit = asserted_status.get(e.id, set())
-            covered_codes = [c for c in declared if c in hit]
-            out[e.id]["covered_responses_pct"] = round(
-                len(covered_codes) / len(declared) * 100, 1)
-            out[e.id]["covered_statuses"] = covered_codes
-            out[e.id]["uncovered_statuses"] = [c for c in declared if c not in hit]
-
-        # A single headline number, so the map can sort by "least covered".
-        out[e.id]["coverage_pct"] = round(
-            (out[e.id]["covered_params_pct"] + out[e.id]["covered_responses_pct"]) / 2, 1)
 
     case_ids = list(eps_by_case)
     if case_ids:
@@ -549,15 +664,10 @@ def list_endpoints(project_id: str, user: User = Depends(require("view")),
         Endpoint.organisation_id == user.organisation_id,
     ).order_by(Endpoint.path.asc(), Endpoint.method.asc()).all()
     coverage = _endpoint_coverage(db, project_id, user.organisation_id, rows)
-    # FR-020 AC3: "declared but never seen" is only meaningful once this project has
-    # observed traffic at all — otherwise every spec endpoint would carry the label.
-    has_observations = any((e.times_seen or 0) > 0 for e in rows)
     payload = []
     for e in rows:
         d = _endpoint_dict(e)
         d.update(coverage[e.id])
-        d["declared_never_seen"] = bool(
-            has_observations and d["discovery_source"] == "openapi" and not d["times_seen"])
         payload.append(d)
     return payload
 

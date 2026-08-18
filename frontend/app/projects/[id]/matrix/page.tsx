@@ -5,14 +5,14 @@ import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { API, api, getToken } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
-import { Badge, Button, Card, Empty, PageHeader, Pill, Progress, RefChip, Select, StatCard, StatusDot } from "@/components/ui";
+import { useCan } from "@/lib/permissions";
+import { Badge, Button, Card, Empty, PageHeader, Pill, Progress, RefChip, StatCard, StatusDot } from "@/components/ui";
 
 type Tone = "success" | "warning" | "error" | "info" | "muted" | "accent";
 
 function M({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
-    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12, ...style }}>
+    <span style={{ fontFamily: "'JetBrains Mono',ui-monospace,monospace", fontSize: 12, ...style }}>
       {children}
     </span>
   );
@@ -45,82 +45,37 @@ async function downloadFile(path: string, filename: string): Promise<void> {
 
 export default function MatrixPage() {
   const { id } = useParams<{ id: string }>();
-  const { lang } = useLang();
+  const canDo = useCan();
 
-  const L =
-    lang === "ar"
-      ? {
-          title: "مصفوفة التتبّع",
-          sub: "متطلب → حالة اختبار → نتيجة — التغطية الكاملة في مكان واحد",
-          coverage: "التغطية %",
-          gaps: "فجوات",
-          all: "الكل",
-          not_covered: "غير مغطى",
-          covered_not_run: "مغطى دون تشغيل",
-          passing: "ناجح",
-          failing: "فاشل",
-          errored: "خطأ",
-          criteriaCovered: "معايير مغطّاة",
-          covered: "مغطّى",
-          uncovered: "غير مغطّى",
-          exportXlsx: "تصدير Excel",
-          exporting: "جارٍ التصدير…",
-          lang: "لغة التصدير",
-          langAr: "العربية",
-          langEn: "الإنجليزية",
-          langBoth: "ثنائي اللغة",
-          matrix: "المصفوفة",
-          empty: "لا توجد متطلبات مؤكّدة",
-          emptyHint: "أكّد المتطلبات وولّد حالات لتظهر المصفوفة",
-          emptyFiltered: "لا صفوف مطابقة للمرشّح",
-          emptyFilteredHint: "جرّب مرشّحًا آخر",
-          gapsTitle: "الفجوات",
-          noGaps: "لا توجد فجوات — كل المتطلبات المؤكّدة مغطاة",
-          gapNoCases: "لا حالات معتمدة",
-          gapUnmappable: "تعذّر الربط بواجهة",
-          gapNoEndpoint: "لا توجد واجهة مطابقة",
-          gapDisabled: "لا حالات معتمدة (روابط موجودة)",
-          targetGen: "توليد مستهدف",
-          loadError: "تعذّر تحميل المصفوفة",
-          retry: "إعادة المحاولة",
-          cases: "حالة",
-        }
-      : {
-          title: "Traceability matrix",
-          sub: "requirement → test case → result — full coverage in one place",
-          coverage: "Coverage %",
-          gaps: "Gaps",
-          all: "All",
-          not_covered: "Not covered",
-          covered_not_run: "Covered, not run",
-          passing: "Passing",
-          failing: "Failing",
-          errored: "Errored",
-          criteriaCovered: "criteria covered",
-          covered: "Covered",
-          uncovered: "Not covered",
-          exportXlsx: "Export Excel",
-          exporting: "Exporting…",
-          lang: "Export language",
-          langAr: "Arabic",
-          langEn: "English",
-          langBoth: "Bilingual",
-          matrix: "Matrix",
-          empty: "No confirmed requirements",
-          emptyHint: "Confirm requirements and generate cases to populate the matrix",
-          emptyFiltered: "No rows match the filter",
-          emptyFilteredHint: "Try another filter",
-          gapsTitle: "Gaps",
-          noGaps: "No gaps — every confirmed requirement is covered",
-          gapNoCases: "No approved cases",
-          gapUnmappable: "Could not map to an endpoint",
-          gapNoEndpoint: "No reachable endpoint",
-          gapDisabled: "No approved cases (links exist)",
-          targetGen: "Targeted generation",
-          loadError: "Failed to load the matrix",
-          retry: "Retry",
-          cases: "cases",
-        };
+  const L = {
+    title: "Traceability matrix",
+    sub: "requirement → test case → result — full coverage in one place",
+    coverage: "Coverage %",
+    gaps: "Gaps",
+    all: "All",
+    not_covered: "Not covered",
+    covered_not_run: "Covered, not run",
+    passing: "Passing",
+    failing: "Failing",
+    errored: "Errored",
+    exportXlsx: "Export Excel",
+    exporting: "Exporting…",
+    matrix: "Matrix",
+    empty: "No confirmed requirements",
+    emptyHint: "Confirm requirements and generate cases to populate the matrix",
+    emptyFiltered: "No rows match the filter",
+    emptyFilteredHint: "Try another filter",
+    gapsTitle: "Gaps",
+    noGaps: "No gaps — every confirmed requirement is covered",
+    gapNoCases: "No approved cases",
+    gapUnmappable: "Could not map to an endpoint",
+    gapNoEndpoint: "No reachable endpoint",
+    gapDisabled: "No approved cases (links exist)",
+    targetGen: "Targeted generation",
+    loadError: "Failed to load the matrix",
+    retry: "Retry",
+    cases: "cases",
+  };
 
   const statusLabel = (s: string) =>
     (({
@@ -137,8 +92,6 @@ export default function MatrixPage() {
   const [statusF, setStatusF] = useState("all");
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
-  // FR-071 AC3 — the bilingual export must be selectable, not a hidden parameter.
-  const [exportLang, setExportLang] = useState<"ar" | "en" | "both">("both");
 
   function load() {
     setLoading(true);
@@ -167,10 +120,7 @@ export default function MatrixPage() {
     setExporting(true);
     setExportError(null);
     try {
-      await downloadFile(
-        `/projects/${id}/exports/matrix.xlsx?lang=${exportLang}`,
-        `traceability-matrix-${exportLang}.xlsx`
-      );
+      await downloadFile(`/projects/${id}/exports/matrix.xlsx`, "traceability-matrix.xlsx");
     } catch (e: any) {
       setExportError(e?.message || String(e));
     } finally {
@@ -179,8 +129,9 @@ export default function MatrixPage() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div data-testid="matrix-page-root" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <PageHeader
+        testId="matrix-page-header"
         title={
           <span style={{ display: "inline-flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             {L.title} <RefChip id="FR-050" />
@@ -188,28 +139,16 @@ export default function MatrixPage() {
         }
         sub={L.sub}
         actions={
-          <div className="row" style={{ gap: 8, alignItems: "center" }}>
-            <Select
-              aria-label={L.lang}
-              value={exportLang}
-              onChange={(e) => setExportLang(e.target.value as "ar" | "en" | "both")}
-              style={{ height: 34, fontSize: 12, minWidth: 130 }}
-            >
-              <option value="both">{L.langBoth}</option>
-              <option value="ar">{L.langAr}</option>
-              <option value="en">{L.langEn}</option>
-            </Select>
-            <Button variant="secondary" disabled={exporting} onClick={exportXlsx}>
-              {exporting ? L.exporting : L.exportXlsx}
-            </Button>
-          </div>
+          <Button variant="secondary" testId="matrix-export-button" disabled={exporting} onClick={exportXlsx}>
+            {exporting ? L.exporting : L.exportXlsx}
+          </Button>
         }
       />
 
       {exportError && <div style={{ fontSize: 13, color: "var(--error)" }}>{exportError}</div>}
 
       {loading ? (
-        <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 13 }}>…</div>
+        <div style={{ padding: 24, color: "var(--text-secondary)", fontSize: 13 }}>…</div>
       ) : error ? (
         <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-start" }}>
           <div style={{ color: "var(--error)", fontSize: 13 }}>
@@ -222,8 +161,8 @@ export default function MatrixPage() {
       ) : (
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
-            <StatCard value={`${coverage}%`} label={L.coverage} color="var(--accent)" />
-            <StatCard value={gaps.length} label={L.gaps} color={gaps.length > 0 ? "var(--warning)" : "var(--success)"} />
+            <StatCard value={`${coverage}%`} label={L.coverage} color="var(--accent)" testId="matrix-coverage-stat" />
+            <StatCard value={gaps.length} label={L.gaps} color={gaps.length > 0 ? "var(--warning)" : "var(--success)"} testId="matrix-gaps-stat" />
           </div>
 
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -235,17 +174,18 @@ export default function MatrixPage() {
               ["failing", L.failing],
               ["errored", L.errored],
             ].map(([v, label]) => (
-              <Pill key={v} active={statusF === v} onClick={() => setStatusF(v)}>
+              <Pill key={v} active={statusF === v} testId={`matrix-filter-${v}-pill`} onClick={() => setStatusF(v)}>
                 {label}
               </Pill>
             ))}
           </div>
 
-          <Card title={L.matrix} pad={false}>
+          <Card title={L.matrix} pad={false} testId="matrix-table-root">
             {filtered.length === 0 ? (
               <Empty
                 title={statusF === "all" ? L.empty : L.emptyFiltered}
                 hint={statusF === "all" ? L.emptyHint : L.emptyFilteredHint}
+                testId="matrix-empty-state"
               />
             ) : (
               <div style={{ display: "flex", flexDirection: "column" }}>
@@ -258,6 +198,7 @@ export default function MatrixPage() {
                   return (
                     <div
                       key={req.id ?? i}
+                      data-testid="matrix-row"
                       style={{
                         display: "flex",
                         gap: 16,
@@ -272,7 +213,6 @@ export default function MatrixPage() {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div
                           title={req.description}
-                          dir="auto"
                           style={{
                             fontSize: 13,
                             color: "var(--text)",
@@ -286,12 +226,13 @@ export default function MatrixPage() {
                         </div>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8, alignItems: "center" }}>
                           {cases.length === 0 ? (
-                            <span style={{ fontSize: 11, color: "var(--text-muted)" }}>—</span>
+                            <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>—</span>
                           ) : (
                             cases.map((c: any, j: number) => (
                               <Link
                                 key={c.id ?? j}
                                 href={`/projects/${id}/review?case=${c.id}`}
+                                data-testid="matrix-row-case-link"
                                 style={{ textDecoration: "none" }}
                               >
                                 <span
@@ -309,9 +250,8 @@ export default function MatrixPage() {
                                     maxWidth: 220,
                                   }}
                                 >
-                                  <StatusDot state={c.latest_outcome ?? c.state} />
+                                  <StatusDot state={c.latest_outcome ?? c.state} testId="matrix-case-status-dot" />
                                   <span
-                                    dir="auto"
                                     style={{
                                       display: "block",
                                       minWidth: 0,
@@ -327,54 +267,15 @@ export default function MatrixPage() {
                             ))
                           )}
                         </div>
-
-                        {Array.isArray(row.criteria) && row.criteria.length > 0 && (
-                          <div style={{ marginTop: 10, display: "grid", gap: 4 }}>
-                            {row.criteria.map((c: any) => (
-                              <div key={c.index} className="row" style={{ gap: 8, alignItems: "flex-start" }}>
-                                <span
-                                  title={c.covered ? L.covered : L.uncovered}
-                                  style={{
-                                    color: c.covered ? "var(--success)" : "var(--warning)",
-                                    fontSize: 12,
-                                    lineHeight: 1.7,
-                                  }}
-                                >
-                                  {c.covered ? "✓" : "○"}
-                                </span>
-                                <M style={{ fontSize: 10.5, color: "var(--accent)" }}>{c.index}</M>
-                                <span dir="auto" style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
-                                  {c.statement}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
                       </div>
                       <div style={{ width: 150, flexShrink: 0, display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
-                        <Badge tone={tone}>{statusLabel(row.status)}</Badge>
+                        <Badge tone={tone} testId="matrix-row-status-badge" state={row.status}>{statusLabel(row.status)}</Badge>
                         <div style={{ width: "100%" }}>
-                          <Progress pct={pct} tone={row.status === "failing" ? "error" : row.status === "passing" ? "success" : undefined} />
+                          <Progress pct={pct} tone={row.status === "failing" ? "error" : row.status === "passing" ? "success" : undefined} testId="matrix-row-progress" />
                         </div>
-                        <M style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                        <M style={{ fontSize: 10, color: "var(--text-secondary)" }}>
                           {passed}/{cases.length} {L.cases}
                         </M>
-                        {/* FR-013 AC4 — the matrix reports against criteria, so a
-                            requirement cannot read as covered while one of its
-                            sentences has nothing testing it. */}
-                        {typeof row.criteria_total === "number" && row.criteria_total > 0 && (
-                          <M
-                            style={{
-                              fontSize: 10,
-                              color:
-                                row.criteria_covered === row.criteria_total
-                                  ? "var(--success)"
-                                  : "var(--warning)",
-                            }}
-                          >
-                            {row.criteria_covered}/{row.criteria_total} {L.criteriaCovered}
-                          </M>
-                        )}
                       </div>
                     </div>
                   );
@@ -391,6 +292,7 @@ export default function MatrixPage() {
                 {gaps.map((g, i) => (
                   <div
                     key={g.requirement_id ?? i}
+                    data-testid="matrix-gap-card"
                     style={{
                       border: "1px solid var(--warning)",
                       background: "var(--warning-subtle, rgba(255,197,61,.16))",
@@ -416,15 +318,17 @@ export default function MatrixPage() {
                       </span>
                     </div>
                     {g.next_action && (
-                      <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{g.next_action}</div>
+                      <div style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>{g.next_action}</div>
                     )}
-                    <div>
-                      <Link href={`/projects/${id}/generate?req=${g.requirement_id}`}>
-                        <Button variant="secondary" size="sm">
-                          {L.targetGen}
-                        </Button>
-                      </Link>
-                    </div>
+                    {canDo("generate") && (
+                      <div>
+                        <Link href={`/projects/${id}/generate?req=${g.requirement_id}`}>
+                          <Button variant="secondary" size="sm" testId="matrix-gap-generate-button">
+                            {L.targetGen}
+                          </Button>
+                        </Link>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

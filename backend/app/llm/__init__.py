@@ -4,7 +4,8 @@ Single entry point: complete_json(prompt_id, prompt, schema) -> (validated dict,
 Provider selected by config alone; callers never see provider-specific types.
 """
 from ..config import settings
-from .base import LLMProvider, LLMResult
+from .base import (UNTRUSTED_CLOSE, UNTRUSTED_NOTE, UNTRUSTED_OPEN, LLMProvider,
+                   LLMResult, frame_untrusted, strip_untrusted_frame)
 from .mock import MockProvider
 
 _provider: LLMProvider | None = None

@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1560">
+<title>Traceo v2 — شاشات AR للاستيراد إلى Figma</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* ===== Forge tokens ===== */
+:root{
+  --bg:#131217;--surface:#1B1A21;--s2:#22212B;--s3:#2C2B37;--overlay:rgba(7,7,11,.66);
+  --bd:#312F3C;--bds:#443F54;
+  --tx:#F2EFF7;--ts:#ADA8BB;--tm:#756F84;--ti:#1A1207;
+  --ac:#FF9B3D;--af:#FF8A22;--afp:#F07A12;--ag:#211405;
+  --acs:rgba(255,138,34,.16);--ring:rgba(255,138,34,.42);
+  --amber:#FF8A22;--coral:#FF5C72;--pink:#F85EC2;--violet:#9B6BFF;--blue:#4D9DFF;--cyan:#2BD4C4;--green:#4FD86B;--yellow:#FFC53D;
+  --su:#3FD179;--sus:rgba(63,209,121,.16);
+  --wa:#FFC53D;--was:rgba(255,197,61,.16);
+  --er:#FF5C72;--ers:rgba(255,92,114,.16);
+  --inf:#4D9DFF;--infs:rgba(77,157,255,.16);
+  --gh:linear-gradient(135deg,#FF8A22 0%,#F85EC2 52%,#9B6BFF 100%);
+  --gw:linear-gradient(135deg,#FF8A22 0%,#FF5C72 100%);
+  --sans:'IBM Plex Sans Arabic',system-ui,sans-serif;
+  --mono:'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace;
+}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:#0E0D12;font-family:var(--sans);font-size:13.5px;line-height:1.55;color:var(--tx);-webkit-font-smoothing:antialiased}
+h1,h2,h3,h4,p{margin:0}
+/* ===== canvas / frames ===== */
+.slabel{width:1440px;margin:48px auto 10px;font-family:var(--mono);font-size:12px;color:#5C5768;direction:ltr;text-align:left}
+.frame{width:1440px;min-height:900px;margin:0 auto;background:var(--bg);outline:1px solid #26242e;position:relative;overflow:hidden}
+/* ===== utilities ===== */
+.mono{font-family:var(--mono);direction:ltr;unicode-bidi:isolate;display:inline-block}
+.mut{color:var(--tm)}.sec{color:var(--ts)}
+.eyebrow{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--tm)}
+.row{display:flex;align-items:center;gap:12px}
+.col{display:flex;flex-direction:column;gap:12px}
+.between{justify-content:space-between}.wrap{flex-wrap:wrap}.grow{flex:1;min-width:0}
+.g16{gap:16px}.g8{gap:8px}.g6{gap:6px}.g4{gap:4px}
+.grid{display:grid;gap:16px}
+.trunc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sep{height:1px;background:var(--bd)}
+/* ===== components ===== */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:44px;padding:0 18px;border-radius:8px;font-family:var(--sans);font-size:13.5px;font-weight:600;border:none;cursor:default;white-space:nowrap}
+.btn-p{background:var(--af);color:var(--ag)}
+.btn-s{background:var(--s3);color:var(--tx);border:1px solid var(--bds)}
+.btn-g{background:transparent;color:var(--ac)}
+.btn-gm{background:transparent;color:var(--ts)}
+.btn-d{background:var(--er);color:#fff}
+.btn-sm{height:34px;padding:0 14px;font-size:12.5px}
+.btn-blk{width:100%}
+.card{background:var(--surface);border:1px solid var(--bd);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:14px}
+.card-lg{border-radius:16px;padding:24px}
+.card-flat{padding:0;overflow:hidden}
+.chead{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.chead h3{font-size:15px;font-weight:600}
+.nest{background:var(--s2);border-radius:10px;padding:12px 14px}
+.badge{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 10px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap}
+.b-su{background:var(--sus);color:var(--su)}.b-wa{background:var(--was);color:var(--wa)}
+.b-er{background:var(--ers);color:var(--er)}.b-inf{background:var(--infs);color:var(--inf)}
+.b-mut{background:var(--s3);color:var(--ts)}.b-ac{background:var(--acs);color:var(--ac)}
+.ref{display:inline-flex;align-items:center;height:20px;padding:0 6px;border-radius:6px;background:var(--acs);color:var(--ac);font-family:var(--mono);font-size:10.5px;font-weight:500;direction:ltr}
+.pillbar{display:inline-flex;gap:4px;padding:4px;background:var(--surface);border:1px solid var(--bd);border-radius:999px}
+.pill{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 14px;border-radius:999px;font-size:13px;font-weight:600;color:var(--ts);white-space:nowrap}
+.pill.on{background:var(--s3);color:var(--tx)}
+.pill.on-ac{background:var(--acs);color:var(--ac);box-shadow:inset 0 0 0 1px var(--ac)}
+.pill.on-fill{background:var(--af);color:var(--ag)}
+.stat{background:var(--surface);border:1px solid var(--bd);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:6px;min-width:180px;position:relative}
+.stat .v{font-size:28px;font-weight:700;letter-spacing:-.02em;line-height:1.15}
+.stat .l{font-size:12.5px;color:var(--ts)}
+.stat .d{font-family:var(--mono);font-size:10.5px;direction:ltr;text-align:right}
+.stat .corner{position:absolute;left:14px;top:14px}
+.tbl{width:100%;border-collapse:collapse}
+.tbl th{text-align:right;height:36px;padding:0 16px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--tm);border-bottom:1px solid var(--bd);background:var(--s2)}
+.tbl td{padding:12px 16px;border-bottom:1px solid rgba(49,47,60,.6);font-size:13px;vertical-align:middle}
+.tbl tr:last-child td{border-bottom:0}
+.num{font-family:var(--mono);font-size:12px;direction:ltr;unicode-bidi:isolate}
+.prog{height:6px;border-radius:999px;background:var(--s3);overflow:hidden;min-width:52px}
+.prog>i{display:block;height:100%;border-radius:999px;background:var(--gw)}
+.prog.sm{width:52px}
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-size:12.5px;font-weight:500;color:var(--ts)}
+.input{height:44px;padding:0 14px;background:var(--s2);border:1px solid var(--bd);border-radius:8px;color:var(--tx);font-family:var(--sans);font-size:13.5px;display:flex;align-items:center}
+.input .ph{color:var(--tm)}
+.hint{font-size:11.5px;color:var(--tm)}
+.chipn{width:26px;height:26px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:12px;font-weight:700;flex:none}
+.code{background:var(--bg);border:1px solid var(--bd);border-radius:10px;padding:14px;font-family:var(--mono);font-size:12px;line-height:1.7;color:var(--ts);direction:ltr;text-align:left;white-space:pre-wrap;word-break:break-word}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block}
+.drop{border:1.5px dashed var(--bds);border-radius:12px;padding:32px;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center}
+.alert-am{background:var(--acs);border-radius:10px;padding:14px;font-size:12.5px;color:var(--ts);line-height:1.6}
+.empty{padding:40px;display:flex;flex-direction:column;align-items:center;gap:8px;color:var(--tm);text-align:center}
+.trend{display:flex;align-items:flex-end;gap:6px;height:130px;border-bottom:1px solid var(--bd);padding-bottom:0;direction:ltr}
+.trend i{width:10px;border-radius:3px 3px 0 0;background:var(--gw)}
+.donut{width:96px;height:96px;border-radius:50%;flex:none;display:grid;place-items:center;position:relative}
+.donut>span{width:68px;height:68px;border-radius:50%;background:var(--surface);display:grid;place-items:center;font-family:var(--mono);font-size:20px;font-weight:700}
+.logo{border-radius:9px;background:var(--gh);display:grid;place-items:center;color:var(--ag);font-weight:700;font-family:var(--mono)}
+/* ===== app shell ===== */
+.hdr{height:64px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;background:rgba(19,18,23,.86);border-bottom:1px solid var(--bd)}
+.shell{display:grid;grid-template-columns:240px 1fr;min-height:836px}
+.sb{background:var(--surface);border-left:1px solid var(--bd);padding:12px;display:flex;flex-direction:column;gap:2px}
+.sb .proj{padding:10px 12px 14px;display:flex;flex-direction:column;gap:6px}
+.sb .grp{font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--tm);padding:14px 12px 4px}
+.sb a{display:flex;align-items:center;justify-content:space-between;height:38px;padding:0 12px;border-radius:8px;color:var(--ts);font-size:13px;font-weight:500;text-decoration:none}
+.sb a.on{background:var(--acs);color:var(--ac)}
+.sb a .cnt{font-family:var(--mono);font-size:11px;color:var(--tm)}
+.content{padding:24px 32px 40px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.phead{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:4px}
+.phead h2{font-size:24px;font-weight:700;letter-spacing:-.02em}
+.phead .sub{font-size:13px;color:var(--ts);margin-top:4px}
+</style>
+</head>
+<body>
+
+<!-- ============ 01 · تسجيل الدخول ============ -->
+<div class="slabel">01 · login · /login</div>
+<div class="frame" style="display:grid;place-items:center">
+  <div class="card card-lg" style="width:400px;align-items:center;gap:18px;text-align:center">
+    <div class="logo" style="width:40px;height:40px;font-size:20px">T</div>
+    <div>
+      <div style="font-size:22px;font-weight:700;letter-spacing:-.02em">Traceo</div>
+      <div class="mono mut" style="font-size:11px;margin-top:4px">requirement → test → result</div>
+    </div>
+    <div class="field" style="width:100%;text-align:right">
+      <label>البريد الإلكتروني</label>
+      <div class="input"><span class="mono ph" style="font-size:12.5px">you@company.sa</span></div>
+    </div>
+    <div class="field" style="width:100%;text-align:right">
+      <label>كلمة المرور</label>
+      <div class="input"><span class="mono ph">••••••••••</span></div>
+    </div>
+    <div class="btn btn-p btn-blk">تسجيل الدخول</div>
+    <div class="nest" style="width:100%">
+      <div class="mut" style="font-size:11px">بيانات الدخول التجريبية</div>
+      <div class="mono sec" style="font-size:12px;margin-top:4px">demo@traceo.sa · Demo1234!</div>
+    </div>
+    <div style="font-size:12.5px;color:var(--ac);font-weight:500">ليس لديك حساب؟ إنشاء حساب جديد</div>
+  </div>
+</div>
+
+<!-- ============ 02 · المشاريع ============ -->
+<div class="slabel">02 · projects · /projects</div>
+<div class="frame">
+  <div class="hdr">
+    <div class="row" style="gap:10px">
+      <div class="logo" style="width:30px;height:30px;font-size:16px">T</div>
+      <div style="font-size:17px;font-weight:700;letter-spacing:-.02em">Traceo</div>
+      <div class="mono mut" style="font-size:11px">requirement → test → result</div>
+    </div>
+    <div class="row" style="gap:16px">
+      <div class="pillbar" style="padding:3px">
+        <span class="pill on-fill" style="height:26px;padding:0 10px;font-size:11px"><span class="mono" style="font-size:11px">AR</span></span>
+        <span class="pill" style="height:26px;padding:0 10px;font-size:11px"><span class="mono" style="font-size:11px">EN</span></span>
+      </div>
+      <span class="sec" style="font-size:13px">مها القحطاني</span>
+      <span class="sec" style="font-size:12.5px">تسجيل الخروج</span>
+    </div>
+  </div>
+  <div class="content" style="padding:32px">
+    <div class="phead">
+      <div>
+        <h2>المشاريع</h2>
+        <div class="sub">ثلاثة مشاريع — البيانات لا تغادر شبكتك</div>
+      </div>
+      <div class="btn btn-p">+ مشروع جديد</div>
+    </div>
+    <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="card" style="gap:10px">
+        <div class="row between"><div style="font-size:15px;font-weight:600">منصة الطلبات</div><span class="badge b-mut"><span class="mono" style="font-size:10.5px">ar</span></span></div>
+        <div class="row g6"><span class="mut" style="font-size:11.5px">أُنشئ</span><span class="mono mut" style="font-size:11px">2026-06-02</span></div>
+        <div class="mono mut" style="font-size:10.5px">prj_8f3a2</div>
+        <div class="sep"></div>
+        <div class="row between"><span class="badge b-su">6 متطلبات مؤكدة</span><div class="btn btn-s btn-sm">فتح</div></div>
+      </div>
+      <div class="card" style="gap:10px">
+        <div class="row between"><div style="font-size:15px;font-weight:600">بوابة الموردين</div><span class="badge b-mut"><span class="mono" style="font-size:10.5px">ar</span></span></div>
+        <div class="row g6"><span class="mut" style="font-size:11.5px">أُنشئ</span><span class="mono mut" style="font-size:11px">2026-05-17</span></div>
+        <div class="mono mut" style="font-size:10.5px">prj_1c9d4</div>
+        <div class="sep"></div>
+        <div class="row between"><span class="badge b-inf">قيد التحليل</span><div class="btn btn-s btn-sm">فتح</div></div>
+      </div>
+      <div class="card" style="gap:10px">
+        <div class="row between"><div style="font-size:15px;font-weight:600;direction:ltr;text-align:left">Loyalty API</div><span class="badge b-mut"><span class="mono" style="font-size:10.5px">en</span></span></div>
+        <div class="row g6"><span class="mut" style="font-size:11.5px">أُنشئ</span><span class="mono mut" style="font-size:11px">2026-04-08</span></div>
+        <div class="mono mut" style="font-size:10.5px">prj_77b1e</div>
+        <div class="sep"></div>
+        <div class="row between"><span class="badge b-mut">مؤرشف</span><div class="btn btn-s btn-sm">فتح</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 03 · لوحة القيادة ============ -->
+<div class="slabel">03 · dashboard · /overview</div>
+<div class="frame">
+  <div class="hdr">
+    <div class="row" style="gap:10px">
+      <div class="logo" style="width:30px;height:30px;font-size:16px">T</div>
+      <div style="font-size:17px;font-weight:700">Traceo</div>
+      <div class="mono mut" style="font-size:11px">requirement → test → result</div>
+    </div>
+    <div class="row" style="gap:16px">
+      <div class="pillbar" style="padding:3px"><span class="pill on-fill" style="height:26px;padding:0 10px"><span class="mono" style="font-size:11px">AR</span></span><span class="pill" style="height:26px;padding:0 10px"><span class="mono" style="font-size:11px">EN</span></span></div>
+      <span class="sec" style="font-size:13px">مها القحطاني</span>
+      <span class="sec" style="font-size:12.5px">تسجيل الخروج</span>
+    </div>
+  </div>
+  <div class="shell">
+    <aside class="sb">
+      <div class="proj"><div class="row between"><div style="font-size:14px;font-weight:600">منصة الطلبات</div><span class="badge b-mut"><span class="mono" style="font-size:10.5px">ar</span></span></div></div>
+      <div class="grp">مساحة العمل</div>
+      <a class="on" href="#">نظرة عامة</a>
+      <a href="#">المتطلبات <span class="cnt">6</span></a>
+      <a href="#">الواجهات <span class="cnt">8</span></a>
+      <div class="grp">التحليل</div>
+      <a href="#">التوليد</a>
+      <a href="#">المراجعة <span class="cnt">265</span></a>
+      <a href="#">التشغيلات <span class="cnt">4</span></a>
+      <a href="#">المصفوفة</a>
+      <div class="grp">الإعداد</div>
+      <a href="#">البيئات <span class="cnt">3</span></a>
+      <a href="#">الأعضاء والتدقيق</a>
+    </aside>
+    <div class="content">
+      <div class="phead">
+        <div><h2>نظرة عامة</h2><div class="sub">تغطية المتطلبات والانحدارات والفجوات — مشروع منصة الطلبات</div></div>
+        <div class="row g8"><div class="btn btn-s btn-sm">كل التشغيلات</div><div class="btn btn-p btn-sm">تشغيل جديد</div></div>
+      </div>
+      <div class="grid" style="grid-template-columns:repeat(5,1fr)">
+        <div class="stat"><span class="corner ref">FR-050</span><span class="v" style="color:var(--ac)">87%</span><span class="l">تغطية المتطلبات</span><span class="d" style="color:var(--su)">+2.1 pts</span></div>
+        <div class="stat"><span class="v" style="color:var(--su)">265</span><span class="l">حالة معتمدة</span><span class="d" style="color:var(--tm)">38 مسودة</span></div>
+        <div class="stat"><span class="v" style="color:var(--blue)"><span class="mono" style="font-size:26px;font-weight:700">207/265</span></span><span class="l">آخر تشغيل <span class="mono" style="font-size:11px">#1001</span></span><span class="d" style="color:var(--tm)">2026-07-24 21:14</span></div>
+        <div class="stat"><span class="corner ref">FR-052</span><span class="v" style="color:var(--er)">7</span><span class="l">عيوب مفتوحة · 2 حرجة</span><span class="d" style="color:var(--er)">BUG-141 · BUG-142</span></div>
+        <div class="stat"><span class="v" style="color:var(--cyan)"><span class="mono" style="font-size:26px;font-weight:700">1.0s</span></span><span class="l">وسيط مدة الحالة</span><span class="d" style="color:var(--su)">-0.2s</span></div>
+      </div>
+      <div class="grid" style="grid-template-columns:1.6fr 1fr;align-items:start">
+        <div class="card">
+          <div class="chead"><h3>اتجاه التغطية</h3><div class="row g6"><span class="mono mut" style="font-size:10.5px">آخر 14 تشغيلاً</span><span class="ref">FR-054</span></div></div>
+          <div class="trend">
+            <i style="height:44%"></i><i style="height:48%"></i><i style="height:46%"></i><i style="height:55%"></i><i style="height:60%"></i><i style="height:58%"></i><i style="height:66%"></i><i style="height:72%"></i><i style="height:70%"></i><i style="height:76%"></i><i style="height:80%"></i><i style="height:78%"></i><i style="height:86%"></i><i style="height:92%"></i>
+          </div>
+          <div class="row between"><span class="mono mut" style="font-size:10.5px">#1001</span><span class="mono mut" style="font-size:10.5px">#0988</span></div>
+        </div>
+        <div class="card">
+          <div class="chead"><h3>آخر تشغيل</h3><span class="badge b-su">مكتمل</span></div>
+          <div class="row" style="gap:20px">
+            <div class="donut" style="background:conic-gradient(var(--su) 0 78%,var(--er) 78% 95%,var(--wa) 95% 100%)"><span>78%</span></div>
+            <div class="col grow" style="gap:7px">
+              <div class="row between"><span class="sec" style="font-size:12.5px">ناجح</span><span class="mono" style="font-size:12px;color:var(--su)">207</span></div>
+              <div class="row between"><span class="sec" style="font-size:12.5px">فاشل</span><span class="mono" style="font-size:12px;color:var(--er)">46</span></div>
+              <div class="row between"><span class="sec" style="font-size:12.5px">خطأ</span><span class="mono" style="font-size:12px;color:var(--wa)">12</span></div>
+              <div class="row between"><span class="sec" style="font-size:12.5px">المدة</span><span class="mono" style="font-size:12px">6m 12s</span></div>
+            </div>
+          </div>
+          <div class="btn btn-s btn-sm btn-blk">فتح التقرير</div>
+        </div>
+      </div>
+      <div class="grid" style="grid-template-columns:1fr 1fr;align-items:start">
+        <div class="card">
+          <div class="chead"><h3>مراقبة الانحدار</h3><span class="ref">FR-062</span></div>
+          <div class="nest row between" style="gap:10px">
+            <div class="row g8 grow"><span class="badge b-er">حرج</span><span class="trunc" style="font-size:12.5px">هاتف بـ11 خانة يُقبل — يعيد 201 بدل 422</span></div>
+            <div class="row g6"><span class="mono" style="font-size:10.5px;color:var(--ac)">REQ-014</span><span class="badge b-er">فشل</span></div>
+          </div>
+          <div class="nest row between" style="gap:10px">
+            <div class="row g8 grow"><span class="badge b-er">حرج</span><span class="trunc" style="font-size:12.5px">إلغاء طلب مُرسَل ما زال ينجح</span></div>
+            <div class="row g6"><span class="mono" style="font-size:10.5px;color:var(--ac)">REQ-019</span><span class="badge b-er">فشل</span></div>
+          </div>
+          <div class="nest row between" style="gap:10px">
+            <div class="row g8 grow"><span class="badge b-wa">كبير</span><span class="trunc" style="font-size:12.5px">مهلة بوابة الدفع لا يُعاد المحاولة بعدها</span></div>
+            <div class="row g6"><span class="mono" style="font-size:10.5px;color:var(--ac)">REQ-027</span><span class="badge b-er">فشل</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="chead"><h3>فجوات التغطية</h3><div class="row g6"><span class="badge b-wa">2</span><span class="ref">FR-051</span></div></div>
+          <div class="nest" style="background:var(--was)">
+            <div class="row between"><span class="mono" style="font-size:12px;font-weight:700;color:var(--wa)">REQ-021</span><span class="badge b-mut">تعريب</span></div>
+            <div style="font-size:12.5px;margin-top:6px">الفاتورة العربية تُعرض من اليمين إلى اليسار</div>
+            <div class="hint" style="margin-top:6px">لا توجد واجهة مطابقة في السطح المكتشف — الإجراء التالي: ارفع مواصفة خدمة الفواتير</div>
+            <div class="btn btn-s btn-sm" style="margin-top:10px;width:fit-content">توليد مستهدف</div>
+          </div>
+          <div class="nest" style="background:var(--was)">
+            <div class="row between"><span class="mono" style="font-size:12px;font-weight:700;color:var(--wa)">REQ-033</span><span class="badge b-mut">امتثال</span></div>
+            <div style="font-size:12.5px;margin-top:6px">الاحتفاظ بسجل التدقيق 90 يوماً</div>
+            <div class="hint" style="margin-top:6px">لا حالات معتمدة لهذا المتطلب — الإجراء التالي: راجع الحالات المولّدة</div>
+            <div class="btn btn-s btn-sm" style="margin-top:10px;width:fit-content">توليد مستهدف</div>
+          </div>
+        </div>
+      </div>
+      <div class="row wrap g8">
+        <span class="pill" style="background:var(--s2);border:1px solid var(--bd)"><span class="dot" style="background:var(--tm)"></span>مسودة <span class="mono" style="font-size:11px">38</span></span>
+        <span class="pill" style="background:var(--s2);border:1px solid var(--bd)"><span class="dot" style="background:var(--su)"></span>معتمد <span class="mono" style="font-size:11px">265</span></span>
+        <span class="pill" style="background:var(--s2);border:1px solid var(--bd)"><span class="dot" style="background:var(--er)"></span>مرفوض <span class="mono" style="font-size:11px">14</span></span>
+        <span class="pill" style="background:var(--s2);border:1px solid var(--bd)"><span class="dot" style="background:var(--wa)"></span>قديم <span class="mono" style="font-size:11px">6</span></span>
+        <span class="pill" style="background:var(--s2);border:1px solid var(--bd)"><span class="dot" style="background:var(--inf)"></span>قيد التنفيذ <span class="mono" style="font-size:11px">0</span></span>
+      </div>
+      <div class="card" style="flex-direction:row;align-items:center;gap:14px;flex-wrap:wrap">
+        <div class="row g6"><span class="chipn" style="background:rgba(255,138,34,.16);color:var(--amber)">1</span><span class="sec" style="font-size:12.5px">تحليل المتطلبات</span></div><span class="mut">←</span>
+        <div class="row g6"><span class="chipn" style="background:rgba(248,94,194,.16);color:var(--pink)">2</span><span class="sec" style="font-size:12.5px">اكتشاف الواجهات</span></div><span class="mut">←</span>
+        <div class="row g6"><span class="chipn" style="background:rgba(155,107,255,.16);color:var(--violet)">3</span><span class="sec" style="font-size:12.5px">التوليد المقيّد</span></div><span class="mut">←</span>
+        <div class="row g6"><span class="chipn" style="background:rgba(77,157,255,.16);color:var(--blue)">4</span><span class="sec" style="font-size:12.5px">المراجعة البشرية</span></div><span class="mut">←</span>
+        <div class="row g6"><span class="chipn" style="background:rgba(43,212,196,.16);color:var(--cyan)">5</span><span class="sec" style="font-size:12.5px">التنفيذ والتتبّع</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 04 · المتطلبات ============ -->
+<div class="slabel">04 · requirements · /requirements</div>
+<div class="frame">
+  <div class="hdr">
+    <div class="row" style="gap:10px"><div class="logo" style="width:30px;height:30px;font-size:16px">T</div><div style="font-size:17px;font-weight:700">Traceo</div><div class="mono mut" style="font-size:11px">requirement → test → result</div></div>
+    <div class="row" style="gap:16px"><div class="pillbar" style="padding:3px"><span class="pill on-fill" style="height:26px;padding:0 10px"><span class="mono" style="font-size:11px">AR</span></span><span class="pill" style="height:26px;padding:0 10px"><span class="mono" style="font-size:11px">EN</span></span></div><span class="sec" style="font-size:13px">مها القحطاني</span><span class="sec" style="font-size:12.5px">تسجيل الخروج</span></div>
+  </div>
+  <div class="shell">
+    <aside class="sb">
+      <div class="proj"><div class="row between"><div style="font-size:14px;font-weight:600">منصة الطلبات</div><span class="badge b-mut"><span class="mono" style="font-size:10.5px">ar</span></span></div></div>
+      <div class="grp">مساحة العمل</div>
+      <a href="#">نظرة عامة</a>
+      <a class="on" href="#">المتطلبات <span class="cnt">6</span></a>
+      <a href="#">الواجهات <span class="cnt">8</span></a>
+      <div class="grp">التحليل</div>
+      <a href="#">التوليد</a><a href="#">المراجعة <span class="cnt">265</span></a><a href="#">التشغيلات <span class="cnt">4</span></a><a href="#">المصفوفة</a>
+      <div class="grp">الإعداد</div>
+      <a href="#">البيئات <span class="cnt">3</span></a><a href="#">الأعضاء والتدقيق</a>
+    </aside>
+    <div class="content">
+      <div class="phead">
+        <div><h2>المتطلبات</h2><div class="sub">مستخرجة من <span class="mono" style="font-size:11.5px">BRD_OrdersPlatform_v3.2.pdf</span> — كل متطلب يحتفظ برابط لفقرته المصدر</div></div>
+        <div class="btn btn-p">رفع مستند</div>
+      </div>
+      <div class="drop">
+        <div style="font-size:14px;font-weight:600">أسقط مستند المتطلبات هنا</div>
+        <div class="hint">PDF · DOCX · MD — حتى 50MB · عربي وإنجليزي</div>
+      </div>
+      <div class="card" style="flex-direction:row;align-items:center;justify-content:space-between">
+        <div class="row g8"><span class="mono" style="font-size:12px">BRD_OrdersPlatform_v3.2.pdf</span><span class="badge b-mut">v2</span><span class="badge b-su">مكتمل التحليل</span></div>
+        <div class="row g6"><span class="hint">6 متطلبات · 21 معيار قبول</span><div class="btn btn-gm btn-sm">إعادة التحليل</div></div>
+      </div>
+      <div class="row between wrap">
+        <div class="pillbar"><span class="pill on">الكل 6</span><span class="pill">مستخرج 2</span><span class="pill">مؤكد 3</span><span class="pill">قديم 1</span></div>
+        <div class="row g8"><div class="input" style="width:240px;height:36px"><span class="ph" style="font-size:12.5px">بحث في المتطلبات…</span></div><div class="btn btn-s btn-sm">اعتماد الكل</div></div>
+      </div>
+      <div class="card card-flat">
+        <table class="tbl">
+          <tr><th style="width:90px">المعرّف</th><th>الوصف</th><th style="width:120px">الثقة</th><th style="width:90px">النوع</th><th style="width:80px">الأولوية</th><th style="width:90px">الحالة</th><th style="width:150px"></th></tr>
+          <tr><td><span class="mono" style="color:var(--ac);font-weight:500">REQ-008</span></td><td>تسجيل الدخول بالهوية الوطنية (10 أرقام تبدأ بـ1 أو 2)</td><td><div class="row g6"><span class="prog sm"><i style="width:96%"></i></span><span class="num mut">96%</span></div></td><td><span class="badge b-mut">وظيفي</span></td><td><span class="badge b-er">عالية</span></td><td><span class="badge b-su">مؤكد</span></td><td><div class="row g6"><div class="btn btn-s btn-sm">اعتماد</div><div class="btn btn-gm btn-sm">تحرير</div></div></td></tr>
+          <tr><td><span class="mono" style="color:var(--ac);font-weight:500">REQ-014</span></td><td>رقم الجوال يبدأ بـ05 ويتكوّن من 10 أرقام بالضبط</td><td><div class="row g6"><span class="prog sm"><i style="width:92%"></i></span><span class="num mut">92%</span></div></td><td><span class="badge b-mut">وظيفي</span></td><td><span class="badge b-er">عالية</span></td><td><span class="badge b-su">مؤكد</span></td><td><div class="row g6"><div class="btn btn-s btn-sm">اعتماد</div><div class="btn btn-gm btn-sm">تحرير</div></div></td></tr>
+          <tr><td><span class="mono" style="color:var(--ac);font-weight:500">REQ-019</span></td><td>يمكن إلغاء الطلب ما دام لم يُرسَل — الطلب المُرسَل يعيد 409</td><td><div class="row g6"><span class="prog sm"><i style="width:88%"></i></span><span class="num mut">88%</span></div></td><td><span class="badge b-mut">قاعدة عمل</span></td><td><span class="badge b-er">عالية</span></td><td><span class="badge b-su">مؤكد</span></td><td><div class="row g6"><div class="btn btn-s btn-sm">اعتماد</div><div class="btn btn-gm btn-sm">تحرير</div></div></td></tr>
+          <tr><td><span class="mono" style="color:var(--ac);font-weight:500">REQ-027</span></td><td>إعادة محاولة الدفع 3 مرات عند انتهاء مهلة البوابة</td><td><div class="row g6"><span class="prog sm"><i style="width:81%;background:var(--wa)"></i></span><span class="num mut">81%</span></div></td><td><span class="badge b-mut">غير وظيفي</span></td><td><span class="badge b-er">عالية</span></td><td><span class="badge b-inf">مستخرج</span></td><td><div class="row g6"><div class="btn btn-s btn-sm">اعتماد</div><div class="btn btn-gm btn-sm">تحرير</div></div></td></tr>
+          <tr><td><span class="mono" style="color:var(--ac);font-weight:500">REQ-021</span></td><td>الفاتورة العربية تُعرض RTL والاسم يعود دون تشوّه ترميز</td><td><div class="row g6"><span class="prog sm"><i style="width:74%;background:var(--wa)"></i></span><span class="num mut">74%</span></div></td><td><span class="badge b-mut">تعريب</span></td><td><span class="badge b-wa">متوسطة</span></td><td><span class="badge b-wa">قديم</span></td><td><div class="row g6"><div class="btn btn-s btn-sm">اعتماد</div><div class="btn btn-gm btn-sm">تحرير</div></div></td></tr>
+          <tr><td><span class="mono" style="color:var(--ac);font-weight:500">REQ-033</span></td><td>سجل التدقيق غير قابل للتعديل ويُحتفظ به 90 يوماً</td><td><div class="row g6"><span class="prog sm"><i style="width:69%;background:var(--er)"></i></span><span class="num mut">69%</span></div></td><td><span class="badge b-mut">امتثال</span></td><td><span class="badge b-wa">متوسطة</span></td><td><span class="badge b-inf">مستخرج</span></td><td><div class="row g6"><div class="btn btn-s btn-sm">اعتماد</div><div class="btn btn-gm btn-sm">تحرير</div></div></td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 05 · الواجهات ============ -->
+<div class="slabel">05 · endpoints · /endpoints</div>
+<div class="frame">
+  <div class="hdr">
+    <div class="row" style="gap:10px"><div class="logo" style="width:30px;height:30px;font-size:16px">T</div><div style="font-size:17px;font-weight:700">Traceo</div><div class="mono mut" style="font-size:11px">requirement → test → result</div></div>
+    <div class="row" style="gap:16px"><div class="pillbar" style="padding:3px"><span class="pill on-fill" style="height:26px;padding:0 10px"><span class="mono" style="font-size:11px">AR</span></span><span class="pill" style="height:26px;padding:0 10px"><span class="mono" style="font-size:11px">EN</span></span></div><span class="sec" style="font-size:13px">مها القحطاني</span><span class="sec" style="font-size:12.5px">تسجيل الخروج</span></div>
+  </div>
+  <div class="shell">
+    <aside class="sb">
+      <div class="proj"><div class="row between"><div style="font-size:14px;font-weight:600">منصة الطلبات</div><span class="badge b-mut"><span class="mono" style="font-size:10.5px">ar</span></span></div></div>
+      <div class="grp">مساحة العمل</div>
+      <a href="#">نظرة عامة</a><a href="#">المتطلبات <span class="cnt">6</span></a><a class="on" href="#">الواجهات <span class="cnt">8</span></a>
+      <div class="grp">التحليل</div>
+      <a href="#">التوليد</a><a href="#">المراجعة <span class="cnt">265</span></a><a href="#">التشغيلات <span class="cnt">4</span></a><a href="#">المصفوفة</a>
+      <div class="grp">الإعداد</div>
+      <a href="#">البيئات <span class="cnt">3</span></a><a href="#">الأعضاء والتدقيق</a>
+    </aside>
+    <div class="content">
+      <div class="phead">
+        <div><h2 class="row g8" style="display:flex">الواجهات <span class="ref">FR-024</span></h2><div class="sub">ما اكتشفه Traceo في نظامك، وكيف اكتشفه، وكم منه تلمسه الاختبارات</div></div>
+        <div class="row g8"><div class="btn btn-s btn-sm">إعادة الاكتشاف</div></div>
+      </div>
+      <div class="card">
+        <div class="chead"><h3>استيراد المواصفة</h3><div class="pillbar"><span class="pill on">رابط URL</span><span class="pill">رفع ملف</span></div></div>
+        <div class="row g8">
+          <div class="input grow"><span class="mono ph" style="font-size:12px">https://staging.orders.internal/openapi.json</span></div>
+          <div class="btn btn-s">جلب</div>
+        </div>
+        <div class="row g8 wrap">
+          <span class="badge b-su">8 واجهات</span>
+          <span class="badge b-wa">تحذيران: مخطط ناقص في <span class="mono" style="font-size:10.5px">GET /invoices/{id}</span></span>
+          <span class="badge b-su">+2 أُضيفت</span>
+          <span class="badge b-er">−1 أُزيلت</span>
+        </div>
+      </div>
+      <div class="card card-flat">
+        <table class="tbl">
+          <tr><th style="width:76px">Method</th><th>المسار</th><th>الملخص</th><th style="width:80px">المعاملات</th><th style="width:90px">الاختبارات</th><th style="width:140px">التغطية</th><th style="width:110px">آخر نتيجة</th><th style="width:80px">الأمان</th><th style="width:70px">تضمين</th></tr>
+          <tr>
+            <td><span class="badge" style="background:rgba(79,216,107,.16);color:var(--green)"><span class="mono" style="font-size:10.5px;font-weight:700">POST</span></span></td>
+            <td><span class="mono" style="font-size:12px">/auth/login</span></td><td class="sec" style="font-size:12.5px">تسجيل الدخول</td>
+            <td><span class="num">3</span></td><td><span class="num">14</span></td>
+            <td><div class="row g6"><span class="prog sm"><i style="width:100%;background:var(--su)"></i></span><span class="num mut">100%</span></div></td>
+            <td><div class="row g6"><span class="dot" style="background:var(--su)"></span><span class="mono mut" style="font-size:10.5px">passed</span></div></td>
+            <td><span class="badge b-inf">محمي</span></td>
+            <td><span style="width:36px;height:20px;border-radius:999px;background:var(--af);position:relative;display:inline-block"><i style="position:absolute;left:2px;top:2px;width:16px;height:16px;border-radius:50%;background:#F2EFF7"></i></span></td>
+          </tr>
+          <tr>
+            <td><span class="badge" style="background:rgba(77,157,255,.16);color:var(--blue)"><span class="mono" style="font-size:10.5px;font-weight:700">GET</span></span></td>
+            <td><span class="mono" style="font-size:12px">/orders</span></td><td class="sec" style="font-size:12.5px">قائمة الطلبات</td>
+            <td><span class="num">6</span></td><td><span class="num">22</span></td>
+            <td><div class="row g6"><span class="prog sm"><i style="width:92%;background:var(--su)"></i></span><span class="num mut">92%</span></div></td>
+            <td><div class="row g6"><span class="dot" style="background:var(--su)"></span><span class="mono mut" style="font-size:10.5px">passed</span></div></td>
+            <td><span class="badge b-inf">محمي</span></td>
+            <td><span style="width:36px;height:20px;border-radius:999px;background:var(--af);position:relative;display:inline-block"><i style="position:absolute;left:2px;top:2px;width:16px;height:16px;border-radius:50%;background:#F2EFF7"></i></span></td>
+          </tr>
+          <tr>
+            <td><span class="badge" style="background:rgba(79,216,107,.16);color:var(--green)"><span class="mono" style="font-size:10.5px;font-weight:700">POST</span></span></td>
+            <td><span class="mono" style="font-size:12px">/orders</span></td><td class="sec" style="font-size:12.5px">إنشاء طلب</td>
+            <td><span class="num">9</span></td><td><span class="num">18</span></td>
+            <td><div class="row g6"><span class="prog sm"><i style="width:88%;background:var(--su)"></i></span><span class="num mut">88%</span></div></td>
+            <td><div class="row g6"><span class="dot" style="background:var(--su)"></span><span class="mono mut" style="font-size:10.5px">passed</span></div></td>
+            <td><span class="badge b-inf">محمي</span></td>
+            <td><span style="width:36px;height:20px;border-radius:999px;background:var(--af);position:relative;display:inline-block"><i style="position:absolute;left:2px;top:2px;width:16px;height:16px;border-radius:50%;background:#F2EFF7"></i></span></td>
+          </tr>
+          <tr>
+            <td><span class="badge" style="background:rgba(255,197,61,.16);color:var(--yellow)"><span class="mono" style="font-size:10.5px;font-weight:700">PATCH</span></span></td>
+            <td><span class="mono" style="font-size:12px">/orders/{id}</span></td><td class="sec" style="font-size:12.5px">تعديل / إلغاء طلب</td>
+            <td><span class="num">4</span></td><td><span class="num">9</span></td>
+            <td><div class="row g6"><span class="prog sm"><i style="width:67%;background:var(--wa)"></i></span><span class="num mut">67%</span></div></td>
+            <td><div class="row g6"><span class="dot" style="background:var(--er)"></span><span class="mono mut" style="font-size:10.5px">failed</span></div></td>
+            <td><span class="badge b-inf">محمي</span></td>
+            <td><span style="width:36px;height:20px;border-radius:999px;background:var(--af);position:relative;display:inline-block"><i style="position:absolute;left:2px;top:2px;width:16px;height:16px;border-radius:50%;background:#F2EFF7"></i></span></td>
+          </tr>
+          <tr>
+            <td><span class="badge" style="background:rgba(79,216,107,.16);color:var(--green)"><span class="mono" style="font-size:10.5px;font-weight:700">POST</span></span></td>
+            <td><span class="mono" style="font-size:12px">/customers</span></td><td class="sec" style="font-size:12.5px">تسجيل عميل</td>
+            <td><span class="num">7</span></td><td><span class="num">11</span></td>
+            <td><div class="row g6"><span class="prog sm"><i style="width:82%;background:var(--su)"></i></span><span class="num mut">82%</span></div></td>
+            <td><div class="row g6"><span class="dot" style="background:var(--er)"></span><span class="mono mut" style="font-size:10.5px">failed</span></div></td>
+            <td><span class="badge b-inf">محمي</span></td>
+            <td><span style="width:36px;height:20px;border-radius:999px;background:var(--af);position:relative;display:inline-block"><i style="position:absolute;left:2px;top:2px;width:16px;height:16px;border-radius:50%;background:#F2EFF7"></i></span></td>
+          </tr>
+          <tr>
+            <td><span class="badge" style="background:rgba(77,157,255,.16);color:var(--blue)"><span class="mono" style="font-size:10.5px;font-weight:700">GET</span></span></td>
+            <td><span class="mono" style="font-size:12px">/invoices/{id}</span></td><td class="sec" style="font-size:12.5px">عرض الفاتورة</td>
+            <td><span class="num">2</span></td><td><span class="num">4</span></td>
+            <td><div class="row g6"><span class="prog sm"><i style="width:40%;background:var(--wa)"></i></span><span class="num mut">40%</span></div></td>
+            <td><div class="row g6"><span class="dot" style="background:var(--er)"></span><span class="mono mut" style="font-size:10.5px">failed</span></div></td>
+            <td><span class="badge b-inf">محمي</span></td>
+            <td><span style="width:36px;height:20px;border-radius:999px;background:var(--af);position:relative;display:inline-block"><i style="position:absolute;left:2px;top:2px;width:16px;height:16px;border-radius:50%;background:#F2EFF7"></i></span></td>
+          </tr>
+          <tr>
+            <td><span class="badge" style="background:rgba(79,216,107,.16);color:var(--green)"><span class="mono" style="font-size:10.5px;font-weight:700">POST</span></span></td>
+            <td><span class="mono" style="font-size:12px">/payments</span></td><td class="sec" style="font-size:12.5px">تنفيذ الدفع</td>
+            <td><span class="num">5</span></td><td><span class="num">7</span></td>
+            <td><div class="row g6"><span class="prog sm"><i style="width:71%;background:var(--wa)"></i></span><span class="num mut">71%</span></div></td>
+            <td><div class="row g6"><span class="dot" style="background:var(--wa)"></span><span class="mono mut" style="font-size:10.5px">errored</span></div></td>
+            <td><span class="badge b-inf">محمي</span></td>
+            <td><span style="width:36px;height:20px;border-radius:999px;background:var(--af);position:relative;display:inline-block"><i style="position:absolute;left:2px;top:2px;width:16px;height:16px;border-radius:50%;background:#F2EFF7"></i></span></td>
+          </tr>
+          <tr style="background:rgba(255,197,61,.07)">
+            <td><span class="badge" style="background:rgba(77,157,255,.16);color:var(--blue)"><span class="mono" style="font-size:10.5px;font-weight:700">GET</span></span></td>
+            <td><span class="mono" style="font-size:12px">/audit</span></td><td class="sec" style="font-size:12.5px">سجل التدقيق — معلن ولم يُرصد</td>
+            <td><span class="num">1</span></td><td><span class="num" style="color:var(--wa)">0</span></td>
+            <td><div class="row g6"><span class="prog sm"><i style="width:3%;background:var(--er)"></i></span><span class="num mut">0%</span></div></td>
+            <td><div class="row g6"><span class="dot" style="background:var(--tm)"></span><span class="mono mut" style="font-size:10.5px">—</span></div></td>
+            <td><span class="badge b-mut">مفتوح</span></td>
+            <td><span style="width:36px;height:20px;border-radius:999px;background:var(--s3);border:1px solid var(--bd);position:relative;display:inline-block"><i style="position:absolute;right:2px;top:2px;width:16px;height:16px;border-radius:50%;background:var(--tm)"></i></span></td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 06 · التوليد ============ -->
+<div class="slabel">06 · generate · /generate</div>
+<div class="frame">
+  <div class="hdr">
+    <div class="row" style="gap:10px"><div class="logo" style="width:30px;height:30px;font-size:16px">T</div><div style="font-size:17px;font-weight:700">Traceo</div><div class="mono mut" style="font-size:11px">requirement → test → result</div></div>
+    <div class="row" style="gap:16px"><div class="pillbar" style="padding:3px"><span class="pill on-fill" style="height:26px;padding:0 10px"><span class="mono" style="font-size:11px">AR</span></span><span class="pill" style="height:26px;padding:0 10px"><span class="mono" style="font-size:11px">EN</span></span></div><span class="sec" style="font-size:13px">مها القحطاني</span><span class="sec" style="font-size:12.5px">تسجيل الخروج</span></div>
+  </div>
+  <div class="shell">
+    <aside class="sb">
+      <div class="proj"><div class="row between"><div style="font-size:14px;font-weight:600">منصة الطلبات</div><span class="badge b-mut"><span class="mono" style="font-size:10.5px">ar</span></span></div></div>
+      <div class="grp">مساحة العمل</div>
+      <a href="#">نظرة عامة</a><a href="#">المتطلبات <span class="cnt">6</span></a><a href="#">الواجهات <span class="cnt">8</span></a>
+      <div class="grp">التحليل</div>
+      <a class="on" href="#">التوليد</a><a href="#">المراجعة <span class="cnt">265</span></a><a href="#">التشغيلات <span class="cnt">4</span></a><a href="#">المصفوفة</a>
+      <div class="grp">الإعداد</div>
+      <a href="#">البيئات <span class="cnt">3</span></a><a href="#">الأعضاء والتدقيق</a>
+    </aside>
+    <div class="content">
+      <div class="phead">
+        <div><h2>التوليد</h2><div class="sub">اختر المتطلبات المؤكدة والعمق — كل حالة تُولَّد مقيّدة بالواجهات المكتشفة</div></div>
+      </div>
+      <div class="grid" style="grid-template-columns:1fr 360px;align-items:start">
+        <div class="col" style="gap:16px">
+          <div class="card">
+            <div class="chead"><h3>المتطلبات المؤكدة</h3><div class="pillbar"><span class="pill on">الكل</span><span class="pill">عالية</span><span class="pill">متوسطة</span></div></div>
+            <div class="nest row" style="gap:10px"><span style="width:16px;height:16px;border-radius:5px;background:var(--af);display:inline-flex;align-items:center;justify-content:center;color:var(--ag);font-size:11px;font-weight:700">✓</span><span class="mono" style="font-size:12px;color:var(--ac)">REQ-008</span><span class="grow trunc" style="font-size:13px">تسجيل الدخول بالهوية الوطنية</span><span class="badge b-er">عالية</span></div>
+            <div class="nest row" style="gap:10px"><span style="width:16px;height:16px;border-radius:5px;background:var(--af);display:inline-flex;align-items:center;justify-content:center;color:var(--ag);font-size:11px;font-weight:700">✓</span><span class="mono" style="font-size:12px;color:var(--ac)">REQ-014</span><span class="grow trunc" style="font-size:13px">تحقق رقم الجوال (05 وعشرة أرقام)</span><span class="badge b-er">عالية</span></div>
+            <div class="nest row" style="gap:10px"><span style="width:16px;height:16px;border-radius:5px;background:var(--af);display:inline-flex;align-items:center;justify-content:center;color:var(--ag);font-size:11px;font-weight:700">✓</span><span class="mono" style="font-size:12px;color:var(--ac)">REQ-019</span><span class="grow trunc" style="font-size:13px">إلغاء الطلب قبل الإرسال — 409 بعده</span><span class="badge b-er">عالية</span></div>
+            <div class="nest row" style="gap:10px"><span style="width:16px;height:16px;border-radius:5px;background:var(--af);display:inline-flex;align-items:center;justify-content:center;color:var(--ag);font-size:11px;font-weight:700">✓</span><span class="mono" style="font-size:12px;color:var(--ac)">REQ-027</span><span class="grow trunc" style="font-size:13px">إعادة محاولة الدفع عند انتهاء المهلة</span><span class="badge b-er">عالية</span></div>
+            <div class="nest row" style="gap:10px"><span style="width:16px;height:16px;border-radius:5px;border:1.5px solid var(--bds);background:var(--s2);display:inline-block"></span><span class="mono" style="font-size:12px;color:var(--ac)">REQ-021</span><span class="grow trunc" style="font-size:13px;color:var(--tm)">الفاتورة العربية RTL — لا واجهة مطابقة</span><span class="badge b-wa">متوسطة</span></div>
+            <div class="nest row" style="gap:10px"><span style="width:16px;height:16px;border-radius:5px;border:1.5px solid var(--bds);background:var(--s2);display:inline-block"></span><span class="mono" style="font-size:12px;color:var(--ac)">REQ-033</span><span class="grow trunc" style="font-size:13px;color:var(--tm)">سجل التدقيق — لا حالات معتمدة</span><span class="badge b-wa">متوسطة</span></div>
+          </div>
+          <div class="card">
+            <div class="chead"><h3>عمق التوليد</h3></div>
+            <div class="row g8 wrap">
+              <div class="col g4" style="gap:6px"><span class="pill" style="border:1px solid var(--bd)">سريع smoke</span><span class="hint" style="padding:0 14px">المسار السعيد فقط · ~40 حالة</span></div>
+              <div class="col g4" style="gap:6px"><span class="pill on-ac">قياسي standard</span><span class="hint" style="padding:0 14px">حدّي + تقسيم + سلبي + تعريب · ~218 حالة</span></div>
+              <div class="col g4" style="gap:6px"><span class="pill" style="border:1px solid var(--bd)">شامل exhaustive</span><span class="hint" style="padding:0 14px">جداول القرار وكل التركيبات · ~600 حالة</span></div>
+            </div>
+          </div>
+          <div class="grid" style="grid-template-columns:1fr 1fr">
+            <div class="stat"><span class="v" style="color:var(--su)">218</span><span class="l">حالة وُلّدت وحُفظت</span></div>
+            <div class="stat"><span class="v" style="color:var(--er)">9</span><span class="l">استُبعدت قبل الحفظ — واجهة غير موجودة</span></div>
+          </div>
+          <div class="card" style="gap:10px">
+            <div class="chead"><h3>متعذّر الربط</h3><span class="badge b-wa">2</span></div>
+            <div class="nest row between" style="background:var(--was)"><span class="mono" style="font-size:12px;color:var(--wa)">REQ-021</span><span class="hint">لا واجهة تخدم عرض الفاتورة في السطح المكتشف</span></div>
+            <div class="nest row between" style="background:var(--was)"><span class="mono" style="font-size:12px;color:var(--wa)">REQ-033</span><span class="hint">لا يوجد endpoint كتابة لسجل التدقيق</span></div>
+          </div>
+        </div>
+        <div class="col" style="gap:16px">
+          <div class="card">
+            <div class="chead"><h3>ملخص التوليد</h3><span class="ref">FR-035</span></div>
+            <div class="row between"><span class="sec" style="font-size:12.5px">متطلبات مختارة</span><span class="num">4</span></div>
+            <div class="row between"><span class="sec" style="font-size:12.5px">واجهات مكتشفة</span><span class="num">8</span></div>
+            <div class="row between"><span class="sec" style="font-size:12.5px">تقنيات مفعّلة</span><span class="num">5</span></div>
+            <div class="row between"><span class="sec" style="font-size:12.5px">حالات متوقعة</span><span class="num">~218</span></div>
+            <div class="sep"></div>
+            <div class="alert-am">التوليد مقيّد بالواجهات المكتشفة فقط — أي حالة تشير إلى واجهة غير موجودة تُستبعد قبل الحفظ.</div>
+            <div class="btn btn-p btn-blk">توليد</div>
+            <div class="btn btn-g btn-blk btn-sm">إلى المراجعة ←</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 07 · المراجعة ============ -->
+<div class="slabel">07 · review · /review — flagship</div>
+<div class="frame">
+  <div class="hdr">
+    <div class="row" style="gap:10px"><div class="logo" style="width:30px;height:30px;font-size:16px">T</div><div style="font-size:17px;font-weight:700">Traceo</div><div class="mono mut" style="font-size:11px">requirement → test → result</div></div>
+    <div class="row" style="gap:16px"><div class="pillbar" style="padding:3px"><span class="pill on-fill" style="height:26px;padding:0 10px"><span class="mono" style="font-size:11px">AR</span></span><span class="pill" style="height:26px;padding:0 10px"><span class="mono" style="font-size:11px">EN</span></span></div><span class="sec" style="font-size:13px">مها القحطاني</span><span class="sec" style="font-size:12.5px">تسجيل الخروج</span></div>
+  </div>
+  <div class="shell">
+    <aside class="sb">
+      <div class="proj"><div class="row between"><div style="font-size:14px;font-weight:600">منصة الطلبات</div><span class="badge b-mut"><span class="mono" style="font-size:10.5px">ar</span></span></div></div>
+      <div class="grp">مساحة العمل</div>
+      <a href="#">نظرة عامة</a><a href="#">المتطلبات <span class="cnt">6</span></a><a href="#">الواجهات <span class="cnt">8</span></a>
+      <div class="grp">التحليل</div>
+      <a href="#">التوليد</a><a class="on" href="#">المراجعة <span class="cnt">265</span></a><a href="#">التشغيلات <span class="cnt">4</span></a><a href="#">المصفوفة</a>
+      <div class="grp">الإعداد</div>
+      <a href="#">البيئات <span class="cnt">3</span></a><a href="#">الأعضاء والتدقيق</a>
+    </aside>
+    <div class="content">
+      <div class="phead">
+        <div><h2>المراجعة</h2><div class="sub">اعتماد الحالات المولّدة — النص الكامل للمتطلب بجانب كل حالة</div></div>
+        <div class="row g6"><span class="mono mut" style="font-size:11px">a اعتماد · r رفض · j/k تنقّل</span></div>
+      </div>
+      <div class="grid" style="grid-template-columns:400px 1fr;align-items:start">
+        <div class="card card-flat">
+          <div style="padding:14px 14px 10px;display:flex;flex-direction:column;gap:10px">
+            <div class="pillbar" style="align-self:flex-start"><span class="pill on" style="height:28px;font-size:12px">الكل 38</span><span class="pill" style="height:28px;font-size:12px">مسودة</span><span class="pill" style="height:28px;font-size:12px">معتمد</span><span class="pill" style="height:28px;font-size:12px">مرفوض</span></div>
+            <div class="input" style="height:36px"><span class="ph" style="font-size:12px">بحث في الحالات…</span></div>
+          </div>
+          <div style="border-top:1px solid var(--bd)">
+            <div style="padding:12px 14px;display:flex;gap:10px;align-items:flex-start;background:var(--acs);box-shadow:inset 3px 0 0 var(--ac)">
+              <span style="width:16px;height:16px;border-radius:5px;background:var(--af);display:inline-flex;align-items:center;justify-content:center;color:var(--ag);font-size:11px;font-weight:700;flex:none;margin-top:2px">✓</span>
+              <div class="col grow" style="gap:4px">
+                <div class="trunc" style="font-size:13px;font-weight:600">هاتف بأحد عشر رقماً يُرفض بـ422</div>
+                <div class="row g6"><span class="mono" style="font-size:10.5px;color:var(--ac)">TC-102 · REQ-014</span><span class="badge b-mut" style="height:18px;font-size:10px">حدّي BVA</span></div>
+              </div>
+              <span class="dot" style="background:var(--tm);margin-top:6px"></span>
+            </div>
+            <div style="padding:12px 14px;display:flex;gap:10px;align-items:flex-start;border-top:1px solid rgba(49,47,60,.6)">
+              <span style="width:16px;height:16px;border-radius:5px;border:1.5px solid var(--bds);background:var(--s2);flex:none;margin-top:2px"></span>
+              <div class="col grow" style="gap:4px">
+                <div class="trunc" style="font-size:13px">هاتف من عشرة أرقام يُقبل بنجاح</div>
+                <div class="row g6"><span class="mono" style="font-size:10.5px;color:var(--tm)">TC-103 · REQ-014</span><span class="badge b-mut" style="height:18px;font-size:10px">حدّي BVA</span></div>
+              </div>
+              <span class="dot" style="background:var(--su);margin-top:6px"></span>
+            </div>
+            <div style="padding:12px 14px;display:flex;gap:10px;align-items:flex-start;border-top:1px solid rgba(49,47,60,.6)">
+              <span style="width:16px;height:16px;border-radius:5px;border:1.5px solid var(--bds);background:var(--s2);flex:none;margin-top:2px"></span>
+              <div class="col grow" style="gap:4px">
+                <div class="trunc" style="font-size:13px">إلغاء طلب مُرسَل يعيد 409</div>
+                <div class="row g6"><span class="mono" style="font-size:10.5px;color:var(--tm)">TC-155 · REQ-019</span><span class="badge b-mut" style="height:18px;font-size:10px">جداول قرار</span></div>
+              </div>
+              <span class="dot" style="background:var(--su);margin-top:6px"></span>
+            </div>
+            <div style="padding:12px 14px;display:flex;gap:10px;align-items:flex-start;border-top:1px solid rgba(49,47,60,.6)">
+              <span style="width:16px;height:16px;border-radius:5px;border:1.5px solid var(--bds);background:var(--s2);flex:none;margin-top:2px"></span>
+              <div class="col grow" style="gap:4px">
+                <div class="trunc" style="font-size:13px">مهلة البوابة تستدعي 3 محاولات</div>
+                <div class="row g6"><span class="mono" style="font-size:10.5px;color:var(--tm)">TC-198 · REQ-027</span><span class="badge b-mut" style="height:18px;font-size:10px">سلبي</span></div>
+              </div>
+              <span class="dot" style="background:var(--tm);margin-top:6px"></span>
+            </div>
+            <div style="padding:12px 14px;display:flex;gap:10px;align-items:flex-start;border-top:1px solid rgba(49,47,60,.6)">
+              <span style="width:16px;height:16px;border-radius:5px;border:1.5px solid var(--bds);background:var(--s2);flex:none;margin-top:2px"></span>
+              <div class="col grow" style="gap:4px">
+                <div class="trunc" style="font-size:13px">الاسم العربي يعود دون تشوّه ترميز</div>
+                <div class="row g6"><span class="mono" style="font-size:10.5px;color:var(--tm)">TC-211 · REQ-021</span><span class="badge b-mut" style="height:18px;font-size:10px">تعريب</span></div>
+              </div>
+              <span class="dot" style="background:var(--er);margin-top:6px"></span>
+            </div>
+            <div style="padding:12px 14px;display:flex;gap:10px;align-items:flex-start;border-top:1px solid rgba(49,47,60,.6)">
+              <span style="width:16px;height:16px;border-radius:5px;border:1.5px solid var(--bds);background:var(--s2);flex:none;margin-top:2px"></span>
+              <div class="col grow" style="gap:4px">
+                <div class="trunc" style="font-size:13px">دخول صحيح بهوية وطنية سليمة</div>
+                <div class="row g6"><span class="mono" style="font-size:10.5px;color:var(--tm)">TC-060 · REQ-008</span><span class="badge b-mut" style="height:18px;font-size:10px">مسار سعيد</span></div>
+              </div>
+              <span class="dot" style="background:var(--su);margin-top:6px"></span>
+            </div>
+          </div>
+        </div>
+        <div class="col" style="gap:16px">
+          <div class="card" style="border-color:var(--ac);gap:10px">
+            <div class="chead"><div class="row g6"><span class="mono" style="font-size:12px;font-weight:700;color:var(--ac)">REQ-014</span><span class="badge b-er">عالية</span></div><div class="row g6"><span class="ref">FR-035</span><span class="ref">FR-036</span></div></div>
+            <div style="font-size:14px;line-height:1.7">يجب أن يبدأ رقم الجوال بـ<span class="mono" style="font-size:12px">05</span> وأن يتكوّن من عشرة أرقام بالضبط، وأي إدخال مخالف يُرفض برمز <span class="mono" style="font-size:12px">422</span> مع رسالة خطأ على مستوى الحقل.</div>
+            <div class="mono mut" style="font-size:10.5px">boundary · high · grounded-gen v3 · prompt v12</div>
+          </div>
+          <div class="card" style="gap:12px">
+            <div class="chead"><h3>هاتف بأحد عشر رقماً يُرفض بـ422</h3><span class="badge b-mut">مسودة</span></div>
+            <div class="row g8"><span class="mono" style="font-size:12px;font-weight:700">POST /customers</span><span class="badge b-mut" style="height:18px;font-size:10px">الخطوة 1 من 1</span></div>
+            <div class="code">{
+  "name": "عميل تجريبي",
+  "phone": "05000000000",   // 11 digits — one past max
+  "city": "Riyadh"
+}</div>
+            <div class="col" style="gap:8px">
+              <div class="row g8"><span class="dot" style="background:var(--er)"></span><span class="badge b-mut" style="font-family:var(--mono);direction:ltr">status_eq</span><span class="num">422</span><span class="hint">— فعلياً <span class="num" style="color:var(--er)">201</span></span></div>
+              <div class="row g8"><span class="dot" style="background:var(--er)"></span><span class="badge b-mut" style="font-family:var(--mono);direction:ltr">body.errors[0].field eq</span><span class="num">"phone"</span><span class="hint">— غير موجود</span></div>
+            </div>
+            <div class="row g8">
+              <span class="badge b-su">المتوقع <span class="mono" style="font-size:10.5px">422</span></span>
+              <span class="badge b-er">الفعلي <span class="mono" style="font-size:10.5px">201 Created</span></span>
+            </div>
+            <div class="sep"></div>
+            <div class="row between">
+              <div class="row g8">
+                <div class="btn btn-p">اعتماد <span class="mono" style="font-size:11px">A</span></div>
+                <div class="btn btn-d">رفض <span class="mono" style="font-size:11px">R</span></div>
+                <div class="btn btn-s">تعديل</div>
+              </div>
+              <span class="mono mut" style="font-size:10.5px">1 / 38</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 08 · التشغيلات ============ -->
+<div class="slabel">08 · runs · /runs</div>
+<div class="frame">
+  <div class="hdr">
+    <div class="row" style="gap:10px"><div class="logo" style="width:30px;height:30px;font-size:16px">T</div><div style="font-size:17px;font-weight:700">Traceo</div><div class="mono mut" style="font-size:11px">requirement → test → result</div></div>
+    <div class="row" style="gap:16px"><div class="pillbar" style="padding:3px"><span class="pill on-fill" style="height:26px;padding:0 10px"><span class="mono" style="font-size:11px">AR</span></span><span class="pill" style="height:26px;padding:0 10px"><span class="mono" style="font-size:11px">EN</span></span></div><span class="sec" style="font-size:13px">مها القحطاني</span><span class="sec" style="font-size:12.5px">تسجيل الخروج</span></div>
+  </div>
+  <div class="shell">
+    <aside class="sb">
+      <div class="proj"><div class="row between"><div style="font-size:14px;font-weight:600">منصة الطلبات</div><span class="badge b-mut"><span class="mono" style="font-size:10.5px">ar</span></span></div></div>
+      <div class="grp">مساحة العمل</div>
+      <a href="#">نظرة عامة</a><a href="#">المتطلبات <span class="cnt">6</span></a><a href="#">الواجهات <span class="cnt">8</span></a>
+      <div class="grp">التحليل</div>
+      <a href="#">التوليد</a><a href="#">المراجعة <span class="cnt">265</span></a><a class="on" href="#">التشغيلات <span class="cnt">4</span></a><a href="#">المصفوفة</a>
+      <div class="grp">الإعداد</div>
+      <a href="#">البيئات <span class="cnt">3</span></a><a href="#">الأعضاء والتدقيق</a>
+    </aside>
+    <div class="content">
+      <div class="phead">
+        <div><h2>التشغيلات</h2><div class="sub">إطلاق مجموعة الاختبارات ومتابعة تقدّمها وسجلّها</div></div>
+      </div>
+      <div class="card" style="flex-direction:row;align-items:center;gap:20px;flex-wrap:wrap">
+        <div class="field" style="width:220px"><label>البيئة</label><div class="input">staging<span class="grow"></span><span class="mut">▾</span></div></div>
+        <div class="col" style="gap:2px">
+          <div class="row g6"><span class="mono" style="font-size:26px;font-weight:700;color:var(--su)">265</span><span class="sec" style="font-size:13px">حالة معتمدة جاهزة للتشغيل</span></div>
+          <span class="hint">آخر توليد <span class="mono" style="font-size:10.5px">2026-07-24 18:02</span></span>
+        </div>
+        <span class="grow"></span>
+        <div class="btn btn-g">تشغيل مجموعة فرعية</div>
+        <div class="btn btn-p">تشغيل</div>
+      </div>
+      <div class="card" style="gap:12px">
+        <div class="chead"><div class="row g8"><h3>تشغيل جارٍ</h3><span class="badge b-inf">قيد التنفيذ</span><span class="mono mut" style="font-size:11px">#1002</span></div><div class="btn btn-gm btn-sm" style="color:var(--er)">إلغاء</div></div>
+        <div class="row g8 wrap">
+          <span class="badge b-su">نجح <span class="mono" style="font-size:10.5px">118</span></span>
+          <span class="badge b-er">فشل <span class="mono" style="font-size:10.5px">3</span></span>
+          <span class="badge b-wa">خطأ <span class="mono" style="font-size:10.5px">1</span></span>
+          <span class="badge b-mut">متبقٍ <span class="mono" style="font-size:10.5px">143</span></span>
+        </div>
+        <div class="prog"><i style="width:46%"></i></div>
+        <span class="hint">المرحلة الحالية: تنفيذ حالات <span class="mono" style="font-size:10.5px">POST /orders</span> — التحديث كل 1.5 ثانية</span>
+      </div>
+      <div class="card card-flat">
+        <table class="tbl">
+          <tr><th style="width:90px">التشغيل</th><th style="width:110px">الحالة</th><th>النتائج</th><th style="width:150px">البداية</th><th style="width:150px">النهاية</th><th style="width:120px">المشغّل</th><th style="width:110px"></th></tr>
+          <tr>
+            <td><span class="mono" style="font-size:12px;color:var(--ac)">#1001</span></td>
+            <td><span class="badge b-su">مكتمل</span></td>
+            <td><div class="row g6"><span class="badge b-su" style="height:20px"><span class="mono" style="font-size:10.5px">207</span></span><span class="badge b-er" style="height:20px"><span class="mono" style="font-size:10.5px">46</span></span><span class="badge b-wa" style="height:20px"><span class="mono" style="font-size:10.5px">12</span></span></div></td>
+            <td><span class="num mut" style="font-size:11px">2026-07-24 21:14</span></td>
+            <td><span class="num mut" style="font-size:11px">2026-07-24 21:20</span></td>
+            <td class="sec" style="font-size:12.5px">مها القحطاني</td>
+            <td><div class="btn btn-gm btn-sm">عرض التقرير</div></td>
+          </tr>
+          <tr>
+            <td><span class="mono" style="font-size:12px;color:var(--ac)">#1000</span></td>
+            <td><span class="badge b-su">مكتمل</span></td>
+            <td><div class="row g6"><span class="badge b-su" style="height:20px"><span class="mono" style="font-size:10.5px">214</span></span><span class="badge b-er" style="height:20px"><span class="mono" style="font-size:10.5px">0</span></span><span class="badge b-wa" style="height:20px"><span class="mono" style="font-size:10.5px">0</span></span></div></td>
+            <td><span class="num mut" style="font-size:11px">2026-07-24 02:00</span></td>
+            <td><span class="num mut" style="font-size:11px">2026-07-24 02:06</span></td>
+            <td class="sec" style="font-size:12.5px">مجدول (آلي)</td>
+            <td><div class="btn btn-gm btn-sm">عرض التقرير</div></td>
+          </tr>
+          <tr>
+            <td><span class="mono" style="font-size:12px;color:var(--ac)">#0999</span></td>
+            <td><span class="badge b-er">مُجهض</span></td>
+            <td><div class="row g6"><span class="badge b-su" style="height:20px"><span class="mono" style="font-size:10.5px">61</span></span><span class="badge b-er" style="height:20px"><span class="mono" style="font-size:10.5px">2</span></span><span class="badge b-wa" style="height:20px"><span class="mono" style="font-size:10.5px">0</span></span></div></td>
+            <td><span class="num mut" style="font-size:11px">2026-07-23 17:41</span></td>
+            <td><span class="num mut" style="font-size:11px">2026-07-23 17:44</span></td>
+            <td class="sec" style="font-size:12.5px">سلطان الحربي</td>
+            <td><div class="btn btn-gm btn-sm">عرض التقرير</div></td>
+          </tr>
+          <tr>
+            <td><span class="mono" style="font-size:12px;color:var(--ac)">#0998</span></td>
+            <td><span class="badge b-su">مكتمل</span></td>
+            <td><div class="row g6"><span class="badge b-su" style="height:20px"><span class="mono" style="font-size:10.5px">198</span></span><span class="badge b-er" style="height:20px"><span class="mono" style="font-size:10.5px">9</span></span><span class="badge b-wa" style="height:20px"><span class="mono" style="font-size:10.5px">3</span></span></div></td>
+            <td><span class="num mut" style="font-size:11px">2026-07-22 21:10</span></td>
+            <td><span class="num mut" style="font-size:11px">2026-07-22 21:16</span></td>
+            <td class="sec" style="font-size:12.5px">مها القحطاني</td>
+            <td><div class="btn btn-gm btn-sm">عرض التقرير</div></td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 09 · تقرير التشغيل ============ -->
+<div class="slabel">09 · run report · /runs/1001</div>
+<div class="frame">
+  <div class="hdr">
+    <div class="row" style="gap:10px"><div class="logo" style="width:30px;height:30px;font-size:16px">T</div><div style="font-size:17px;font-weight:700">Traceo</div><div class="mono mut" style="font-size:11px">requirement → test → result</div></div>
+    <div class="row" style="gap:16px"><div class="pillbar" style="padding:3px"><span class="pill on-fill" style="height:26px;padding:0 10px"><span class="mono" style="font-size:11px">AR</span></span><span class="pill" style="height:26px;padding:0 10px"><span class="mono" style="font-size:11px">EN</span></span></div><span class="sec" style="font-size:13px">مها القحطاني</span><span class="sec" style="font-size:12.5px">تسجيل الخروج</span></div>
+  </div>
+  <div class="shell">
+    <aside class="sb">
+      <div class="proj"><div class="row between"><div style="font-size:14px;font-weight:600">منصة الطلبات</div><span class="badge b-mut"><span class="mono" style="font-size:10.5px">ar</span></span></div></div>
+      <div class="grp">مساحة العمل</div>
+      <a href="#">نظرة عامة</a><a href="#">المتطلبات <span class="cnt">6</span></a><a href="#">الواجهات <span class="cnt">8</span></a>
+      <div class="grp">التحليل</div>
+      <a href="#">التوليد</a><a href="#">المراجعة <span class="cnt">265</span></a><a class="on" href="#">التشغيلات <span class="cnt">4</span></a><a href="#">المصفوفة</a>
+      <div class="grp">الإعداد</div>
+      <a href="#">البيئات <span class="cnt">3</span></a><a href="#">الأعضاء والتدقيق</a>
+    </aside>
+    <div class="content">
+      <div class="phead">
+        <div>
+          <div class="row g8"><h2>تشغيل <span class="mono" style="font-size:20px">#1001</span></h2><span class="badge b-su">مكتمل</span></div>
+          <div class="sub"><span class="mono" style="font-size:11px">staging · main · 2026-07-24 21:14 · 6m 12s</span></div>
+        </div>
+        <div class="btn btn-s">تصدير HTML</div>
+      </div>
+      <div class="grid" style="grid-template-columns:repeat(5,1fr)">
+        <div class="stat"><span class="v">265</span><span class="l">إجمالي الحالات</span></div>
+        <div class="stat"><span class="v" style="color:var(--su)">207</span><span class="l">ناجح</span></div>
+        <div class="stat"><span class="v" style="color:var(--er)">46</span><span class="l">فاشل</span></div>
+        <div class="stat"><span class="v" style="color:var(--wa)">12</span><span class="l">خطأ</span></div>
+        <div class="stat"><span class="v"><span class="mono" style="font-size:26px;font-weight:700">6m 12s</span></span><span class="l">المدة</span></div>
+      </div>
+      <div class="row between wrap">
+        <div class="pillbar"><span class="pill on">الإخفاقات</span><span class="pill">جميع النتائج</span><span class="pill">مقارنة</span></div>
+        <div class="pillbar"><span class="pill on" style="height:28px;font-size:12px">الكل 46</span><span class="pill" style="height:28px;font-size:12px">حرج 2</span><span class="pill" style="height:28px;font-size:12px">كبير 9</span><span class="pill" style="height:28px;font-size:12px">طفيف 35</span></div>
+      </div>
+      <div class="card" style="background:var(--s2);gap:12px">
+        <div class="chead">
+          <div class="row g8"><span class="mono" style="font-size:12px;font-weight:700;color:var(--er)">TC-102</span><div style="font-size:14px;font-weight:600">هاتف بأحد عشر رقماً يُقبل — يعيد 201 بدل 422</div></div>
+          <div class="row g6"><span class="mono" style="font-size:10.5px;color:var(--ac)">REQ-014</span><span class="badge b-er">حرج</span><span class="mut">▾</span></div>
+        </div>
+        <div>
+          <div class="eyebrow" style="margin-bottom:8px">خطوات إعادة الإنتاج <span class="ref">FR-052</span></div>
+          <ol class="sec" style="font-size:13px;margin:0;padding-right:18px;line-height:1.9">
+            <li>أرسل <span class="mono" style="font-size:11.5px">POST /customers</span> بهاتف <span class="mono" style="font-size:11.5px">"05000000000"</span> (أحد عشر رقماً).</li>
+            <li>لاحظ الاستجابة <span class="mono" style="font-size:11.5px">201</span> وإنشاء سجل جديد.</li>
+            <li>المتوقع <span class="mono" style="font-size:11.5px">422</span> مع <span class="mono" style="font-size:11.5px">errors[0].field == "phone"</span>.</li>
+          </ol>
+        </div>
+        <div class="grid" style="grid-template-columns:1fr 1fr;gap:12px">
+          <div><div class="eyebrow" style="margin-bottom:6px">الطلب</div><div class="code">POST /customers HTTP/1.1
+Authorization: Bearer ••••••••
+{ "name": "عميل تجريبي", "phone": "05000000000" }</div></div>
+          <div><div class="eyebrow" style="margin-bottom:6px">الاستجابة</div><div class="code">HTTP/1.1 201 Created
+latency: 188ms
+{ "id": 9182, "phone": "05000000000" }</div></div>
+        </div>
+        <div class="row g8">
+          <span class="badge b-su">المتوقع <span class="mono" style="font-size:10.5px">422</span></span>
+          <span class="badge b-er">الفعلي <span class="mono" style="font-size:10.5px">201 Created</span></span>
+          <span class="grow"></span>
+          <div class="btn btn-s btn-sm">تصدير إلى Jira</div>
+        </div>
+      </div>
+      <div class="card" style="background:var(--s2);flex-direction:row;align-items:center;justify-content:space-between">
+        <div class="row g8"><span class="mono" style="font-size:12px;font-weight:700;color:var(--er)">TC-155</span><div style="font-size:14px;font-weight:600">إلغاء طلب مُرسَل ما زال ينجح</div></div>
+        <div class="row g6"><span class="mono" style="font-size:10.5px;color:var(--ac)">REQ-019</span><span class="badge b-er">حرج</span><span class="mut">◂</span></div>
+      </div>
+      <div class="card" style="background:var(--s2);flex-direction:row;align-items:center;justify-content:space-between">
+        <div class="row g8"><span class="mono" style="font-size:12px;font-weight:700;color:var(--er)">TC-198</span><div style="font-size:14px;font-weight:600">مهلة البوابة لا تستدعي إعادة المحاولة — الطلب عالق</div></div>
+        <div class="row g6"><span class="mono" style="font-size:10.5px;color:var(--ac)">REQ-027</span><span class="badge b-wa">كبير</span><span class="mut">◂</span></div>
+      </div>
+      <div class="card">
+        <div class="chead"><h3>الأداء لكل واجهة</h3><span class="ref">FR-044</span></div>
+        <table class="tbl">
+          <tr><th>الواجهة</th><th style="width:90px">P50</th><th style="width:90px">P95</th><th style="width:90px">MAX</th><th style="width:90px">النداءات</th></tr>
+          <tr><td><span class="mono" style="font-size:12px">POST /auth/login</span></td><td><span class="num">180ms</span></td><td><span class="num">240ms</span></td><td><span class="num">410ms</span></td><td><span class="num">14</span></td></tr>
+          <tr><td><span class="mono" style="font-size:12px">GET /orders</span></td><td><span class="num">95ms</span></td><td><span class="num">210ms</span></td><td><span class="num">380ms</span></td><td><span class="num">44</span></td></tr>
+          <tr><td><span class="mono" style="font-size:12px">POST /payments</span></td><td><span class="num">220ms</span></td><td><span class="num">30.1s</span></td><td><span class="num">60.1s</span></td><td><span class="num">14</span></td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 10 · المصفوفة ============ -->
+<div class="slabel">10 · matrix · /matrix</div>
+<div class="frame">
+  <div class="hdr">
+    <div class="row" style="gap:10px"><div class="logo" style="width:30px;height:30px;font-size:16px">T</div><div style="font-size:17px;font-weight:700">Traceo</div><div class="mono mut" style="font-size:11px">requirement → test → result</div></div>
+    <div class="row" style="gap:16px"><div class="pillbar" style="padding:3px"><span class="pill on-fill" style="height:26px;padding:0 10px"><span class="mono" style="font-size:11px">AR</span></span><span class="pill" style="height:26px;padding:0 10px"><span class="mono" style="font-size:11px">EN</span></span></div><span class="sec" style="font-size:13px">مها القحطاني</span><span class="sec" style="font-size:12.5px">تسجيل الخروج</span></div>
+  </div>
+  <div class="shell">
+    <aside class="sb">
+      <div class="proj"><div class="row between"><div style="font-size:14px;font-weight:600">منصة الطلبات</div><span class="badge b-mut"><span class="mono" style="font-size:10.5px">ar</span></span></div></div>
+      <div class="grp">مساحة العمل</div>
+      <a href="#">نظرة عامة</a><a href="#">المتطلبات <span class="cnt">6</span></a><a href="#">الواجهات <span class="cnt">8</span></a>
+      <div class="grp">التحليل</div>
+      <a href="#">التوليد</a><a href="#">المراجعة <span class="cnt">265</span></a><a href="#">التشغيلات <span class="cnt">4</span></a><a class="on" href="#">المصفوفة</a>
+      <div class="grp">الإعداد</div>
+      <a href="#">البيئات <span class="cnt">3</span></a><a href="#">الأعضاء والتدقيق</a>
+    </aside>
+    <div class="content">
+      <div class="phead">
+        <div><h2 class="row g8" style="display:flex">المصفوفة <span class="ref">FR-050</span></h2><div class="sub">متطلب ← حالات ← نتيجة — تُعاد توليدها مع كل تشغيل</div></div>
+        <div class="btn btn-s">تصدير Excel</div>
+      </div>
+      <div class="row g16 wrap">
+        <div class="stat" style="min-width:200px"><span class="v" style="color:var(--ac)">87%</span><span class="l">تغطية المتطلبات المؤكدة</span></div>
+        <div class="stat" style="min-width:200px"><span class="v" style="color:var(--wa)">2</span><span class="l">فجوات بلا تغطية</span></div>
+        <div class="grow"></div>
+        <div class="pillbar" style="align-self:center"><span class="pill on">الكل</span><span class="pill">ناجح</span><span class="pill">فاشل</span><span class="pill">غير مغطى</span></div>
+      </div>
+      <div class="card card-flat">
+        <div style="padding:16px 20px;display:flex;flex-direction:column;gap:8px;border-bottom:1px solid var(--bd)">
+          <div class="row between">
+            <div class="row g8"><span class="mono" style="font-size:12px;font-weight:700;color:var(--ac)">REQ-008</span><span class="trunc" style="font-size:13.5px">تسجيل الدخول بالهوية الوطنية</span></div>
+            <div class="row g8"><span class="pill" style="height:26px;font-size:11px;background:var(--sus);color:var(--su)">ناجح</span><span class="prog" style="width:120px"><i style="width:100%;background:var(--su)"></i></span><span class="num mut">14/14</span></div>
+          </div>
+          <div class="row g6 wrap">
+            <span class="badge b-mut" style="height:20px"><span class="dot" style="background:var(--su);width:6px;height:6px"></span><span class="mono" style="font-size:10px">TC-060</span></span>
+            <span class="badge b-mut" style="height:20px"><span class="dot" style="background:var(--su);width:6px;height:6px"></span><span class="mono" style="font-size:10px">TC-061</span></span>
+            <span class="badge b-mut" style="height:20px"><span class="dot" style="background:var(--su);width:6px;height:6px"></span><span class="mono" style="font-size:10px">TC-062</span></span>
+            <span class="hint">+11</span>
+          </div>
+        </div>
+        <div style="padding:16px 20px;display:flex;flex-direction:column;gap:8px;border-bottom:1px solid var(--bd)">
+          <div class="row between">
+            <div class="row g8"><span class="mono" style="font-size:12px;font-weight:700;color:var(--ac)">REQ-014</span><span class="trunc" style="font-size:13.5px">تحقق رقم الجوال (05 وعشرة أرقام)</span></div>
+            <div class="row g8"><span class="pill" style="height:26px;font-size:11px;background:var(--ers);color:var(--er)">فاشل</span><span class="prog" style="width:120px"><i style="width:82%"></i></span><span class="num mut">9/11</span></div>
+          </div>
+          <div class="row g6 wrap">
+            <span class="badge b-mut" style="height:20px"><span class="dot" style="background:var(--er);width:6px;height:6px"></span><span class="mono" style="font-size:10px">TC-102</span></span>
+            <span class="badge b-mut" style="height:20px"><span class="dot" style="background:var(--su);width:6px;height:6px"></span><span class="mono" style="font-size:10px">TC-103</span></span>
+            <span class="badge b-mut" style="height:20px"><span class="dot" style="background:var(--er);width:6px;height:6px"></span><span class="mono" style="font-size:10px">TC-104</span></span>
+            <span class="hint">+8</span>
+          </div>
+        </div>
+        <div style="padding:16px 20px;display:flex;flex-direction:column;gap:8px;border-bottom:1px solid var(--bd)">
+          <div class="row between">
+            <div class="row g8"><span class="mono" style="font-size:12px;font-weight:700;color:var(--ac)">REQ-019</span><span class="trunc" style="font-size:13.5px">إلغاء الطلب قبل الإرسال — 409 بعده</span></div>
+            <div class="row g8"><span class="pill" style="height:26px;font-size:11px;background:var(--ers);color:var(--er)">فاشل</span><span class="prog" style="width:120px"><i style="width:67%"></i></span><span class="num mut">6/9</span></div>
+          </div>
+          <div class="row g6 wrap">
+            <span class="badge b-mut" style="height:20px"><span class="dot" style="background:var(--er);width:6px;height:6px"></span><span class="mono" style="font-size:10px">TC-155</span></span>
+            <span class="badge b-mut" style="height:20px"><span class="dot" style="background:var(--su);width:6px;height:6px"></span><span class="mono" style="font-size:10px">TC-156</span></span>
+            <span class="hint">+7</span>
+          </div>
+        </div>
+        <div style="padding:16px 20px;display:flex;flex-direction:column;gap:8px">
+          <div class="row between">
+            <div class="row g8"><span class="mono" style="font-size:12px;font-weight:700;color:var(--ac)">REQ-027</span><span class="trunc" style="font-size:13.5px">إعادة محاولة الدفع عند انتهاء المهلة</span></div>
+            <div class="row g8"><span class="pill" style="height:26px;font-size:11px;background:var(--was);color:var(--wa)">خطأ</span><span class="prog" style="width:120px"><i style="width:71%;background:var(--wa)"></i></span><span class="num mut">5/7</span></div>
+          </div>
+          <div class="row g6 wrap">
+            <span class="badge b-mut" style="height:20px"><span class="dot" style="background:var(--wa);width:6px;height:6px"></span><span class="mono" style="font-size:10px">TC-198</span></span>
+            <span class="hint">+6</span>
+          </div>
+        </div>
+      </div>
+      <div class="chead"><h3 style="font-size:15px">الفجوات</h3><span class="badge b-wa">2</span></div>
+      <div class="grid" style="grid-template-columns:1fr 1fr">
+        <div class="card" style="border-color:var(--wa);background:var(--was);gap:8px">
+          <div class="row between"><span class="mono" style="font-size:12px;font-weight:700;color:var(--wa)">REQ-021</span><span class="badge b-mut">تعريب</span></div>
+          <div style="font-size:13px">الفاتورة العربية تُعرض من اليمين إلى اليسار</div>
+          <div class="hint">السبب: لا توجد واجهة مطابقة — الإجراء التالي: ارفع مواصفة خدمة الفواتير</div>
+          <div class="btn btn-s btn-sm" style="width:fit-content">توليد مستهدف</div>
+        </div>
+        <div class="card" style="border-color:var(--wa);background:var(--was);gap:8px">
+          <div class="row between"><span class="mono" style="font-size:12px;font-weight:700;color:var(--wa)">REQ-033</span><span class="badge b-mut">امتثال</span></div>
+          <div style="font-size:13px">الاحتفاظ بسجل التدقيق 90 يوماً</div>
+          <div class="hint">السبب: لا حالات معتمدة — الإجراء التالي: راجع الحالات المولّدة واعتمدها</div>
+          <div class="btn btn-s btn-sm" style="width:fit-content">توليد مستهدف</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 11 · البيئات ============ -->
+<div class="slabel">11 · environments · /environments</div>
+<div class="frame">
+  <div class="hdr">
+    <div class="row" style="gap:10px"><div class="logo" style="width:30px;height:30px;font-size:16px">T</div><div style="font-size:17px;font-weight:700">Traceo</div><div class="mono mut" style="font-size:11px">requirement → test → result</div></div>
+    <div class="row" style="gap:16px"><div class="pillbar" style="padding:3px"><span class="pill on-fill" style="height:26px;padding:0 10px"><span class="mono" style="font-size:11px">AR</span></span><span class="pill" style="height:26px;padding:0 10px"><span class="mono" style="font-size:11px">EN</span></span></div><span class="sec" style="font-size:13px">مها القحطاني</span><span class="sec" style="font-size:12.5px">تسجيل الخروج</span></div>
+  </div>
+  <div class="shell">
+    <aside class="sb">
+      <div class="proj"><div class="row between"><div style="font-size:14px;font-weight:600">منصة الطلبات</div><span class="badge b-mut"><span class="mono" style="font-size:10.5px">ar</span></span></div></div>
+      <div class="grp">مساحة العمل</div>
+      <a href="#">نظرة عامة</a><a href="#">المتطلبات <span class="cnt">6</span></a><a href="#">الواجهات <span class="cnt">8</span></a>
+      <div class="grp">التحليل</div>
+      <a href="#">التوليد</a><a href="#">المراجعة <span class="cnt">265</span></a><a href="#">التشغيلات <span class="cnt">4</span></a><a href="#">المصفوفة</a>
+      <div class="grp">الإعداد</div>
+      <a class="on" href="#">البيئات <span class="cnt">3</span></a><a href="#">الأعضاء والتدقيق</a>
+    </aside>
+    <div class="content">
+      <div class="phead">
+        <div><h2>البيئات</h2><div class="sub">الأسرار كتابة فقط — لا تُعرض أبداً بعد الحفظ</div></div>
+        <div class="btn btn-p">+ بيئة جديدة</div>
+      </div>
+      <div class="grid" style="grid-template-columns:repeat(3,1fr);align-items:start">
+        <div class="card" style="gap:10px">
+          <div class="row between"><div style="font-size:15px;font-weight:600">staging</div><span class="badge b-su">متصل · <span class="mono" style="font-size:10.5px">200</span></span></div>
+          <span class="mono sec" style="font-size:11.5px">https://staging.orders.internal/api</span>
+          <div class="row g6 wrap"><span class="badge b-inf">bearer</span><span class="badge b-su">TLS</span><span class="badge b-mut">سر محفوظ <span class="mono" style="font-size:10.5px">••••</span></span></div>
+          <div class="sep"></div>
+          <div class="row g6"><div class="btn btn-s btn-sm">فحص الاتصال</div><div class="btn btn-gm btn-sm">تعديل</div><div class="btn btn-gm btn-sm" style="color:var(--er)">حذف</div></div>
+        </div>
+        <div class="card" style="gap:10px">
+          <div class="row between"><div style="font-size:15px;font-weight:600">ci</div><span class="badge b-er">غير متصل</span></div>
+          <span class="mono sec" style="font-size:11.5px">https://ci.orders.internal/api</span>
+          <div class="row g6 wrap"><span class="badge b-inf">api_key</span><span class="badge b-su">TLS</span><span class="badge b-mut">سر محفوظ <span class="mono" style="font-size:10.5px">••••</span></span></div>
+          <div class="hint">آخر فحص: <span class="mono" style="font-size:10.5px">connection refused (…redacted)</span></div>
+          <div class="sep"></div>
+          <div class="row g6"><div class="btn btn-s btn-sm">فحص الاتصال</div><div class="btn btn-gm btn-sm">تعديل</div><div class="btn btn-gm btn-sm" style="color:var(--er)">حذف</div></div>
+        </div>
+        <div class="card" style="gap:10px">
+          <div class="row between"><div style="font-size:15px;font-weight:600">uat</div><span class="badge b-mut">لم يُفحص</span></div>
+          <span class="mono sec" style="font-size:11.5px">https://uat.orders.internal/api</span>
+          <div class="row g6 wrap"><span class="badge b-inf">oauth2</span><span class="badge b-su">TLS</span><span class="badge b-mut">سر محفوظ <span class="mono" style="font-size:10.5px">••••</span></span></div>
+          <div class="sep"></div>
+          <div class="row g6"><div class="btn btn-s btn-sm">فحص الاتصال</div><div class="btn btn-gm btn-sm">تعديل</div><div class="btn btn-gm btn-sm" style="color:var(--er)">حذف</div></div>
+        </div>
+      </div>
+      <div class="card" style="max-width:560px;border-radius:22px;gap:14px">
+        <div class="chead"><h3>تعديل بيئة — staging</h3><span class="mut" style="font-size:16px">✕</span></div>
+        <div class="grid" style="grid-template-columns:1fr 1fr;gap:12px">
+          <div class="field"><label>الاسم</label><div class="input">staging</div></div>
+          <div class="field"><label>نوع المصادقة</label><div class="input">bearer<span class="grow"></span><span class="mut">▾</span></div></div>
+        </div>
+        <div class="field"><label>الرابط الأساسي base_url</label><div class="input"><span class="mono" style="font-size:12px">https://staging.orders.internal/api</span></div></div>
+        <div class="field"><label>الرمز token</label><div class="input"><span class="mono ph">اتركه فارغاً للإبقاء على السر المحفوظ</span></div><span class="hint">السر يُكتب فقط ولا يُعرض بعد الحفظ</span></div>
+        <div class="row" style="justify-content:flex-start;gap:8px"><div class="btn btn-p">حفظ</div><div class="btn btn-s">إلغاء</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 12 · الأعضاء والتدقيق ============ -->
+<div class="slabel">12 · members + audit · /settings</div>
+<div class="frame">
+  <div class="hdr">
+    <div class="row" style="gap:10px"><div class="logo" style="width:30px;height:30px;font-size:16px">T</div><div style="font-size:17px;font-weight:700">Traceo</div><div class="mono mut" style="font-size:11px">requirement → test → result</div></div>
+    <div class="row" style="gap:16px"><div class="pillbar" style="padding:3px"><span class="pill on-fill" style="height:26px;padding:0 10px"><span class="mono" style="font-size:11px">AR</span></span><span class="pill" style="height:26px;padding:0 10px"><span class="mono" style="font-size:11px">EN</span></span></div><span class="sec" style="font-size:13px">مها القحطاني</span><span class="sec" style="font-size:12.5px">تسجيل الخروج</span></div>
+  </div>
+  <div class="shell">
+    <aside class="sb">
+      <div class="proj"><div class="row between"><div style="font-size:14px;font-weight:600">منصة الطلبات</div><span class="badge b-mut"><span class="mono" style="font-size:10.5px">ar</span></span></div></div>
+      <div class="grp">مساحة العمل</div>
+      <a href="#">نظرة عامة</a><a href="#">المتطلبات <span class="cnt">6</span></a><a href="#">الواجهات <span class="cnt">8</span></a>
+      <div class="grp">التحليل</div>
+      <a href="#">التوليد</a><a href="#">المراجعة <span class="cnt">265</span></a><a href="#">التشغيلات <span class="cnt">4</span></a><a href="#">المصفوفة</a>
+      <div class="grp">الإعداد</div>
+      <a href="#">البيئات <span class="cnt">3</span></a><a class="on" href="#">الأعضاء والتدقيق</a>
+    </aside>
+    <div class="content">
+      <div class="phead">
+        <div><h2>الأعضاء والتدقيق</h2><div class="sub">إدارة الوصول وسجل غير قابل للتعديل لكل تغيير</div></div>
+        <div class="btn btn-p">دعوة عضو</div>
+      </div>
+      <div class="card card-flat">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--bd)"><h3 style="font-size:15px;font-weight:600">الأعضاء</h3></div>
+        <table class="tbl">
+          <tr><th>الاسم</th><th>البريد</th><th style="width:160px">الدور</th><th style="width:90px"></th></tr>
+          <tr><td>مها القحطاني</td><td><span class="mono mut" style="font-size:11.5px">maha@company.sa</span></td><td><div class="input" style="height:34px;font-size:12.5px">مالك<span class="grow"></span><span class="mut">▾</span></div></td><td></td></tr>
+          <tr><td>نوف العتيبي</td><td><span class="mono mut" style="font-size:11.5px">nouf@company.sa</span></td><td><div class="input" style="height:34px;font-size:12.5px">قائدة جودة<span class="grow"></span><span class="mut">▾</span></div></td><td><div class="btn btn-gm btn-sm" style="color:var(--er)">إزالة</div></td></tr>
+          <tr><td>سلطان الحربي</td><td><span class="mono mut" style="font-size:11.5px">sultan@company.sa</span></td><td><div class="input" style="height:34px;font-size:12.5px">مهندس<span class="grow"></span><span class="mut">▾</span></div></td><td><div class="btn btn-gm btn-sm" style="color:var(--er)">إزالة</div></td></tr>
+          <tr><td>ريم الدوسري</td><td><span class="mono mut" style="font-size:11.5px">reem@company.sa</span></td><td><div class="input" style="height:34px;font-size:12.5px">مشاهدة<span class="grow"></span><span class="mut">▾</span></div></td><td><div class="btn btn-gm btn-sm" style="color:var(--er)">إزالة</div></td></tr>
+        </table>
+      </div>
+      <div class="card card-flat">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;align-items:center"><h3 style="font-size:15px;font-weight:600">سجل التدقيق</h3><span class="ref">FR-082</span></div>
+        <table class="tbl">
+          <tr><th style="width:150px">الوقت</th><th style="width:140px">الفاعل</th><th>الفعل</th><th>الكائن</th><th style="width:90px"></th></tr>
+          <tr><td><span class="num mut" style="font-size:11px">2026-07-24 21:14</span></td><td class="sec" style="font-size:12.5px">مها القحطاني</td><td><span class="mono" style="font-size:11.5px">run.started</span></td><td><span class="mono mut" style="font-size:11px">run #1001</span></td><td><span class="hint">تفاصيل ▾</span></td></tr>
+          <tr><td><span class="num mut" style="font-size:11px">2026-07-24 20:52</span></td><td class="sec" style="font-size:12.5px">CI bot</td><td><span class="mono" style="font-size:11.5px">gate.threshold_updated</span></td><td><span class="mono mut" style="font-size:11px">min_coverage: 80</span></td><td><span class="hint">تفاصيل ▾</span></td></tr>
+          <tr><td><span class="num mut" style="font-size:11px">2026-07-24 18:30</span></td><td class="sec" style="font-size:12.5px">نوف العتيبي</td><td><span class="mono" style="font-size:11.5px">test_case.approved</span></td><td><span class="mono mut" style="font-size:11px">TC-102</span></td><td><span class="hint">تفاصيل ▾</span></td></tr>
+          <tr><td><span class="num mut" style="font-size:11px">2026-07-24 17:05</span></td><td class="sec" style="font-size:12.5px">سلطان الحربي</td><td><span class="mono" style="font-size:11.5px">environment.updated</span></td><td><span class="mono mut" style="font-size:11px">env: ci</span></td><td><span class="hint">تفاصيل ▾</span></td></tr>
+          <tr><td><span class="num mut" style="font-size:11px">2026-07-24 09:02</span></td><td class="sec" style="font-size:12.5px">مجدول</td><td><span class="mono" style="font-size:11.5px">run.completed</span></td><td><span class="mono mut" style="font-size:11px">run #1000</span></td><td><span class="hint">تفاصيل ▾</span></td></tr>
+        </table>
+        <div style="padding:14px 20px;border-top:1px solid var(--bd)"><div class="btn btn-s btn-sm">تحميل المزيد</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+
+
+
+
+</body>
+</html>

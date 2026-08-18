@@ -2,7 +2,8 @@
 tables carry organisation_id (org isolation enforced in the query layer — NFR-SEC-04)."""
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import String, Text, Integer, Float, Boolean, DateTime, ForeignKey, JSON, LargeBinary
+from sqlalchemy import (String, Text, Integer, Float, Boolean, DateTime, ForeignKey, JSON,
+                        LargeBinary, UniqueConstraint)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
 
@@ -34,14 +35,25 @@ class User(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(200), default="")
     password_hash: Mapped[str] = mapped_column(Text)  # Argon2id
     role: Mapped[str] = mapped_column(String(20), default="qa_engineer")  # admin|qa_lead|qa_engineer|viewer
-    locale: Mapped[str] = mapped_column(String(5), default="en")  # en|ar — drives RTL
+    locale: Mapped[str] = mapped_column(String(5), default="en")
 
 
 class Project(TimestampMixin, Base):
     __tablename__ = "projects"
     organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
-    language: Mapped[str] = mapped_column(String(5), default="en")  # primary requirements language
+    # Autopilot mode: "auto" chains parse -> confirm_all -> generate; "manual"
+    # leaves every step to the user. Approval/runs stay manual either way
+    # (BO-07).
+    automation: Mapped[str] = mapped_column(String(10), default="auto",
+                                            server_default="auto")  # auto|manual
+    # Which of the five kinds of testing this project is for (app/testtypes.py).
+    # Declared when the project is created and editable afterwards; the engines
+    # that produce cases read it, so narrowing it narrows what the project does.
+    # An empty list means the same as all five — a project that had nothing said
+    # about it predates the field, and reading that as "test nothing" would
+    # silently disable every existing project.
+    test_types: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
     status: Mapped[str] = mapped_column(String(20), default="active")  # active|archived
 
 
@@ -55,9 +67,6 @@ class Environment(TimestampMixin, Base):
     auth_config_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)  # FR-PRJ-04
     variables: Mapped[dict] = mapped_column(JSON, default=dict)  # non-secret, FR-PRJ-05
     tls_strict: Mapped[bool] = mapped_column(Boolean, default=True)
-    # FR-043 test-data lifecycle: [{name, create:{method,path,body}, extract:{var:json_path},
-    #                               delete:{method,path}}] — run-namespaced, torn down always.
-    fixtures: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class SourceDocument(TimestampMixin, Base):
@@ -68,6 +77,8 @@ class SourceDocument(TimestampMixin, Base):
     mime_type: Mapped[str] = mapped_column(String(100), default="")
     size: Mapped[int] = mapped_column(Integer, default=0)
     storage_key: Mapped[str] = mapped_column(String(300))
+    # Document content language. Traceo is English-only, so this is always "en";
+    # the column is kept because the document payload has always carried it.
     language: Mapped[str] = mapped_column(String(5), default="en")
     version: Mapped[int] = mapped_column(Integer, default=1)  # increments per re-upload
     parse_status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|parsing|parsed|failed
@@ -90,11 +101,6 @@ class Requirement(TimestampMixin, Base):
     source_text: Mapped[str] = mapped_column(Text, default="")  # original text shown side-by-side
     confidence: Mapped[float] = mapped_column(Float, default=1.0)  # FR-REQ-08
     content_hash: Mapped[str] = mapped_column(String(64), default="")  # drives staleness FR-TRC-04
-    # FR-013 AC2: statement hash -> "AC1". Numbers follow the STATEMENT, not its
-    # position, so inserting a criterion does not renumber the ones already tested.
-    criteria_numbering: Mapped[dict] = mapped_column(JSON, default=dict)
-    # FR-013 AC3: no criterion could be derived — a human must supply one.
-    needs_criteria: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class ApiSpec(TimestampMixin, Base):
@@ -110,7 +116,11 @@ class ApiSpec(TimestampMixin, Base):
 class Endpoint(TimestampMixin, Base):
     __tablename__ = "endpoints"
     organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
-    api_spec_id: Mapped[str] = mapped_column(ForeignKey("api_specs.id"), index=True)
+    # Nullable because only spec-imported endpoints belong to an ApiSpec; those
+    # discovered from traffic, the DOM or a Postman collection (FR-021/022/023)
+    # have no spec document behind them.
+    api_spec_id: Mapped[str | None] = mapped_column(
+        ForeignKey("api_specs.id"), index=True, nullable=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
     method: Mapped[str] = mapped_column(String(10))
     path: Mapped[str] = mapped_column(String(500))
@@ -122,11 +132,52 @@ class Endpoint(TimestampMixin, Base):
     security: Mapped[list] = mapped_column(JSON, default=list)
     tags: Mapped[list] = mapped_column(JSON, default=list)
     excluded: Mapped[bool] = mapped_column(Boolean, default=False)  # FR-DSC-05
-    # --- multi-source discovery (FR-020/021/022/023) ---
-    discovery_source: Mapped[str] = mapped_column(String(20), default="openapi")  # openapi|traffic|dom|postman
-    times_seen: Mapped[int] = mapped_column(Integer, default=0)  # observations in captured traffic
-    inferred: Mapped[bool] = mapped_column(Boolean, default=False)  # shape observed, not declared
-    dom_fields: Mapped[list] = mapped_column(JSON, default=list)  # FR-022 form fields
+    # Which discovery mode produced this endpoint. When the same endpoint is seen
+    # by several modes, the highest-fidelity source wins per attribute:
+    # spec > traffic > dom > postman (SRS §L2).
+    source: Mapped[str] = mapped_column(String(20), default="spec")
+    # How many times traffic capture observed this endpoint (FR-021 AC-3); stays 0
+    # for endpoints that were declared rather than observed.
+    observed_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Optional AI annotations produced AFTER the deterministic import (see
+    # modules/enrichment.py). They are commentary only: every value was matched
+    # back to a deterministically-discovered method+path before being stored, and
+    # nothing here may ever influence method, path, parameters or schemas. NULL
+    # whenever enrichment did not run, failed, or was discarded by the gate.
+    ai_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_group: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    ai_criticality: Mapped[str | None] = mapped_column(String(10), nullable=True)  # high|medium|low
+
+
+# Legal TestCase.technique values. "localisation" is the FR-034 Unicode
+# round-trip probe; "edge_case" is produced only by the Insight engine
+# (modules/insight.py) and is always accompanied by a non-null edge_category;
+# "security" is produced only by the security builders (modules/security.py) and
+# is always accompanied by a non-null weakness_id.
+# "design" and "a11y" are produced only by the design engine (modules/design.py
+# ui_cases) and always carry a design fact id in their step; "performance" is
+# produced only by the web-target performance track and always carries the
+# observed page-load baseline it is measured against. They are techniques in the
+# same sense the others are: the deterministic method that produced the case.
+TECHNIQUES: tuple[str, ...] = (
+    "ep", "bva", "decision_table", "negative", "manual", "localisation", "edge_case",
+    "security", "design", "a11y", "performance",
+    # A behaviour a model proposed for a crawled screen and the grounding gate
+    # admitted (modules/pageintel.py). Kept apart from the deterministic
+    # techniques because it is the one kind whose EXPECTATION nothing verified —
+    # only its targets were checked — and a reviewer needs to see that.
+    "scenario",
+)
+
+# Legal Run.kind values (SECURITY_TESTING_PLAN §8). A run carries exactly one
+# kind so gates and reports can separate a functional regression from a security
+# sweep instead of averaging them into one meaningless number.
+RUN_KINDS: tuple[str, ...] = ("functional", "security", "performance")
+
+
+def is_legal_technique(technique: str | None) -> bool:
+    """Technique validation — the single place that decides what may be stored."""
+    return technique in TECHNIQUES
 
 
 class TestCase(TimestampMixin, Base):
@@ -143,7 +194,17 @@ class TestCase(TimestampMixin, Base):
     user_modified: Mapped[bool] = mapped_column(Boolean, default=False)  # FR-REV-03
     model: Mapped[str] = mapped_column(String(100), default="")  # provenance FR-GEN-09
     prompt_version: Mapped[str] = mapped_column(String(20), default="")
-    technique: Mapped[str] = mapped_column(String(30), default="")  # ep|bva|decision_table|negative|manual
+    technique: Mapped[str] = mapped_column(String(30), default="")  # see TECHNIQUES
+    # Insight engine taxonomy (the sixth engine). NULL for every case that does not
+    # belong to an edge-case family — which is every case generated before this
+    # engine existed, and every manually authored one.
+    edge_category: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # Weakness class this case verifies (SECURITY_TESTING_PLAN §8), a slug from the
+    # shipped catalogue app/data/weaknesses.json. NULL for every non-security case,
+    # which is the honest value: "this case belongs to no weakness class" is not the
+    # same statement as "it belongs to the class named none". Indexed because the
+    # coverage matrix (§11) counts cases per (endpoint, weakness) pair.
+    weakness_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     approved_by: Mapped[str | None] = mapped_column(String(36), nullable=True)  # FR-REV-05
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)  # FR-REV-06
@@ -171,10 +232,6 @@ class RequirementTestCase(Base):
     test_case_id: Mapped[str] = mapped_column(ForeignKey("test_cases.id"), primary_key=True)
     link_source: Mapped[str] = mapped_column(String(20), default="generated")  # generated|manual
     requirement_version_at_link: Mapped[int] = mapped_column(Integer, default=1)  # staleness driver
-    # The other half of the governing design rule (SRS §1): a case names the endpoint
-    # it targets AND the criteria it derives from. e.g. ["AC1", "AC3"] when one case
-    # satisfies more than one criterion.
-    criterion_indexes: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
@@ -183,16 +240,17 @@ class Run(TimestampMixin, Base):
     organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
     environment_id: Mapped[str] = mapped_column(ForeignKey("environments.id"))
+    # What this run is: see RUN_KINDS. NOT NULL with a server default because every
+    # run that already exists is a functional one, and a nullable "kind" would make
+    # every reader handle a state that has no meaning.
+    kind: Mapped[str] = mapped_column(String(20), default="functional",
+                                      server_default="functional")  # functional|security|performance
     state: Mapped[str] = mapped_column(String(20), default="queued")  # queued|running|completed|cancelled|aborted
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     counts: Mapped[dict] = mapped_column(JSON, default=dict)  # total/passed/failed/errored
     initiated_by: Mapped[str] = mapped_column(String(36))
     abort_reason: Mapped[str | None] = mapped_column(Text, nullable=True)  # FR-EXE-04 diagnostic
-    source: Mapped[str] = mapped_column(String(20), default="manual")  # manual|scheduler|ci — FR-060/061
-    branch: Mapped[str] = mapped_column(String(200), default="")  # FR-054 trend filter
-    concurrency: Mapped[int] = mapped_column(Integer, default=0)  # 0 = server default — FR-040
-    fixtures: Mapped[dict] = mapped_column(JSON, default=dict)  # FR-043 lifecycle report
 
 
 class TestResult(TimestampMixin, Base):
@@ -206,6 +264,131 @@ class TestResult(TimestampMixin, Base):
     evidence: Mapped[list] = mapped_column(JSON, default=list)  # per-step, redacted + truncated
 
 
+class ApiKey(TimestampMixin, Base):
+    """Public API key (FR-061 token surface). Full key shown ONCE at creation;
+    only the sha256 hash is stored (prefix kept for UI identification)."""
+    __tablename__ = "api_keys"
+    organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    prefix: Mapped[str] = mapped_column(String(12))  # first 8 chars, shown in UI
+    key_hash: Mapped[str] = mapped_column(String(64), index=True)  # sha256 of full key
+    created_by: Mapped[str] = mapped_column(String(36))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class Schedule(TimestampMixin, Base):
+    """Scheduled run (FR-060) — the scheduler daemon launches the standard
+    run path for every enabled schedule whose next_run_at has elapsed."""
+    __tablename__ = "schedules"
+    organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    environment_id: Mapped[str] = mapped_column(ForeignKey("environments.id"))
+    name: Mapped[str] = mapped_column(String(200))
+    interval_minutes: Mapped[int] = mapped_column(Integer)  # min 15
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    next_run_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    created_by: Mapped[str] = mapped_column(String(36))
+
+
+class Webhook(TimestampMixin, Base):
+    """Outbound webhook (FR-070/072 transport — Slack incoming webhooks compatible)."""
+    __tablename__ = "webhooks"
+    organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    url: Mapped[str] = mapped_column(String(500))
+    secret: Mapped[str | None] = mapped_column(String(200), nullable=True)  # X-Traceo-Signature HMAC
+    events: Mapped[list] = mapped_column(JSON, default=list)  # MVP: ["run.completed"]
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_fired_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+# --- Component inventory (security plan §2, phase S2) -------------------------------
+# Without a declared component set a CVE feed is news about other people's
+# software, so this table is the precondition for the whole CVE track. It is
+# populated by modules/components.py from an SBOM or a lockfile, in the fidelity
+# order below. A version is NEVER guessed: an unpinned requirement line is stored
+# with version NULL and the reason it could not be resolved.
+COMPONENT_SOURCES: tuple[str, ...] = ("sbom", "lockfile", "manual", "fingerprint")
+
+
+class Component(TimestampMixin, Base):
+    __tablename__ = "components"
+    __table_args__ = (
+        # One row per (project, name, version, ecosystem): re-uploading the same
+        # SBOM updates the inventory instead of duplicating it. version is
+        # nullable, and SQL treats NULLs as distinct, so modules/components.py
+        # ALSO does the NULL-aware lookup before inserting — this index is the
+        # backstop, not the only guard.
+        UniqueConstraint("project_id", "name", "version", "ecosystem",
+                         name="uq_components_project_name_version_ecosystem"),
+    )
+    organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(300))
+    version: Mapped[str | None] = mapped_column(String(100), nullable=True)  # NULL = unpinned
+    ecosystem: Mapped[str] = mapped_column(String(30), default="generic")  # purl type
+    purl: Mapped[str] = mapped_column(String(500), default="")
+    cpe23: Mapped[str | None] = mapped_column(String(300), nullable=True)  # only when declared
+    source: Mapped[str] = mapped_column(String(20), default="sbom")  # see COMPONENT_SOURCES
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active|removed
+    # Why the version is NULL — quoted in the import report so an unpinned
+    # dependency is visible rather than silently absent.
+    unpinned_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+# --- end component inventory ---------------------------------------------------------
+
+
+# --- Web targets (browser discovery) -------------------------------------------------
+# A URL the project tests. The row is created by the POST and updated by the
+# discovery job, so a target is visible (status "pending") while the browser is
+# still rendering — a job that dies never leaves the user with nothing.
+WEB_TARGET_STATUSES: tuple[str, ...] = ("pending", "discovered", "failed")
+
+
+class WebTarget(TimestampMixin, Base):
+    __tablename__ = "web_targets"
+    __table_args__ = (
+        # One row per (project, url, viewport): pointing Traceo at the same page
+        # again RE-discovers that target instead of accumulating duplicates, which
+        # is what keeps the requirements and cases derived from it stable.
+        UniqueConstraint("project_id", "url", "viewport",
+                         name="uq_web_targets_project_url_viewport"),
+    )
+    organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    url: Mapped[str] = mapped_column(String(1000))
+    viewport: Mapped[str] = mapped_column(String(20), default="1280x800")
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # see WEB_TARGET_STATUSES
+    title: Mapped[str] = mapped_column(String(500), default="")
+    final_url: Mapped[str] = mapped_column(String(1000), default="")  # after redirects
+    last_discovered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    screenshot_key: Mapped[str] = mapped_column(String(300), default="")
+    # What the render actually found: the counts, the form/control/request digests
+    # and the design summary (palette shares + contrast findings). It is stored
+    # rather than recomputed because a full-page raster costs seconds to analyse,
+    # and because the detail route must answer from what THIS discovery saw, not
+    # from a re-render that would see a different page.
+    inventory: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Why status is "failed" — a failed target with no reason is indistinguishable
+    # from one nobody looked at.
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The sign-in credentials the crawl submits to THE LOGIN FORM ONLY, sealed
+    # with the same envelope environments use (app.security.encrypt_secret). The
+    # column is WRITE-ONLY on the wire: the API answers auth_configured
+    # true/false and never returns a username or a password, so a leaked payload
+    # or a shoulder-surfed screen cannot hand over the account.
+    auth_config_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    # How many pages one crawl may visit (1..50). The default explores: a user
+    # who hands Traceo a URL expects the product behind it to be examined, not
+    # one screen of it, and a default of 1 would mean the tool does nothing
+    # until someone finds the knob.
+    max_pages: Mapped[int] = mapped_column(Integer, default=25)
+# --- end web targets -------------------------------------------------------------------
+
+
 class AuditEntry(Base):
     """Append-only (NFR-SEC-08) — no update/delete path exposed by the application."""
     __tablename__ = "audit_entries"
@@ -217,81 +400,3 @@ class AuditEntry(Base):
     object_id: Mapped[str] = mapped_column(String(36), default="")
     detail: Mapped[dict] = mapped_column(JSON, default=dict)
     occurred_at: Mapped[datetime] = mapped_column(DateTime, default=now)
-    retain_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # FR-082
-
-
-# ---------------------------------------------------------------------------
-# Automation — CI gate (FR-061), API tokens, schedules (FR-060)
-# ---------------------------------------------------------------------------
-
-class GatePolicy(TimestampMixin, Base):
-    """Delivery-gate thresholds evaluated after a run (FR-061). One per project."""
-    __tablename__ = "gate_policies"
-    organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
-    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), unique=True, index=True)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    min_coverage_pct: Mapped[float] = mapped_column(Float, default=80.0)
-    max_new_failures: Mapped[int] = mapped_column(Integer, default=0)
-    block_on: Mapped[str] = mapped_column(String(20), default="high_priority")  # any|high_priority|none
-
-
-class ApiToken(TimestampMixin, Base):
-    """Non-interactive principal for CI runners (FR-061). Only the hash is stored."""
-    __tablename__ = "api_tokens"
-    organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
-    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
-    name: Mapped[str] = mapped_column(String(200))
-    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    prefix: Mapped[str] = mapped_column(String(16), default="")  # shown in the UI for recognition
-    role: Mapped[str] = mapped_column(String(20), default="qa_engineer")
-    created_by: Mapped[str] = mapped_column(String(36), default="")
-    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
-
-
-class Schedule(TimestampMixin, Base):
-    """Cron-style unattended runs per project + environment (FR-060)."""
-    __tablename__ = "schedules"
-    organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
-    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
-    environment_id: Mapped[str] = mapped_column(ForeignKey("environments.id"))
-    cron: Mapped[str] = mapped_column(String(100))  # m h dom mon dow
-    timezone: Mapped[str] = mapped_column(String(50), default="Asia/Riyadh")  # AST default
-    branch: Mapped[str] = mapped_column(String(200), default="")
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    last_fired_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    next_due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_by: Mapped[str] = mapped_column(String(36), default="")
-
-
-# ---------------------------------------------------------------------------
-# Integrations — Jira/Xray (FR-070), Confluence (FR-011), Slack (FR-072)
-# ---------------------------------------------------------------------------
-
-class Integration(TimestampMixin, Base):
-    __tablename__ = "integrations"
-    organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
-    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
-    type: Mapped[str] = mapped_column(String(20))  # jira|xray|confluence|slack
-    name: Mapped[str] = mapped_column(String(200), default="")
-    config: Mapped[dict] = mapped_column(JSON, default=dict)  # non-secret: base_url, project_key, space…
-    secret_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)  # FR-083
-    state: Mapped[str] = mapped_column(String(20), default="configured")  # configured|connected|error
-    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    alert_level: Mapped[str] = mapped_column(String(20), default="failures")  # slack: all|failures|regressions
-
-
-class DefectExport(TimestampMixin, Base):
-    """One row per (integration, run, case) — the dedupe key that turns a re-export
-    into an update instead of a duplicate issue (FR-070 AC2)."""
-    __tablename__ = "defect_exports"
-    organisation_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
-    integration_id: Mapped[str] = mapped_column(ForeignKey("integrations.id"), index=True)
-    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
-    test_case_id: Mapped[str] = mapped_column(ForeignKey("test_cases.id"), index=True)
-    external_key: Mapped[str] = mapped_column(String(100), default="")  # e.g. PAY-231
-    external_url: Mapped[str] = mapped_column(String(500), default="")
-    severity: Mapped[str] = mapped_column(String(20), default="")
-    action: Mapped[str] = mapped_column(String(20), default="created")  # created|updated
-    synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

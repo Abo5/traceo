@@ -1,0 +1,81 @@
+# Traceo — local / on-premise deployment (FR-081, BR-07).
+#
+# Two backends still exist (see docs/PLAN_2.0_CLOSEOUT_AR.md §2, decision A), so
+# each sits behind a profile and you pick one. They both listen on 8000, so only
+# one may run at a time:
+#
+#   docker compose --profile go up --build        # Go backend (recommended)
+#   docker compose --profile python up --build    # Python backend
+#
+# Storage is a named volume, so data survives `up --build`. Nothing here opens an
+# outbound connection: the mock LLM provider is the default (NFR-D1).
+#
+# PRODUCTION: `cp env.example .env` and set TRACEO_SECRET_KEY. Both backends
+# refuse to start with TRACEO_ENV=production unless a unique key is set and demo
+# seeding is off — that refusal is deliberate, not a bug.
+
+name: traceo
+
+services:
+  backend-go:
+    profiles: ["go"]
+    build:
+      context: ./backend-go
+    image: traceo/backend-go:local
+    environment:
+      TRACEO_ENV: ${TRACEO_ENV:-development}
+      TRACEO_SECRET_KEY: ${TRACEO_SECRET_KEY:-}
+      TRACEO_SEED_DEMO: ${TRACEO_SEED_DEMO:-1}
+      TRACEO_LLM_PROVIDER: ${TRACEO_LLM_PROVIDER:-mock}
+      TRACEO_CORS_ORIGINS: ${TRACEO_CORS_ORIGINS:-http://localhost:3000}
+    ports:
+      - "8000:8000"
+    volumes:
+      - traceo-data:/data
+    restart: unless-stopped
+
+  backend-python:
+    profiles: ["python"]
+    build:
+      context: ./backend
+    image: traceo/backend-python:local
+    environment:
+      TRACEO_ENV: ${TRACEO_ENV:-development}
+      TRACEO_SECRET_KEY: ${TRACEO_SECRET_KEY:-}
+      TRACEO_SEED_DEMO: ${TRACEO_SEED_DEMO:-1}
+      TRACEO_LLM_PROVIDER: ${TRACEO_LLM_PROVIDER:-mock}
+      TRACEO_CORS_ORIGINS: ${TRACEO_CORS_ORIGINS:-http://localhost:3000}
+    ports:
+      - "8000:8000"
+    volumes:
+      - traceo-data:/data
+    restart: unless-stopped
+
+  sut:
+    # Demo system-under-test for the e2e suite (profile "e2e" so a production
+    # `--profile go up` never ships it). Only the backend's run executor calls
+    # it — over the compose network as http://sut:9000 — so no host port is
+    # published. CI boots it with:
+    #   docker compose --profile go --profile e2e up -d --wait
+    # and the tests point the backend at it via SUT_URL=http://sut:9000.
+    profiles: ["e2e"]
+    build:
+      context: ./demo/sut
+    image: traceo/demo-sut:local
+    restart: unless-stopped
+
+  frontend:
+    # No profile: pairs with whichever backend profile is active.
+    build:
+      context: ./frontend
+      args:
+        # Baked into the client bundle at build time — this is the URL the
+        # BROWSER uses, so it is a host address, not a compose service name.
+        NEXT_PUBLIC_API: ${NEXT_PUBLIC_API:-http://localhost:8000/v1}
+    image: traceo/frontend:local
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  traceo-data:

@@ -1,0 +1,142 @@
+/**
+ * Negative paths (@negative @regression) — the system refuses wrong input on
+ * BOTH sides of the contract: the UI surfaces errors / withholds submission,
+ * and the API refuses with the uniform `{code, message}` shape (asserted on
+ * ApiError.code + status, never on message text — §6/§11).
+ *
+ * Backend sources of truth (read, not assumed):
+ * - identity.py login: failure is a GENERIC 401 `invalid_credentials` — the
+ *   response never reveals which field was wrong (NFR-SEC).
+ * - identity.py register: duplicate email → 409 `email_taken`.
+ * - deps.py get_project_scoped: a foreign tenant sees 404 `not_found`, never
+ *   403 — existence must not leak across orgs (NFR-SEC-04, FR-USR-04).
+ * - execution.py create_run: only `approved` cases are executable; a project
+ *   whose cases are all draft answers 409 `no_approved_cases`.
+ * - identity.py dev_session: the credential-free session route is gated on
+ *   TRACEO_DEV_AUTOLOGIN and answers 404 `not_found` while the flag is off.
+ */
+import { test, expect } from '../fixtures';
+import { TraceoHttp } from '../api/http';
+import { IdentityRepository } from '../api/identity.repository';
+import { config } from '../config/resolve';
+import { expectApiError } from '../helpers/expect-api-error';
+import { registerForeignOrg } from '../helpers/foreign-org';
+import { ProjectCreateModalProbe } from '../helpers/project-create-modal.probe';
+import { uniqueSuffix } from '../helpers/unique';
+import { ProjectsPage } from '../pages/projects.page';
+
+test.describe('negative paths — UI @negative @regression', () => {
+
+
+  test('project create with an empty name is prevented — submit stays disabled', async ({
+    asQaLead, // manage_projects = admin|qa_lead (backend/app/security.py)
+  }) => {
+    const projects = new ProjectsPage(asQaLead);
+    const modal = new ProjectCreateModalProbe(asQaLead);
+
+    await projects.goto();
+    await expect(projects.root).toBeVisible({ timeout: 20_000 });
+    await modal.open();
+
+    // Untouched (empty) name → the frontend withholds submission entirely.
+    await expect(modal.submitButton).toBeDisabled();
+
+    // Whitespace-only is equally empty (page.tsx disables on !name.trim()).
+    await modal.nameInput.fill('   ');
+    await expect(modal.submitButton).toBeDisabled();
+    await expect(modal.dialog).toBeVisible(); // nothing was submitted, dialog still open
+  });
+});
+
+test.describe('negative paths — API @negative @regression', () => {
+  test('invalid login is refused with the generic 401 invalid_credentials', async ({ api }) => {
+    const { email } = api.actor('qa_engineer');
+    await expectApiError(api.identity.login(email, `wrong-${uniqueSuffix()}`), {
+      status: 401,
+      code: 'invalid_credentials',
+    });
+  });
+
+  test('registering an already-used email is refused with 409 email_taken', async ({ api }) => {
+    // Re-homed from the register screen, which this build no longer has: the
+    // rule is identity.py's, not the form's, so it belongs on the API.
+    const taken = api.actor('viewer').email; // provisioned this run -> guaranteed taken
+    await expectApiError(
+      api.identity.register({
+        org_name: `e2e-dup-${uniqueSuffix()}`,
+        name: 'E2E Duplicate',
+        email: taken,
+        password: 'E2e-pass-12345',
+      }),
+      { status: 409, code: 'email_taken' },
+    );
+  });
+
+  test('cross-org access answers 404, never 403 — tenant isolation (NFR-SEC-04)', async ({
+    api,
+    project,
+  }) => {
+    // Sanity: the owner org can read its own project.
+    expect((await api.projects.get(project.id)).id).toBe(project.id);
+
+    const foreign = await registerForeignOrg();
+    try {
+      // deps.py get_project_scoped: the 404 body is indistinguishable from a
+      // nonexistent id — a 403 here would leak that the project exists.
+      await expectApiError(foreign.projects.get(project.id), {
+        status: 404,
+        code: 'not_found',
+      });
+    } finally {
+      await foreign.dispose();
+    }
+  });
+
+  test('a run cannot start while every case is still draft (409 no_approved_cases)', async ({
+    api,
+    generatedCase, // full pipeline output — cases exist, but none approved
+  }) => {
+    const projectId = generatedCase.project_id;
+    expect(generatedCase).toBeInState('draft');
+
+    const env = await api.as('qa_lead').projects.createEnvironment(projectId, {
+      name: `e2e-env-${uniqueSuffix()}`,
+      base_url: config.sutUrl,
+    });
+
+    // execution.py create_run filters state == 'approved' — draft cases do not
+    // qualify, so the run is refused before anything is queued.
+    await expectApiError(api.runs.create(projectId, { environment_id: env.id }), {
+      status: 409,
+      code: 'no_approved_cases',
+    });
+  });
+
+  /**
+   * Default-safe pin for the dev auto-login escape hatch.
+   *
+   * `POST /v1/auth/dev-session` hands out a full session with NO credentials
+   * when TRACEO_DEV_AUTOLOGIN=1. The backend this suite runs against is
+   * configured normally — the flag is off — so the route must not exist, and
+   * the refusal must be a 404 that reveals nothing about the feature (the same
+   * `not_found` any unknown route answers), never a 401/403 that would confirm
+   * the endpoint is there and merely locked.
+   *
+   * Asserted twice, anonymously and authenticated, because the gate is the
+   * FLAG, not the caller: the route takes no credentials, so a session must not
+   * make it appear. A backend booted with the flag on fails this test — which
+   * is the intent: a dev convenience must never ship as the default, and a
+   * production node refuses to boot with it at all (config.py
+   * assert_production_safe).
+   */
+  test('the dev auto-login route does not exist while the flag is off (404)', async ({
+    request, // Playwright's own context — no Traceo credentials attached
+    api,
+  }) => {
+    const anonymous = new IdentityRepository(new TraceoHttp(request, config.apiUrl));
+    await expectApiError(anonymous.devSession(), { status: 404, code: 'not_found' });
+
+    // A valid session does not unlock it either.
+    await expectApiError(api.identity.devSession(), { status: 404, code: 'not_found' });
+  });
+});

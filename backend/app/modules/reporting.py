@@ -1,9 +1,9 @@
 """Reporting module (TRD §4.8) — the exportable deliverables.
 
-Traceability matrix as styled XLSX (FR-RPT-04, RTL sheets for Arabic projects
-FR-RPT-07), run reports as JSON + a self-contained printable HTML page that doubles
-as the PDF deliverable via the browser's print dialog (FR-RPT-01/02/03/05), and
-run-over-run regression comparison (FR-RPT-06).
+Traceability matrix as styled XLSX (FR-RPT-04), run reports as JSON + a
+self-contained printable HTML page that doubles as the PDF deliverable via the
+browser's print dialog (FR-RPT-01/02/03/05), and run-over-run regression
+comparison (FR-RPT-06). Every deliverable is English and LTR.
 """
 import html
 import json
@@ -16,11 +16,9 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import get_project_scoped, require
-from ..models import (Endpoint, Environment, Project, Requirement,
-                      RequirementTestCase, Run, TestCase, TestResult, TestStep, User)
-from .ingestion import numbered_criteria
-from .traceability import (GAP_NEXT_ACTIONS, derive_severity, gap_reason,
-                           is_high_priority, run_display_id)
+from ..models import (Environment, Project, Requirement, RequirementTestCase,
+                      Run, TestCase, TestResult, User)
+from .traceability import derive_severity, is_high_priority, run_display_id
 
 router = APIRouter()
 
@@ -43,18 +41,6 @@ def _get_run(run_id: str, user: User, db: Session) -> Run:
 # Shared data assembly
 # ---------------------------------------------------------------------------
 
-_PRIORITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-
-
-def _top_priority(values) -> str | None:
-    """The highest priority among the linked requirements — a case serving a P0 and a
-    P2 requirement is judged by the P0."""
-    known = [str(v).lower() for v in values if v]
-    if not known:
-        return None
-    return sorted(known, key=lambda v: _PRIORITY_ORDER.get(v, 2))[0]
-
-
 def _requirements_by_case(db: Session, case_ids: list[str]) -> dict[str, list[dict]]:
     out: dict[str, list[dict]] = {cid: [] for cid in case_ids}
     if not case_ids:
@@ -64,14 +50,9 @@ def _requirements_by_case(db: Session, case_ids: list[str]) -> dict[str, list[di
             .filter(RequirementTestCase.test_case_id.in_(case_ids))
             .all())
     for link, req in rows:
-        indexes = list(link.criterion_indexes or [])
-        statements = {c["index"]: c["statement"] for c in numbered_criteria(req)}
         out[link.test_case_id].append({
             "id": req.id, "external_id": req.external_id, "description": req.description,
             "priority": req.priority,
-            # FR-042 AC2 — a failure names the criterion, not merely the requirement.
-            "criterion_indexes": indexes,
-            "criteria": [{"index": i, "statement": statements.get(i, "")} for i in indexes],
         })
     return out
 
@@ -103,6 +84,7 @@ def _run_outcomes(db: Session, run_id: str) -> dict[str, TestResult]:
 def _run_dict(run: Run) -> dict:
     return {
         "id": run.id, "project_id": run.project_id, "environment_id": run.environment_id,
+        "kind": run.kind or "functional",
         "state": run.state, "started_at": _iso(run.started_at),
         "finished_at": _iso(run.finished_at), "counts": run.counts or {},
         "initiated_by": run.initiated_by, "abort_reason": run.abort_reason,
@@ -121,8 +103,6 @@ def _report_entries(db: Session, run: Run) -> list[dict]:
     for res, tc in rows:
         linked = reqs.get(tc.id, [])
         high = any(is_high_priority(r.get("priority")) for r in linked)
-        # The most severe linked requirement governs (SRS §4.5).
-        top_priority = _top_priority([r.get("priority") for r in linked])
         entries.append({
             "test_case": {"id": tc.id, "title": tc.title, "description": tc.description,
                           "type": tc.type, "priority": tc.priority, "state": tc.state,
@@ -135,7 +115,7 @@ def _report_entries(db: Session, run: Run) -> list[dict]:
             "requirements": linked,
             "executed_at": _iso(res.created_at),
             # FR-052: severity only meaningful on failed/errored cases
-            "severity": derive_severity(res.outcome, res.failure_reason, high, top_priority)
+            "severity": derive_severity(res.outcome, res.failure_reason, high)
             if res.outcome in ("failed", "errored") else None,
         })
     return entries
@@ -154,54 +134,9 @@ def _counts_of(run: Run, entries: list[dict]) -> dict:
 # XLSX traceability matrix (FR-RPT-04, FR-RPT-07)
 # ---------------------------------------------------------------------------
 
-# Column and section labels, EN + AR. `lang=both` stamps "EN / AR" on every header
-# so one file serves an English delivery review and an Arabic contractual annex
-# without exporting twice (FR-071 AC3).
-_XLSX_LABELS = {
-    "Requirements": "المتطلبات", "Test Cases": "حالات الاختبار", "Matrix": "المصفوفة",
-    "Gaps": "الفجوات", "Failures": "الإخفاقات", "Latest Results": "أحدث النتائج",
-    "External ID": "المعرّف", "Description": "الوصف", "Type": "النوع",
-    "Priority": "الأولوية", "State": "الحالة", "Version": "الإصدار",
-    "Confidence": "الثقة", "Linked Cases": "الحالات المرتبطة", "Case ID": "معرّف الحالة",
-    "Title": "العنوان", "Technique": "الأسلوب", "Source": "المصدر",
-    "User Modified": "عُدّلت يدوياً", "Requirements ": "المتطلبات",
-    "Requirement": "المتطلب", "Requirement Description": "وصف المتطلب",
-    "Req State": "حالة المتطلب", "Case Title": "عنوان الحالة",
-    "Case State": "حالة الحالة", "Latest Outcome": "أحدث نتيجة",
-    "Outcome": "النتيجة", "Duration (ms)": "المدة (مللي ثانية)", "Run ID": "معرّف التشغيل",
-    "Executed At": "وقت التنفيذ", "Reason": "السبب", "Next Action": "الإجراء التالي",
-    "Severity": "الشدة", "Assertion": "التحقق", "Expected": "المتوقع",
-    "Actual": "الفعلي", "Run": "التشغيل", "Environment": "البيئة", "Branch": "الفرع",
-    "Exported": "تاريخ التصدير",
-}
-
-_GAP_REASONS_EN = {
-    "no_reachable_endpoint": "No reachable endpoint — import a spec covering it, or link it by hand",
-    "all_cases_disabled": "Linked cases exist but none is approved — approve one in review",
-    "no_approved_cases": "No approved cases — generate cases for this requirement",
-}
-
-
-def _resolve_lang(requested: str | None, project: Project) -> str:
-    lang = (requested or project.language or "en").lower()
-    return lang if lang in ("en", "ar", "both") else "en"
-
-
-def _label(text: str, lang: str) -> str:
-    arabic = _XLSX_LABELS.get(text, text)
-    if lang == "ar":
-        return arabic
-    if lang == "both" and arabic != text:
-        return f"{text} / {arabic}"
-    return text
-
-
 @router.get("/projects/{project_id}/exports/matrix.xlsx")
-def export_matrix(project_id: str, lang: str | None = None, run_id: str | None = None,
-                  user: User = Depends(require("export")),
+def export_matrix(project_id: str, user: User = Depends(require("export")),
                   db: Session = Depends(get_db)):
-    """FR-071 — matrix, failure list and gap list in one workbook. `lang` selects
-    en | ar | both; `run_id` stamps and scopes the failure sheet to one run."""
     project = get_project_scoped(project_id, user, db)
     try:
         from openpyxl import Workbook
@@ -212,15 +147,6 @@ def export_matrix(project_id: str, lang: str | None = None, run_id: str | None =
             "code": "missing_dependency",
             "message": "XLSX export requires the 'openpyxl' package (pip install openpyxl)."})
 
-    lang = _resolve_lang(lang, project)
-    rtl = lang in ("ar", "both")
-    stamp_run = None
-    if run_id:
-        stamp_run = db.get(Run, run_id)
-        if not stamp_run or stamp_run.organisation_id != user.organisation_id \
-                or stamp_run.project_id != project_id:
-            raise HTTPException(404, detail={"code": "not_found",
-                                             "message": "Run not found in this project"})
     reqs = (db.query(Requirement)
             .filter(Requirement.project_id == project_id,
                     Requirement.organisation_id == user.organisation_id,
@@ -249,33 +175,15 @@ def export_matrix(project_id: str, lang: str | None = None, run_id: str | None =
     wb = Workbook()
     wb.remove(wb.active)
 
-    env_name = ""
-    if stamp_run:
-        env = db.get(Environment, stamp_run.environment_id)
-        env_name = env.name if env else ""
-    # FR-071 AC4: identity on every printed page, not just the first sheet.
-    stamp = " · ".join(filter(None, [
-        f"{_label('Run', lang)} #{run_display_id(db, stamp_run)}" if stamp_run else "",
-        f"{_label('Environment', lang)}: {env_name}" if env_name else "",
-        f"{_label('Branch', lang)}: {stamp_run.branch}" if stamp_run and stamp_run.branch else "",
-        f"{_label('Exported', lang)}: {datetime.now().isoformat(timespec='seconds')}",
-        f"Traceo · {project.name}",
-    ]))
-
     def sheet(title: str, headers: list[str], widths: list[int]):
-        # Excel forbids \ / * ? : [ ] in a sheet name, so the bilingual separator
-        # differs from the one used inside cells.
-        ws = wb.create_sheet(_label(title, lang).replace(" / ", " · ")[:31])
+        ws = wb.create_sheet(title)
         for col, (h, w) in enumerate(zip(headers, widths), 1):
-            cell = ws.cell(row=1, column=col, value=_label(h, lang))
+            cell = ws.cell(row=1, column=col, value=h)
             cell.font = header_font
             cell.fill = header_fill
             cell.alignment = Alignment(vertical="center")
             ws.column_dimensions[get_column_letter(col)].width = w
         ws.freeze_panes = "A2"
-        ws.sheet_view.rightToLeft = rtl  # FR-RPT-07: Arabic projects export RTL sheets
-        ws.oddFooter.left.text = stamp[:255]
-        ws.evenFooter.left.text = stamp[:255]
         return ws
 
     def req_label(rid: str) -> str:
@@ -319,50 +227,7 @@ def export_matrix(project_id: str, lang: str | None = None, run_id: str | None =
             ws.append([r.external_id or r.id[:8], r.description, r.state,
                        c.id, c.title, c.state, res.outcome if res else "not_run"])
 
-    # -- Sheet 4: Gaps — every confirmed requirement without an approved case (FR-051)
-    ws = sheet("Gaps",
-               ["External ID", "Description", "Priority", "Reason", "Next Action"],
-               [14, 60, 10, 46, 52])
-    for r in reqs:
-        if r.state != "confirmed":
-            continue
-        states = [case_by_id[cid].state for cid in cases_by_req.get(r.id, [])
-                  if cid in case_by_id]
-        if any(s == "approved" for s in states):
-            continue
-        reason = gap_reason(states)
-        ws.append([r.external_id or r.id[:8], r.description, r.priority,
-                   _GAP_REASONS_EN[reason] if lang != "ar" else GAP_NEXT_ACTIONS[reason],
-                   GAP_NEXT_ACTIONS[reason] if lang != "en" else _GAP_REASONS_EN[reason]])
-
-    # -- Sheet 5: Failures — the defect list (FR-052), scoped to one run when asked
-    ws = sheet("Failures",
-               ["Case ID", "Title", "Requirement", "Outcome", "Severity",
-                "Assertion", "Expected", "Actual", "Run ID", "Executed At"],
-               [38, 52, 14, 10, 11, 16, 30, 30, 38, 24])
-    failure_source = (_run_outcomes(db, stamp_run.id) if stamp_run
-                      else {cid: res for cid, res in latest.items()})
-    for cid, res in sorted(failure_source.items(),
-                           key=lambda kv: _iso(kv[1].created_at) or ""):
-        if res.outcome not in ("failed", "errored") or cid not in case_by_id:
-            continue
-        c = case_by_id[cid]
-        linked = reqs_by_case.get(cid, [])
-        high = any(is_high_priority(req_by_id[rid].priority)
-                   for rid in linked if rid in req_by_id)
-        fr = res.failure_reason or {}
-        assertion = fr.get("assertion") if isinstance(fr.get("assertion"), dict) else {}
-        ws.append([c.id, c.title, ", ".join(req_label(rid) for rid in linked),
-                   res.outcome, derive_severity(res.outcome, res.failure_reason, high,
-                                                _top_priority([req_by_id[rid].priority
-                                                               for rid in linked
-                                                               if rid in req_by_id])),
-                   assertion.get("type", "") or ("transport" if fr.get("error") else ""),
-                   str(assertion.get("expected", assertion.get("value", "")))[:200],
-                   str(fr.get("actual", fr.get("error", "")))[:200],
-                   res.run_id, _iso(res.created_at)])
-
-    # -- Sheet 6: Latest Results
+    # -- Sheet 4: Latest Results
     ws = sheet("Latest Results",
                ["Case ID", "Title", "Case State", "Outcome", "Duration (ms)",
                 "Run ID", "Executed At"],
@@ -378,7 +243,7 @@ def export_matrix(project_id: str, lang: str | None = None, run_id: str | None =
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
-    filename = f"traceo-matrix-{project.id[:8]}-{lang}.xlsx"
+    filename = f"traceo-matrix-{project.id[:8]}.xlsx"
     return StreamingResponse(
         buf, media_type=XLSX_MEDIA_TYPE,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'})
@@ -437,7 +302,7 @@ def run_report(run_id: str, user: User = Depends(require("view")),
 # Run report — printable HTML (FR-RPT-05; the browser's print dialog makes the PDF)
 # ---------------------------------------------------------------------------
 
-_LABELS_EN = {
+LABELS = {
     "title": "Run Report", "project": "Project", "environment": "Environment",
     "run": "Run", "state": "State", "started": "Started", "finished": "Finished",
     "total": "Total", "passed": "Passed", "failed": "Failed", "errored": "Errored",
@@ -450,31 +315,17 @@ _LABELS_EN = {
     "no_failures": "No failures — every executed case passed.",
     "aborted": "Run aborted", "generated_by": "Generated by Traceo",
 }
-_LABELS_AR = {
-    "title": "تقرير التشغيل", "project": "المشروع", "environment": "البيئة",
-    "run": "التشغيل", "state": "الحالة", "started": "بدأ", "finished": "انتهى",
-    "total": "الإجمالي", "passed": "ناجح", "failed": "فاشل", "errored": "خطأ",
-    "pass_rate": "نسبة النجاح", "defects": "تقارير العيوب", "results": "جميع النتائج",
-    "case": "حالة الاختبار", "requirement": "المتطلب", "steps": "الخطوات",
-    "expected": "المتوقع", "actual": "الفعلي", "evidence": "الدليل",
-    "request": "الطلب", "response": "الاستجابة", "assertion": "التحقق",
-    "outcome": "النتيجة", "duration": "المدة (مللي ثانية)", "type": "النوع",
-    "priority": "الأولوية", "error": "الخطأ",
-    "no_failures": "لا توجد إخفاقات — نجحت جميع الحالات المنفّذة.",
-    "aborted": "تم إجهاض التشغيل", "generated_by": "تم إنشاؤه بواسطة Traceo",
-}
-
 _REPORT_CSS = """
 :root { --bg:#131217; --card:#1B1A21; --border:#312F3C; --amber:#FF8A22;
         --text:#EDEBF2; --muted:#9C98AB; --pass:#3DBB78; --fail:#E5534B; --err:#D9A03C; }
 * { box-sizing: border-box; }
 body { background: var(--bg); color: var(--text); margin: 0; padding: 32px;
-       font: 14px/1.55 -apple-system, "Segoe UI", Tahoma, Arial, sans-serif; }
+       font: 14px/1.55 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
 .mono { font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
 h1 { font-size: 24px; margin: 0 0 4px; }
 h1 .accent { color: var(--amber); }
-h2 { font-size: 17px; margin: 34px 0 12px; border-inline-start: 4px solid var(--amber);
-     padding-inline-start: 10px; }
+h2 { font-size: 17px; margin: 34px 0 12px; border-left: 4px solid var(--amber);
+     padding-left: 10px; }
 .meta { color: var(--muted); margin-bottom: 24px; }
 .meta .mono { color: var(--text); }
 .kpis { display: flex; flex-wrap: wrap; gap: 12px; margin: 20px 0 8px; }
@@ -493,32 +344,25 @@ h2 { font-size: 17px; margin: 34px 0 12px; border-inline-start: 4px solid var(--
 .card h3 { margin: 0 0 8px; font-size: 15px; }
 .reqs { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
 .reqs .rid { color: var(--amber); font-weight: 600; }
-.reqs .crit { margin-inline-start: 14px; padding-inline-start: 8px;
-              border-inline-start: 2px solid var(--border); margin-top: 3px; }
 .kv { display: grid; grid-template-columns: 110px 1fr; gap: 4px 14px; margin: 10px 0; }
 .kv .k { color: var(--muted); }
 pre { background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
       padding: 10px 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
       font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
-      margin: 6px 0 12px; direction: ltr; text-align: left; }
+      margin: 6px 0 12px; }
 .step { border-top: 1px dashed var(--border); padding-top: 10px; margin-top: 10px; }
 .step .line { font-weight: 600; }
 table { border-collapse: collapse; width: 100%; background: var(--card);
         border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-th { background: var(--amber); color: #131217; text-align: start; font-size: 12px;
+th { background: var(--amber); color: #131217; text-align: left; font-size: 12px;
      padding: 9px 12px; }
 td { border-top: 1px solid var(--border); padding: 8px 12px; font-size: 13px;
      vertical-align: top; }
 .footer { color: var(--muted); font-size: 12px; margin-top: 36px; }
-/* FR-071 AC4 — run identity repeated on every printed page. */
-.page-stamp { display: none; }
 @media print {
   :root { --bg:#FFFFFF; --card:#FFFFFF; --border:#D8D5E0; --text:#1B1A21;
           --muted:#5E5A6E; }
-  body { padding: 0; margin-bottom: 22mm; }
-  .page-stamp { display: block; position: fixed; bottom: 0; inset-inline: 0;
-                font-size: 10px; color: #5E5A6E; padding: 4px 0;
-                border-top: 1px solid #D8D5E0; }
+  body { padding: 0; }
   .kpi, .card, table { box-shadow: none; }
   th { color: #FFFFFF; background: #FF8A22; -webkit-print-color-adjust: exact;
        print-color-adjust: exact; }
@@ -550,17 +394,9 @@ def _clip(text: str) -> str:
 def _defect_card(entry: dict, L: dict) -> str:
     tc = entry["test_case"]
     fr = entry["failure_reason"] or {}
-    # FR-042 AC2 — the failure names the CRITERION it violates, in the criterion's
-    # own words, above expected/actual. "REQ-014 failed" is a ticket nobody can act
-    # on; "REQ-014 / AC2: a refund over 1000 is held for approval" is.
     reqs = "".join(
         f'<div><span class="rid mono">{_esc(r["external_id"] or r["id"][:8])}</span> '
-        f'{_esc(r["description"])}'
-        + "".join(
-            f'<div class="crit"><span class="rid mono">{_esc(c["index"])}</span> '
-            f'{_esc(c["statement"])}</div>'
-            for c in (r.get("criteria") or []) if c.get("statement"))
-        + '</div>'
+        f'{_esc(r["description"])}</div>'
         for r in entry["requirements"])
     outcome_lbl = L.get(entry["outcome"], entry["outcome"])
 
@@ -611,11 +447,8 @@ def _defect_card(entry: dict, L: dict) -> str:
 
 
 @router.get("/runs/{run_id}/report.html", response_class=HTMLResponse)
-def run_report_html(run_id: str, lang: str | None = None,
-                    user: User = Depends(require("view")),
+def run_report_html(run_id: str, user: User = Depends(require("view")),
                     db: Session = Depends(get_db)):
-    """The PDF deliverable (print this page). `lang` selects en | ar | both —
-    bilingual renders every label as "EN / AR" in one document (FR-071 AC3)."""
     run = _get_run(run_id, user, db)
     project = db.get(Project, run.project_id)
     env = db.get(Environment, run.environment_id)
@@ -623,14 +456,7 @@ def run_report_html(run_id: str, lang: str | None = None,
     counts = _counts_of(run, entries)
     display_id = run_display_id(db, run)
 
-    chosen = _resolve_lang(lang, project) if project else (lang or "en")
-    arabic = chosen == "ar"
-    if chosen == "both":
-        L = {k: (f"{v} / {_LABELS_AR[k]}" if _LABELS_AR.get(k) and _LABELS_AR[k] != v else v)
-             for k, v in _LABELS_EN.items()}
-    else:
-        L = _LABELS_AR if arabic else _LABELS_EN
-    dir_attr, lang_attr = ("rtl", "ar") if arabic else ("ltr", "en")
+    L = LABELS
 
     total = counts.get("total", 0)
     passed = counts.get("passed", 0)
@@ -657,7 +483,7 @@ def run_report_html(run_id: str, lang: str | None = None,
                       f'<pre>{_esc(run.abort_reason or "")}</pre></div>')
 
     page = f"""<!DOCTYPE html>
-<html dir="{dir_attr}" lang="{lang_attr}">
+<html dir="ltr" lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -692,8 +518,6 @@ def run_report_html(run_id: str, lang: str | None = None,
 <tbody>{result_rows or '<tr><td colspan="6">—</td></tr>'}</tbody>
 </table>
 <div class="footer">{L["generated_by"]} · {_esc(_iso(run.created_at) or "")}</div>
-<div class="page-stamp">{L["run"]} #{display_id} · {_esc(env.name if env else "")}
-{f" · {_esc(run.branch)}" if run.branch else ""} · {_esc(_iso(run.created_at) or "")}</div>
 </body>
 </html>"""
     return HTMLResponse(content=page)
@@ -742,78 +566,4 @@ def compare_runs(run_id: str, other_id: str, user: User = Depends(require("view"
     return {"run_id": run.id, "other_id": other.id,
             "newly_failing": newly_failing, "newly_passing": newly_passing,
             "unchanged": unchanged,
-            "coverage_delta": round(_coverage(run) - _coverage(other), 1),
-            # FR-053 AC3 — a pass-rate delta says a number moved; these say WHAT moved.
-            "requirement_delta": _requirement_delta(db, current, baseline),
-            "endpoint_delta": _endpoint_delta(db, current, baseline)}
-
-
-def _verdict_of(outcomes: list[str]) -> str:
-    """A requirement or endpoint is only 'passing' when nothing under it failed."""
-    if not outcomes:
-        return "not_run"
-    if any(o in ("failed", "errored") for o in outcomes):
-        return "failing"
-    return "passing"
-
-
-def _requirement_delta(db: Session, current: dict, baseline: dict) -> list[dict]:
-    """Per-requirement verdict change between two runs."""
-    case_ids = list(set(current) | set(baseline))
-    if not case_ids:
-        return []
-    rows = (db.query(RequirementTestCase, Requirement)
-            .join(Requirement, Requirement.id == RequirementTestCase.requirement_id)
-            .filter(RequirementTestCase.test_case_id.in_(case_ids)).all())
-
-    by_req: dict[str, dict] = {}
-    for link, req in rows:
-        entry = by_req.setdefault(req.id, {
-            "requirement_id": req.id, "external_id": req.external_id,
-            "priority": req.priority, "_now": [], "_then": []})
-        if link.test_case_id in current:
-            entry["_now"].append(current[link.test_case_id].outcome)
-        if link.test_case_id in baseline:
-            entry["_then"].append(baseline[link.test_case_id].outcome)
-
-    delta = []
-    for entry in by_req.values():
-        now, then = _verdict_of(entry.pop("_now")), _verdict_of(entry.pop("_then"))
-        if now == then:
-            continue
-        entry.update({"verdict": now, "previous_verdict": then,
-                      "direction": "regressed" if now == "failing"
-                      else "recovered" if then == "failing" else "changed"})
-        delta.append(entry)
-    return sorted(delta, key=lambda d: (d["direction"] != "regressed",
-                                        d["external_id"] or d["requirement_id"]))
-
-
-def _endpoint_delta(db: Session, current: dict, baseline: dict) -> list[dict]:
-    """Per-endpoint verdict change — the same question asked of the API surface."""
-    case_ids = list(set(current) | set(baseline))
-    if not case_ids:
-        return []
-    rows = (db.query(TestStep.test_case_id, Endpoint.id, Endpoint.method, Endpoint.path)
-            .join(Endpoint, Endpoint.id == TestStep.endpoint_id)
-            .filter(TestStep.test_case_id.in_(case_ids)).all())
-
-    by_ep: dict[str, dict] = {}
-    for case_id, ep_id, method, path in rows:
-        entry = by_ep.setdefault(ep_id, {"endpoint_id": ep_id, "method": method,
-                                         "path": path, "_now": [], "_then": []})
-        if case_id in current:
-            entry["_now"].append(current[case_id].outcome)
-        if case_id in baseline:
-            entry["_then"].append(baseline[case_id].outcome)
-
-    delta = []
-    for entry in by_ep.values():
-        now, then = _verdict_of(entry.pop("_now")), _verdict_of(entry.pop("_then"))
-        if now == then:
-            continue
-        entry.update({"verdict": now, "previous_verdict": then,
-                      "direction": "regressed" if now == "failing"
-                      else "recovered" if then == "failing" else "changed"})
-        delta.append(entry)
-    return sorted(delta, key=lambda d: (d["direction"] != "regressed", d["path"], d["method"]))
+            "coverage_delta": round(_coverage(run) - _coverage(other), 1)}

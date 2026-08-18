@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { api, pollJob } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
+import { useCan } from "@/lib/permissions";
 import {
   Badge,
   Button,
@@ -15,7 +15,6 @@ import {
   PageHeader,
   Pill,
   Progress,
-  RefChip,
   Select,
   StatusDot,
   Textarea,
@@ -55,8 +54,7 @@ function jobPct(j: any): number {
 function M({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
     <span
-      dir="ltr"
-      style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12, ...style }}
+      style={{ fontFamily: "'JetBrains Mono',ui-monospace,monospace", fontSize: 12, ...style }}
     >
       {children}
     </span>
@@ -65,98 +63,51 @@ function M({ children, style }: { children: React.ReactNode; style?: React.CSSPr
 
 export default function RequirementsPage() {
   const { id } = useParams<{ id: string }>();
-  const { lang } = useLang();
+  const canDo = useCan();
 
-  const L =
-    lang === "ar"
-      ? {
-          title: "المتطلبات",
-          sub: "ارفع مستند المتطلبات ليتم استخراجها وتأكيدها",
-          dropTitle: "اسحب مستند المتطلبات هنا أو انقر للاختيار",
-          dropHint: "PDF · DOCX · MD · TXT — حتى 50MB",
-          parsing: "جارٍ تحليل المستند واستخراج المتطلبات…",
-          documents: "المستندات",
-          version: "الإصدار",
-          noDocs: "لا توجد مستندات بعد",
-          noDocsHint: "ارفع مستند المتطلبات للبدء",
-          requirements: "المتطلبات المستخرجة",
-          all: "الكل",
-          extracted: "مستخرج",
-          confirmed: "مؤكّد",
-          changed: "متغيّر",
-          removed: "محذوف",
-          search: "بحث في المتطلبات…",
-          type: "النوع",
-          priority: "الأولوية",
-          anyType: "كل الأنواع",
-          anyPriority: "كل الأولويات",
-          confidence: "الثقة",
-          confirm: "تأكيد",
-          confirmAll: "اعتماد الكل",
-          edit: "تعديل",
-          empty: "لا توجد متطلبات",
-          emptyHint: "ارفع مستند المتطلبات للبدء",
-          emptyFiltered: "لا نتائج مطابقة للمرشّحات",
-          emptyFilteredHint: "جرّب تغيير المرشّحات أو البحث",
-          editTitle: "تعديل المتطلب",
-          externalId: "المعرّف",
-          description: "الوصف",
-          acceptance: "معايير القبول (سطر لكل معيار)",
-          save: "حفظ",
-          cancel: "إلغاء",
-          retry: "إعادة المحاولة",
-          loadError: "تعذّر تحميل البيانات",
-          high: "عالية",
-          medium: "متوسطة",
-          low: "منخفضة",
-          criteria: "معيار قبول",
-          needsCriteria: "بحاجة إلى معيار قبول",
-          v: "إصدار",
-        }
-      : {
-          title: "Requirements",
-          sub: "Upload the requirements document to extract and confirm them",
-          dropTitle: "Drop the requirements document here or click to browse",
-          dropHint: "PDF · DOCX · MD · TXT — up to 50MB",
-          parsing: "Parsing document and extracting requirements…",
-          documents: "Documents",
-          version: "Version",
-          noDocs: "No documents yet",
-          noDocsHint: "Upload a requirements document to get started",
-          requirements: "Extracted requirements",
-          all: "All",
-          extracted: "Extracted",
-          confirmed: "Confirmed",
-          changed: "Changed",
-          removed: "Removed",
-          search: "Search requirements…",
-          type: "Type",
-          priority: "Priority",
-          anyType: "All types",
-          anyPriority: "All priorities",
-          confidence: "Confidence",
-          confirm: "Confirm",
-          confirmAll: "Confirm all",
-          edit: "Edit",
-          empty: "No requirements",
-          emptyHint: "Upload a requirements document to get started",
-          emptyFiltered: "No results match the filters",
-          emptyFilteredHint: "Try changing the filters or search",
-          editTitle: "Edit requirement",
-          externalId: "External ID",
-          description: "Description",
-          acceptance: "Acceptance criteria (one per line)",
-          save: "Save",
-          cancel: "Cancel",
-          retry: "Retry",
-          loadError: "Failed to load data",
-          high: "High",
-          medium: "Medium",
-          low: "Low",
-          criteria: "acceptance criteria",
-          needsCriteria: "needs a criterion",
-          v: "v",
-        };
+  const L = {
+    title: "Requirements",
+    sub: "Upload the requirements document to extract and confirm them",
+    dropTitle: "Drop the requirements document here or click to browse",
+    dropHint: "PDF · DOCX · MD · TXT — up to 50MB",
+    parsing: "Parsing document and extracting requirements…",
+    documents: "Documents",
+    version: "Version",
+    noDocs: "No documents yet",
+    noDocsHint: "Upload a requirements document to get started",
+    requirements: "Extracted requirements",
+    all: "All",
+    extracted: "Extracted",
+    confirmed: "Confirmed",
+    changed: "Changed",
+    removed: "Removed",
+    search: "Search requirements…",
+    type: "Type",
+    priority: "Priority",
+    anyType: "All types",
+    anyPriority: "All priorities",
+    confidence: "Confidence",
+    confirm: "Confirm",
+    confirmAll: "Confirm all",
+    edit: "Edit",
+    empty: "No requirements",
+    emptyHint: "Upload a requirements document to get started",
+    emptyFiltered: "No results match the filters",
+    emptyFilteredHint: "Try changing the filters or search",
+    editTitle: "Edit requirement",
+    externalId: "External ID",
+    description: "Description",
+    acceptance: "Acceptance criteria (one per line)",
+    save: "Save",
+    cancel: "Cancel",
+    retry: "Retry",
+    loadError: "Failed to load data",
+    high: "High",
+    medium: "Medium",
+    low: "Low",
+    criteria: "acceptance criteria",
+    v: "v",
+  };
 
   const stateLabel = (s: string) =>
     (({ extracted: L.extracted, confirmed: L.confirmed, changed: L.changed, removed: L.removed } as Record<string, string>)[s] ?? s);
@@ -328,13 +279,14 @@ export default function RequirementsPage() {
   const hasFilters = stateF !== "all" || !!typeF || !!prioF || !!q.trim();
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div data-testid="requirements-page-root" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <PageHeader
         title={L.title}
         sub={L.sub}
+        testId="requirements-page-header"
         actions={
-          extractedCount > 0 ? (
-            <Button variant="secondary" onClick={confirmAll} disabled={confirmingAll}>
+          canDo("edit_requirements") && extractedCount > 0 ? (
+            <Button variant="secondary" onClick={confirmAll} disabled={confirmingAll} testId="requirements-toolbar-confirm-all-button">
               {L.confirmAll} ({extractedCount})
             </Button>
           ) : undefined
@@ -342,7 +294,9 @@ export default function RequirementsPage() {
       />
 
       {/* Upload zone */}
+      {canDo("upload_documents") && (
       <div
+        data-testid="requirements-upload-dropzone"
         onClick={() => !job && fileRef.current?.click()}
         onDragOver={(e) => {
           e.preventDefault();
@@ -367,6 +321,7 @@ export default function RequirementsPage() {
       >
         <input
           ref={fileRef}
+          data-testid="requirements-upload-file-input"
           type="file"
           accept=".pdf,.docx,.md,.txt"
           style={{ display: "none" }}
@@ -379,13 +334,13 @@ export default function RequirementsPage() {
         {job ? (
           <div style={{ maxWidth: 480, margin: "0 auto", display: "flex", flexDirection: "column", gap: 10 }}>
             <div style={{ fontSize: 14, color: "var(--text)" }}>{job.msg}</div>
-            <Progress pct={job.pct} tone="accent" />
-            <M style={{ color: "var(--text-muted)" }}>{job.pct}%</M>
+            <Progress pct={job.pct} tone="accent" testId="requirements-upload-progress" />
+            <M style={{ color: "var(--text-secondary)" }}>{job.pct}%</M>
           </div>
         ) : (
           <>
             <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text)" }}>{L.dropTitle}</div>
-            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 6 }}>
               <M>{L.dropHint}</M>
             </div>
           </>
@@ -394,16 +349,18 @@ export default function RequirementsPage() {
           <div style={{ marginTop: 12, fontSize: 13, color: "var(--error)" }}>{uploadError}</div>
         )}
       </div>
+      )}
 
       {/* Documents */}
-      <Card title={L.documents}>
+      <Card title={L.documents} testId="requirements-documents-card">
         {docs.length === 0 ? (
-          <Empty title={L.noDocs} hint={L.noDocsHint} />
+          <Empty title={L.noDocs} hint={L.noDocsHint} testId="requirements-documents-empty-state" />
         ) : (
           <div style={{ display: "flex", flexDirection: "column" }}>
             {docs.map((d, i) => (
               <div
                 key={d.id ?? i}
+                data-testid="requirements-document-row"
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -417,8 +374,8 @@ export default function RequirementsPage() {
                   {L.v}
                   {d.version ?? 1}
                 </Badge>
-                <div style={{ marginInlineStart: "auto" }}>
-                  <Badge tone={PARSE_TONE[d.parse_status] ?? "muted"}>{d.parse_status ?? "—"}</Badge>
+                <div style={{ marginLeft: "auto" }}>
+                  <Badge tone={PARSE_TONE[d.parse_status] ?? "muted"} testId="requirements-document-parse-status-badge" state={d.parse_status}>{d.parse_status ?? "—"}</Badge>
                 </div>
               </div>
             ))}
@@ -429,10 +386,11 @@ export default function RequirementsPage() {
       {/* Requirements */}
       <Card
         title={L.requirements}
+        testId="requirements-list-card"
         action={
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <Input placeholder={L.search} value={q} onChange={(e: any) => setQ(e.target.value)} />
-            <Select value={typeF} onChange={(e: any) => setTypeF(e.target.value)}>
+            <Input placeholder={L.search} value={q} onChange={(e: any) => setQ(e.target.value)} testId="requirements-search-input" />
+            <Select value={typeF} onChange={(e: any) => setTypeF(e.target.value)} testId="requirements-type-select" aria-label="filter by type">
               <option value="">{L.anyType}</option>
               {typeOptions.map((t) => (
                 <option key={t} value={t}>
@@ -440,7 +398,7 @@ export default function RequirementsPage() {
                 </option>
               ))}
             </Select>
-            <Select value={prioF} onChange={(e: any) => setPrioF(e.target.value)}>
+            <Select value={prioF} onChange={(e: any) => setPrioF(e.target.value)} testId="requirements-priority-select" aria-label="filter by priority">
               <option value="">{L.anyPriority}</option>
               {prioOptions.map((p) => (
                 <option key={p} value={p}>
@@ -459,14 +417,20 @@ export default function RequirementsPage() {
             ["changed", L.changed],
             ["removed", L.removed],
           ].map(([v, label]) => (
-            <Pill key={v} active={stateF === v} onClick={() => setStateF(v)}>
+            <Pill
+              key={v}
+              active={stateF === v}
+              onClick={() => setStateF(v)}
+              testId={`requirements-filter-${v}-pill`}
+              state={v === "all" ? undefined : v}
+            >
               {label}
             </Pill>
           ))}
         </div>
 
         {loading ? (
-          <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 13 }}>…</div>
+          <div style={{ padding: 24, color: "var(--text-secondary)", fontSize: 13 }}>…</div>
         ) : error ? (
           <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-start" }}>
             <div style={{ color: "var(--error)", fontSize: 13 }}>
@@ -475,6 +439,7 @@ export default function RequirementsPage() {
             <Button
               variant="secondary"
               size="sm"
+              testId="requirements-list-retry-button"
               onClick={() => {
                 setError(null);
                 loadReqs().catch((e) => setError(e?.message || String(e)));
@@ -487,6 +452,7 @@ export default function RequirementsPage() {
           <Empty
             title={hasFilters ? L.emptyFiltered : L.empty}
             hint={hasFilters ? L.emptyFilteredHint : L.emptyHint}
+            testId="requirements-empty-state"
           />
         ) : (
           <div style={{ display: "flex", flexDirection: "column" }}>
@@ -496,6 +462,8 @@ export default function RequirementsPage() {
               return (
                 <div
                   key={r.id ?? i}
+                  data-testid="requirements-row"
+                  data-state={r.state}
                   style={{
                     display: "flex",
                     gap: 16,
@@ -509,11 +477,11 @@ export default function RequirementsPage() {
                     {r.external_id ?? "—"}
                   </M>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div dir="auto" style={{ fontSize: 14, color: "var(--text)", lineHeight: 1.6 }}>{r.description}</div>
+                    <div style={{ fontSize: 14, color: "var(--text)", lineHeight: 1.6 }}>{r.description}</div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8, alignItems: "center" }}>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                        <StatusDot state={r.state} />
-                        <Badge tone={STATE_TONE[r.state] ?? "muted"}>{stateLabel(r.state)}</Badge>
+                        <StatusDot state={r.state} testId="requirements-row-status-dot" />
+                        <Badge tone={STATE_TONE[r.state] ?? "muted"} testId="requirements-row-state-badge" state={r.state}>{stateLabel(r.state)}</Badge>
                       </span>
                       {r.type && <Badge tone="info">{r.type}</Badge>}
                       {r.priority && (
@@ -522,27 +490,11 @@ export default function RequirementsPage() {
                         </Badge>
                       )}
                       {Array.isArray(r.acceptance_criteria) && r.acceptance_criteria.length > 0 && (
-                        <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                        <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
                           {r.acceptance_criteria.length} {L.criteria}
                         </span>
                       )}
-                      {/* FR-013 AC3 — a requirement nothing can be generated for */}
-                      {r.needs_criteria && <Badge tone="warning">{L.needsCriteria}</Badge>}
                     </div>
-
-                    {/* FR-013 AC2 — the addressable units cases and defects cite */}
-                    {Array.isArray(r.criteria) && r.criteria.length > 0 && (
-                      <div style={{ marginTop: 8, display: "grid", gap: 4 }}>
-                        {r.criteria.map((c: any) => (
-                          <div key={c.index} className="row" style={{ gap: 8, alignItems: "flex-start" }}>
-                            <RefChip id={c.index} />
-                            <span dir="auto" style={{ fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.6 }}>
-                              {c.statement}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
                   </div>
                   <div style={{ width: 130, flexShrink: 0 }}>
                     <div
@@ -550,20 +502,22 @@ export default function RequirementsPage() {
                         fontSize: 11,
                         textTransform: "uppercase",
                         letterSpacing: "0.08em",
-                        color: "var(--text-muted)",
+                        color: "var(--text-secondary)",
                         marginBottom: 6,
                       }}
                     >
                       {L.confidence} <M style={{ fontSize: 11 }}>{conf}%</M>
                     </div>
-                    <Progress pct={conf} tone={confTone} />
+                    <Progress pct={conf} tone={confTone} testId="requirements-row-confidence-progress" />
                   </div>
                   <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                    <Button variant="ghost" size="sm" onClick={() => openEdit(r)}>
-                      {L.edit}
-                    </Button>
-                    {r.state !== "confirmed" && r.state !== "removed" && (
-                      <Button variant="secondary" size="sm" disabled={busyRow === r.id} onClick={() => confirmRow(r)}>
+                    {canDo("edit_requirements") && (
+                      <Button variant="ghost" size="sm" onClick={() => openEdit(r)} testId="requirements-row-edit-button">
+                        {L.edit}
+                      </Button>
+                    )}
+                    {canDo("edit_requirements") && r.state !== "confirmed" && r.state !== "removed" && (
+                      <Button variant="secondary" size="sm" disabled={busyRow === r.id} onClick={() => confirmRow(r)} testId="requirements-row-confirm-button">
                         {L.confirm}
                       </Button>
                     )}
@@ -576,16 +530,15 @@ export default function RequirementsPage() {
       </Card>
 
       {/* Edit modal */}
-      <Modal open={!!editing} onClose={() => setEditing(null)} title={L.editTitle}>
+      <Modal open={!!editing} onClose={() => setEditing(null)} title={L.editTitle} testId="requirements-edit-modal">
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <Field label={L.externalId}>
+          <Field label={L.externalId} testId="requirements-edit-external-id-input">
             <Input
-              dir="ltr"
               value={form.external_id}
               onChange={(e: any) => setForm((f) => ({ ...f, external_id: e.target.value }))}
             />
           </Field>
-          <Field label={L.description}>
+          <Field label={L.description} testId="requirements-edit-description-textarea">
             <Textarea
               rows={4}
               value={form.description}
@@ -594,12 +547,12 @@ export default function RequirementsPage() {
           </Field>
           <div style={{ display: "flex", gap: 12 }}>
             <div style={{ flex: 1 }}>
-              <Field label={L.type}>
+              <Field label={L.type} testId="requirements-edit-type-input">
                 <Input value={form.type} onChange={(e: any) => setForm((f) => ({ ...f, type: e.target.value }))} />
               </Field>
             </div>
             <div style={{ flex: 1 }}>
-              <Field label={L.priority}>
+              <Field label={L.priority} testId="requirements-edit-priority-select">
                 <Select value={form.priority} onChange={(e: any) => setForm((f) => ({ ...f, priority: e.target.value }))}>
                   {!["high", "medium", "low", ""].includes(form.priority) && (
                     <option value={form.priority}>{form.priority}</option>
@@ -611,7 +564,7 @@ export default function RequirementsPage() {
               </Field>
             </div>
           </div>
-          <Field label={L.acceptance}>
+          <Field label={L.acceptance} testId="requirements-edit-acceptance-textarea">
             <Textarea
               rows={5}
               value={form.acceptance}
@@ -619,10 +572,10 @@ export default function RequirementsPage() {
             />
           </Field>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Button variant="ghost" onClick={() => setEditing(null)}>
+            <Button variant="ghost" onClick={() => setEditing(null)} testId="requirements-edit-cancel-button">
               {L.cancel}
             </Button>
-            <Button variant="primary" disabled={saving} onClick={saveEdit}>
+            <Button variant="primary" disabled={saving} onClick={saveEdit} testId="requirements-edit-save-button">
               {L.save}
             </Button>
           </div>

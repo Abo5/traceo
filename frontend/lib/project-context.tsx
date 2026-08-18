@@ -12,7 +12,13 @@ import { api } from "@/lib/api";
 export type ProjectInfo = {
   id: string;
   name: string;
-  language: "ar" | "en" | string;
+  automation?: "auto" | "manual" | string;
+  /**
+   * Which of the five kinds of testing this project is for. An empty or absent
+   * list means "nothing was said", which every reader treats as all five — see
+   * lib/test-types.ts::projectTestTypes.
+   */
+  test_types?: string[] | null;
   status: string;
   created_at?: string | null;
   updated_at?: string | null;

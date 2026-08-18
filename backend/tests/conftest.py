@@ -20,6 +20,10 @@ _fd, _DB_PATH = tempfile.mkstemp(prefix="traceo_test_", suffix=".sqlite3")
 os.close(_fd)
 os.environ["TRACEO_DATABASE_URL"] = f"sqlite:///{_DB_PATH}"
 os.environ["TRACEO_SEED_DEMO"] = "0"
+# The dev auto-login flag is read once at import; pin it OFF so the suite is the
+# same whether or not the developer's shell exports TRACEO_DEV_AUTOLOGIN=1 for a
+# local demo stack. Tests that need it turn it on per-test via monkeypatch.
+os.environ["TRACEO_DEV_AUTOLOGIN"] = "0"
 os.environ.setdefault("TRACEO_LLM_PROVIDER", "mock")
 # The scheduler thread is exercised directly (test_automation) rather than left
 # ticking against tables the fixtures drop between tests.
@@ -67,9 +71,11 @@ def register_org(client):
 @pytest.fixture()
 def create_project(client):
     """Returns a callable: create a project for the given auth headers -> project id."""
-    def _create(headers, name="مشروع اختبار", language="ar"):
-        r = client.post("/v1/projects", json={"name": name, "language": language},
-                        headers=headers)
+    def _create(headers, name="Test Project", automation=None):
+        body = {"name": name}
+        if automation is not None:
+            body["automation"] = automation
+        r = client.post("/v1/projects", json=body, headers=headers)
         assert r.status_code in (200, 201), f"create project failed: {r.status_code} {r.text}"
         data = r.json()
         pid = data.get("id") or (data.get("project") or {}).get("id")

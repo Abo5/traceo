@@ -2,25 +2,25 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { applyDocumentLang, useLang, useT } from "@/lib/i18n";
-import { getToken, getUser, setToken, setUser } from "@/lib/api";
-import { Pill } from "@/components/ui";
+import { ensureSession, getToken, getUser } from "@/lib/api";
 
+/**
+ * The application shell.
+ *
+ * Signing in is not part of this build. There is no login route, no
+ * registration route and no sign-out control: `ensureSession` obtains a session
+ * from the backend's dev-session endpoint before the first request goes out,
+ * and every screen simply assumes it. Nothing here can strand the user at a
+ * form, because no form exists to strand them at.
+ *
+ * The backend refuses to boot in production with that endpoint enabled
+ * (`assert_production_safe`), so this trade is loud rather than silent.
+ */
 export default function Providers({ children }: { children: React.ReactNode }) {
-  const { lang, setLang } = useLang();
-  const t = useT();
-  const router = useRouter();
-
   const [auth, setAuth] = useState<{ token: string | null; user: any | null }>({
     token: null,
     user: null,
   });
-
-  // keep <html lang/dir> in sync with the language store
-  useEffect(() => {
-    applyDocumentLang(lang);
-  }, [lang]);
 
   // auth state (token + cached user from localStorage 'traceo_user')
   useEffect(() => {
@@ -34,45 +34,26 @@ export default function Providers({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  function logout() {
-    setToken(null);
-    setUser(null);
-    router.push("/login");
-  }
+  useEffect(() => {
+    void ensureSession();
+  }, []);
 
   return (
     <>
       <header className="app-header">
-        <Link href={auth.token ? "/projects" : "/login"} className="brand">
+        <Link href="/projects" className="brand">
           <span className="logo-tile" aria-hidden>
             T
           </span>
           <span className="wordmark">Traceo</span>
-          <span className="brand-tagline" dir="ltr">
-            requirement → test → result
-          </span>
+          <span className="brand-tagline">requirement → test → result</span>
         </Link>
         <div className="header-spacer" />
         <div className="header-right">
-          <div className="row" style={{ gap: 4 }}>
-            <Pill active={lang === "ar"} onClick={() => setLang("ar")}>
-              AR
-            </Pill>
-            <Pill active={lang === "en"} onClick={() => setLang("en")}>
-              EN
-            </Pill>
-          </div>
-          {auth.token && (
-            <>
-              {auth.user?.name && (
-                <span className="header-user" title={auth.user?.email ?? ""}>
-                  {auth.user.name}
-                </span>
-              )}
-              <button type="button" className="btn btn-ghost btn-sm" onClick={logout}>
-                {t("logout")}
-              </button>
-            </>
+          {auth.user?.name && (
+            <span className="header-user" title={auth.user?.email ?? ""}>
+              {auth.user.name}
+            </span>
           )}
         </div>
       </header>

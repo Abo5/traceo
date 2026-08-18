@@ -1,0 +1,54 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:6f2c1a48-0d0d-4a5f-9a2c-1f2a3b4c5d6e",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-01-14T09:30:00Z",
+    "tools": [{ "vendor": "e2e", "name": "reference-sbom", "version": "1.0.0" }],
+    "component": {
+      "type": "application",
+      "bom-ref": "orders-platform",
+      "name": "orders-platform",
+      "version": "2.4.1",
+      "purl": "pkg:generic/orders-platform@2.4.1"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/express@4.18.2",
+      "name": "express",
+      "version": "4.18.2",
+      "purl": "pkg:npm/express@4.18.2"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/jsonwebtoken@9.0.2",
+      "name": "jsonwebtoken",
+      "version": "9.0.2",
+      "purl": "pkg:npm/jsonwebtoken@9.0.2"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/fastapi@0.110.0",
+      "name": "fastapi",
+      "version": "0.110.0",
+      "purl": "pkg:pypi/fastapi@0.110.0"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/sqlalchemy@2.0.29",
+      "name": "sqlalchemy",
+      "version": "2.0.29",
+      "purl": "pkg:pypi/sqlalchemy@2.0.29"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/github.com/gin-gonic/gin@v1.9.1",
+      "name": "github.com/gin-gonic/gin",
+      "version": "v1.9.1",
+      "purl": "pkg:golang/github.com/gin-gonic/gin@v1.9.1"
+    }
+  ]
+}

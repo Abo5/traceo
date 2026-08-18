@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
+import { useCan } from "@/lib/permissions";
 import {
   Badge,
   Button,
@@ -13,7 +13,6 @@ import {
   Mono,
   PageHeader,
   RefChip,
-  Select,
   SeverityBadge,
   StatCard,
   StatusDot,
@@ -21,6 +20,8 @@ import {
   stateTone,
 } from "@/components/ui";
 import { useProject } from "@/lib/project-context";
+import { TEST_TYPES, projectTestTypes, type TestType } from "@/lib/test-types";
+import { TestTypePicker } from "@/components/test-type-picker";
 
 type Dashboard = {
   requirement_count: number;
@@ -42,12 +43,7 @@ type Dashboard = {
     passed?: number;
     failed?: number;
     errored?: number;
-    branch?: string;
-    dropped?: boolean;
-    delta?: number | null;
   }[];
-  branches?: string[];
-  drop_threshold?: number;
   regression_watch?: {
     test_case_id: string;
     title: string;
@@ -78,139 +74,109 @@ const TC_STATES = ["draft", "approved", "rejected", "stale", "archived"] as cons
 
 export default function ProjectDashboardPage() {
   const { id } = useParams<{ id: string }>();
-  const { lang } = useLang();
-  const ar = lang === "ar";
-  const { project } = useProject();
+  const { project, refresh } = useProject();
+  const canDo = useCan();
 
-  const L = ar
-    ? {
-        title: "نظرة عامة",
-        sub: "من المتطلب إلى الاختبار المنفّذ — حالة المشروع الآن",
-        reqs: "المتطلبات",
-        confirmed: "المؤكدة",
-        cases: "حالات الاختبار",
-        coverage: "التغطية %",
-        caseStates: "حالات الاختبار حسب الحالة",
-        latestRun: "آخر تشغيل",
-        noRuns: "لا توجد تشغيلات بعد",
-        viewRun: "عرض التقرير",
-        openDefects: "عيوب مفتوحة",
-        criticalOf: "حرجة",
-        medianDur: "وسيط مدة التشغيل",
-        trendTitle: "اتجاه التغطية",
-        allBranches: "كل الفروع",
-        coverageDrop: "انخفاض تغطية يتجاوز ",
-        regTitle: "مراقبة الانحدار",
-        regEmpty: "لا انحدارات — كل ما نجح سابقاً ما زال ينجح",
-        gapsTitle: "فجوات التغطية",
-        gapsEmpty: "لا فجوات — كل متطلب مؤكد له حالة معتمدة",
-        targetedGen: "توليد مستهدف",
-        openReport: "فتح التقرير",
-        gapReasons: {
-          no_reachable_endpoint: "لا توجد واجهة مطابقة",
-          all_cases_disabled: "لا حالات معتمدة (روابط موجودة)",
-          no_approved_cases: "لا حالات معتمدة",
-          unmappable: "تعذّر الربط بواجهة",
-        } as Record<string, string>,
-        quick: "إجراءات سريعة",
-        uploadDoc: "رفع مستند متطلبات",
-        importSpec: "استيراد مواصفة API",
-        goGenerate: "توليد حالات",
-        goReview: "المراجعة",
-        goRun: "تشغيل جديد",
-        pipeline: "خط المعالجة",
-        steps: [
-          "تحليل المتطلبات",
-          "اكتشاف الواجهات",
-          "التوليد المقيّد",
-          "المراجعة البشرية",
-          "التنفيذ والتتبّع",
-        ],
-        stateNames: {
-          draft: "مسودة",
-          approved: "معتمدة",
-          rejected: "مرفوضة",
-          stale: "قديمة",
-          archived: "مؤرشفة",
-        } as Record<string, string>,
-        passed: "ناجح",
-        failed: "فاشل",
-        errored: "خطأ",
-        total: "الإجمالي",
-        loadError: "تعذّر تحميل لوحة المشروع",
-        retry: "إعادة المحاولة",
-        loading: "جارٍ التحميل…",
-      }
-    : {
-        title: "Overview",
-        sub: "From requirement to executed test — project status now",
-        reqs: "Requirements",
-        confirmed: "Confirmed",
-        cases: "Test cases",
-        coverage: "Coverage %",
-        caseStates: "Test cases by state",
-        latestRun: "Latest run",
-        noRuns: "No runs yet",
-        viewRun: "View report",
-        openDefects: "Open defects",
-        criticalOf: "critical",
-        medianDur: "Median run duration",
-        trendTitle: "Coverage trend",
-        allBranches: "All branches",
-        coverageDrop: "Coverage drop beyond ",
-        regTitle: "Regression watch",
-        regEmpty: "No regressions — everything that passed still passes",
-        gapsTitle: "Coverage gaps",
-        gapsEmpty: "No gaps — every confirmed requirement has an approved case",
-        targetedGen: "Targeted generation",
-        openReport: "Open report",
-        gapReasons: {
-          no_reachable_endpoint: "No matching endpoint",
-          all_cases_disabled: "No approved cases (links exist)",
-          no_approved_cases: "No approved cases",
-          unmappable: "Could not map to an endpoint",
-        } as Record<string, string>,
-        quick: "Quick actions",
-        uploadDoc: "Upload requirements doc",
-        importSpec: "Import API spec",
-        goGenerate: "Generate cases",
-        goReview: "Review",
-        goRun: "New run",
-        pipeline: "Pipeline",
-        steps: [
-          "Requirements analysis",
-          "Endpoint discovery",
-          "Grounded generation",
-          "Human review",
-          "Execution & traceability",
-        ],
-        stateNames: {
-          draft: "Draft",
-          approved: "Approved",
-          rejected: "Rejected",
-          stale: "Stale",
-          archived: "Archived",
-        } as Record<string, string>,
-        passed: "Passed",
-        failed: "Failed",
-        errored: "Errored",
-        total: "Total",
-        loadError: "Failed to load the project dashboard",
-        retry: "Retry",
-        loading: "Loading…",
-      };
+  const L = {
+    title: "Overview",
+    sub: "From requirement to executed test — project status now",
+    reqs: "Requirements",
+    confirmed: "Confirmed",
+    cases: "Test cases",
+    coverage: "Coverage %",
+    caseStates: "Test cases by state",
+    latestRun: "Latest run",
+    noRuns: "No runs yet",
+    viewRun: "View report",
+    openDefects: "Open defects",
+    criticalOf: "critical",
+    medianDur: "Median run duration",
+    trendTitle: "Coverage trend",
+    regTitle: "Regression watch",
+    regEmpty: "No regressions — everything that passed still passes",
+    gapsTitle: "Coverage gaps",
+    gapsEmpty: "No gaps — every confirmed requirement has an approved case",
+    targetedGen: "Targeted generation",
+    openReport: "Open report",
+    gapReasons: {
+      no_reachable_endpoint: "No matching endpoint",
+      all_cases_disabled: "No approved cases (links exist)",
+      no_approved_cases: "No approved cases",
+      unmappable: "Could not map to an endpoint",
+    } as Record<string, string>,
+    quick: "Quick actions",
+    uploadDoc: "Upload requirements doc",
+    importSpec: "Import API spec",
+    goGenerate: "Generate cases",
+    goReview: "Review",
+    goRun: "New run",
+    pipeline: "Pipeline",
+    steps: [
+      "Requirements analysis",
+      "Endpoint discovery",
+      "Grounded generation",
+      "Human review",
+      "Execution & traceability",
+    ],
+    stateNames: {
+      draft: "Draft",
+      approved: "Approved",
+      rejected: "Rejected",
+      stale: "Stale",
+      archived: "Archived",
+    } as Record<string, string>,
+    passed: "Passed",
+    failed: "Failed",
+    errored: "Errored",
+    total: "Total",
+    loadError: "Failed to load the project dashboard",
+    retry: "Retry",
+    loading: "Loading…",
+  };
 
   const [dash, setDash] = useState<Dashboard | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [branch, setBranch] = useState("");
+
+  // ---- test types: what this project is for ----
+  const declared = projectTestTypes(project);
+  const [draftTypes, setDraftTypes] = useState<TestType[] | null>(null);
+  const [savingTypes, setSavingTypes] = useState(false);
+  const [typesError, setTypesError] = useState<string | null>(null);
+  const shownTypes = draftTypes ?? declared;
+  const typesDirty =
+    draftTypes !== null && draftTypes.join(",") !== declared.join(",");
+
+  function toggleType(type: TestType) {
+    setTypesError(null);
+    setDraftTypes((current) => {
+      const base = current ?? declared;
+      return base.includes(type)
+        ? base.filter((t) => t !== type)
+        : TEST_TYPES.filter((t) => t === type || base.includes(t));
+    });
+  }
+
+  async function saveTypes() {
+    if (!draftTypes) return;
+    setSavingTypes(true);
+    setTypesError(null);
+    try {
+      await api(`/projects/${id}`, { method: "PATCH", body: { test_types: draftTypes } });
+      await refresh();
+      setDraftTypes(null);
+    } catch (e: any) {
+      setTypesError(e?.message || String(e));
+    } finally {
+      setSavingTypes(false);
+    }
+  }
 
   async function load() {
     setLoading(true);
     setError(null);
     try {
-      const qs = branch ? `?branch=${encodeURIComponent(branch)}` : "";
-      setDash(await api<Dashboard>(`/projects/${id}/dashboard${qs}`));
+      setDash(await api<Dashboard>(`/projects/${id}/dashboard`));
     } catch (e: any) {
       setError(e?.message || String(e));
     } finally {
@@ -221,7 +187,7 @@ export default function ProjectDashboardPage() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, branch]);
+  }, [id]);
 
   const base = `/projects/${id}`;
   const totalCases = dash
@@ -238,29 +204,86 @@ export default function ProjectDashboardPage() {
   const runLabel = run?.display_id ? `#${run.display_id}` : run ? run.id.slice(0, 8) : "—";
 
   return (
-    <div className="stack">
-      <PageHeader title={project?.name ?? L.title} sub={L.sub} />
+    <div className="stack" data-testid="dashboard-page-root">
+      <PageHeader title={project?.name ?? L.title} sub={L.sub} testId="dashboard-page-header" />
+
+      {/* What this project is for — the five test types, editable here. */}
+      <Card title="Test types" testId="project-types-card">
+        <div className="stack" style={{ gap: 12 }}>
+          <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+            The kinds of testing this project runs. Narrowing it narrows what every
+            engine here produces — a type that is off is refused, not silently skipped.
+          </div>
+          <TestTypePicker
+            selected={shownTypes}
+            onToggle={toggleType}
+            disabled={!canDo("manage_projects") || savingTypes}
+            testIdPrefix="project-type"
+          />
+          {typesError && (
+            <div className="error-text" data-testid="project-types-error-text">
+              {typesError}
+            </div>
+          )}
+          {!canDo("manage_projects") ? (
+            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}
+                 data-testid="project-types-readonly-hint">
+              Changing this needs the manage_projects capability.
+            </div>
+          ) : typesDirty ? (
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <Button
+                variant="primary"
+                size="sm"
+                testId="project-types-save-button"
+                disabled={savingTypes || shownTypes.length === 0}
+                onClick={saveTypes}
+              >
+                {savingTypes ? "Saving…" : "Save test types"}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                testId="project-types-cancel-button"
+                disabled={savingTypes}
+                onClick={() => {
+                  setDraftTypes(null);
+                  setTypesError(null);
+                }}
+              >
+                Cancel
+              </Button>
+              {shownTypes.length === 0 && (
+                <span style={{ fontSize: 12, color: "var(--warning)" }}
+                      data-testid="project-types-empty-hint">
+                  Pick at least one.
+                </span>
+              )}
+            </div>
+          ) : null}
+        </div>
+      </Card>
 
       {error ? (
-        <Card>
+        <Card testId="dashboard-error-card">
           <div className="stack" style={{ gap: 10, alignItems: "flex-start" }}>
-            <div className="error-text">
+            <div className="error-text" data-testid="dashboard-error-text">
               {L.loadError} — {error}
             </div>
-            <Button variant="secondary" size="sm" onClick={load}>
+            <Button variant="secondary" size="sm" testId="dashboard-retry-button" onClick={load}>
               {L.retry}
             </Button>
           </div>
         </Card>
       ) : loading || !dash ? (
-        <div style={{ color: "var(--text-muted)", fontSize: 13 }}>{L.loading}</div>
+        <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>{L.loading}</div>
       ) : (
         <>
           {/* KPI row — v2 */}
           <div className="grid-stats">
             <div style={{ position: "relative" }}>
-              <StatCard value={`${dash.coverage_pct}%`} label={L.coverage} color="var(--accent)" />
-              <span style={{ position: "absolute", top: 10, insetInlineEnd: 10 }}>
+              <StatCard value={`${dash.coverage_pct}%`} label={L.coverage} color="var(--accent)" testId="dashboard-coverage-stat" />
+              <span style={{ position: "absolute", top: 10, right: 10 }}>
                 <RefChip id="FR-050" />
               </span>
             </div>
@@ -268,78 +291,54 @@ export default function ProjectDashboardPage() {
               value={dash.test_case_counts?.approved ?? 0}
               label={L.stateNames.approved}
               color="var(--success)"
+              testId="dashboard-approved-cases-stat"
             />
             <StatCard
               value={run ? `${counts.passed ?? 0}/${counts.total ?? 0}` : "—"}
               label={`${L.latestRun} ${runLabel}`}
               color="var(--c-blue)"
+              testId="dashboard-latest-run-stat"
             />
             <div style={{ position: "relative" }}>
               <StatCard
                 value={defects.total}
                 label={`${L.openDefects} · ${defects.critical} ${L.criticalOf}`}
                 color={defects.critical > 0 ? "var(--error)" : "var(--text)"}
+                testId="dashboard-open-defects-stat"
               />
-              <span style={{ position: "absolute", top: 10, insetInlineEnd: 10 }}>
+              <span style={{ position: "absolute", top: 10, right: 10 }}>
                 <RefChip id="FR-052" />
               </span>
             </div>
-            <StatCard value={medianSec} label={L.medianDur} color="var(--c-cyan)" />
+            <StatCard value={medianSec} label={L.medianDur} color="var(--c-cyan)" testId="dashboard-median-duration-stat" />
           </div>
 
           {/* trend + latest run — v2 */}
           <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 16 }}>
             <Card
               title={L.trendTitle}
-              action={
-                <div className="row" style={{ gap: 8, alignItems: "center" }}>
-                  {(dash?.branches?.length ?? 0) > 0 && (
-                    <Select
-                      value={branch}
-                      onChange={(e) => setBranch(e.target.value)}
-                      style={{ height: 30, fontSize: 12, minWidth: 120 }}
-                    >
-                      <option value="">{L.allBranches}</option>
-                      {(dash?.branches ?? []).map((b) => (
-                        <option key={b} value={b}>{b}</option>
-                      ))}
-                    </Select>
-                  )}
-                  <RefChip id="FR-054" />
-                </div>
-              }
+              action={<RefChip id="FR-054" />}
+              testId="dashboard-coverage-trend-card"
             >
               {trend.length > 0 ? (
-                <>
-                  <TrendBars data={trend} height={130} />
-                  {trend.some((t) => t.dropped) && (
-                    <div style={{ marginTop: 8, fontSize: 12, color: "var(--warning)" }}>
-                      ⚠ {L.coverageDrop}
-                      {(dash?.drop_threshold ?? 5)}%
-                      {" — "}
-                      {trend
-                        .filter((t) => t.dropped)
-                        .map((t) => `#${t.display_id ?? ""} (${t.delta}%)`)
-                        .join(", ")}
-                    </div>
-                  )}
-                </>
+                <TrendBars data={trend} height={130} testId="dashboard-coverage-trendbars" />
               ) : (
-                <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{L.noRuns}</div>
+                <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>{L.noRuns}</div>
               )}
             </Card>
-            <Card title={L.latestRun}>
+            <Card title={L.latestRun} testId="dashboard-latest-run-card">
               {run ? (
                 <div className="row" style={{ gap: 18, alignItems: "center" }}>
                   <Donut
                     passed={counts.passed ?? 0}
                     failed={counts.failed ?? 0}
                     errored={counts.errored ?? 0}
+                    testId="dashboard-latest-run-donut"
                   />
                   <div className="stack" style={{ gap: 8 }}>
                     <div className="row" style={{ gap: 8 }}>
-                      <Badge tone={stateTone(run.state)}>{run.state}</Badge>
-                      <Mono style={{ fontSize: 11, color: "var(--text-muted)" }}>{runLabel}</Mono>
+                      <Badge tone={stateTone(run.state)} testId="dashboard-latest-run-state-badge" state={run.state}>{run.state}</Badge>
+                      <Mono style={{ fontSize: 11, color: "var(--text-secondary)" }}>{runLabel}</Mono>
                     </div>
                     <div style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>
                       <span style={{ color: "var(--success)" }}>{counts.passed ?? 0} {L.passed}</span>
@@ -349,19 +348,19 @@ export default function ProjectDashboardPage() {
                       <span style={{ color: "var(--warning)" }}>{counts.errored ?? 0} {L.errored}</span>
                     </div>
                     <Link href={`${base}/runs/${run.id}`}>
-                      <Button variant="secondary" size="sm">{L.openReport}</Button>
+                      <Button variant="secondary" size="sm" testId="dashboard-open-report-button">{L.openReport}</Button>
                     </Link>
                   </div>
                 </div>
               ) : (
-                <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{L.noRuns}</div>
+                <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>{L.noRuns}</div>
               )}
             </Card>
           </div>
 
           {/* regression watch + coverage gaps — v2 */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>
-            <Card title={L.regTitle} action={<RefChip id="FR-062" />}>
+            <Card title={L.regTitle} action={<RefChip id="FR-062" />} testId="dashboard-regression-card">
               {regressions.length === 0 ? (
                 <div style={{ fontSize: 13, color: "var(--success)" }}>{L.regEmpty}</div>
               ) : (
@@ -370,6 +369,7 @@ export default function ProjectDashboardPage() {
                     <div
                       key={r.test_case_id}
                       className="row"
+                      data-testid="dashboard-regression-row"
                       style={{
                         gap: 10,
                         padding: "8px 10px",
@@ -379,9 +379,8 @@ export default function ProjectDashboardPage() {
                         alignItems: "center",
                       }}
                     >
-                      <SeverityBadge severity={r.severity} />
+                      <SeverityBadge severity={r.severity} testId="dashboard-regression-severity-badge" />
                       <span
-                        dir="auto"
                         style={{
                           flex: 1,
                           minWidth: 0,
@@ -398,14 +397,14 @@ export default function ProjectDashboardPage() {
                         <Mono key={x} style={{ fontSize: 10.5, color: "var(--accent)" }}>{x}</Mono>
                       ))}
                       <Link href={`${base}/runs/${r.run_id}`}>
-                        <Badge tone={r.outcome === "failed" ? "error" : "warning"}>{r.outcome}</Badge>
+                        <Badge tone={r.outcome === "failed" ? "error" : "warning"} testId="dashboard-regression-outcome-badge" state={r.outcome}>{r.outcome}</Badge>
                       </Link>
                     </div>
                   ))}
                 </div>
               )}
             </Card>
-            <Card title={L.gapsTitle} action={<RefChip id="FR-051" />}>
+            <Card title={L.gapsTitle} action={<RefChip id="FR-051" />} testId="dashboard-gaps-card">
               {gaps.length === 0 ? (
                 <div style={{ fontSize: 13, color: "var(--success)" }}>{L.gapsEmpty}</div>
               ) : (
@@ -413,6 +412,7 @@ export default function ProjectDashboardPage() {
                   {gaps.slice(0, 6).map((g) => (
                     <div
                       key={g.requirement_id}
+                      data-testid="dashboard-gap-row"
                       style={{
                         padding: "10px 12px",
                         background: "var(--warning-subtle, rgba(255,197,61,.16))",
@@ -428,12 +428,14 @@ export default function ProjectDashboardPage() {
                           {L.gapReasons[g.reason ?? ""] ?? g.reason}
                         </span>
                         <span style={{ flex: 1 }} />
-                        <Link href={`${base}/generate?req=${g.requirement_id}`}>
-                          <Button variant="ghost" size="sm">{L.targetedGen}</Button>
-                        </Link>
+                        {canDo("generate") && (
+                          <Link href={`${base}/generate?req=${g.requirement_id}`}>
+                            <Button variant="ghost" size="sm" testId="dashboard-gap-targeted-generate-button">{L.targetedGen}</Button>
+                          </Link>
+                        )}
                       </div>
                       {g.next_action && (
-                        <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 4 }}>
+                        <div style={{ fontSize: 11.5, color: "var(--text-secondary)", marginTop: 4 }}>
                           {g.next_action}
                         </div>
                       )}
@@ -445,11 +447,13 @@ export default function ProjectDashboardPage() {
           </div>
 
           {/* case-state chips */}
-          <Card title={L.caseStates}>
+          <Card title={L.caseStates} testId="dashboard-case-states-card">
             <div className="row" style={{ gap: 10 }}>
               {TC_STATES.map((s) => (
                 <span
                   key={s}
+                  data-testid={`dashboard-case-state-${s}-chip`}
+                  data-state={s}
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
@@ -479,35 +483,52 @@ export default function ProjectDashboardPage() {
             }}
           >
             {/* quick actions */}
-            <Card title={L.quick}>
+            {(canDo("upload_documents") ||
+              canDo("import_spec") ||
+              canDo("generate") ||
+              canDo("edit_test_case") ||
+              canDo("approve_reject") ||
+              canDo("trigger_run")) && (
+            <Card title={L.quick} testId="dashboard-quick-actions-card">
               <div className="row" style={{ gap: 8 }}>
-                <Link href={`${base}/requirements`}>
-                  <Button variant="secondary" size="sm">
-                    {L.uploadDoc}
-                  </Button>
-                </Link>
-                <Link href={`${base}/endpoints`}>
-                  <Button variant="secondary" size="sm">
-                    {L.importSpec}
-                  </Button>
-                </Link>
-                <Link href={`${base}/generate`}>
-                  <Button variant="secondary" size="sm">
-                    {L.goGenerate}
-                  </Button>
-                </Link>
-                <Link href={`${base}/review`}>
-                  <Button variant="secondary" size="sm">
-                    {L.goReview}
-                  </Button>
-                </Link>
-                <Link href={`${base}/runs`}>
-                  <Button variant="primary" size="sm">
-                    {L.goRun}
-                  </Button>
-                </Link>
+                {canDo("upload_documents") && (
+                  <Link href={`${base}/requirements`}>
+                    <Button variant="secondary" size="sm" testId="dashboard-quick-upload-doc-button">
+                      {L.uploadDoc}
+                    </Button>
+                  </Link>
+                )}
+                {canDo("import_spec") && (
+                  <Link href={`${base}/endpoints`}>
+                    <Button variant="secondary" size="sm" testId="dashboard-quick-import-spec-button">
+                      {L.importSpec}
+                    </Button>
+                  </Link>
+                )}
+                {canDo("generate") && (
+                  <Link href={`${base}/generate`}>
+                    <Button variant="secondary" size="sm" testId="dashboard-quick-generate-button">
+                      {L.goGenerate}
+                    </Button>
+                  </Link>
+                )}
+                {(canDo("edit_test_case") || canDo("approve_reject")) && (
+                  <Link href={`${base}/review`}>
+                    <Button variant="secondary" size="sm" testId="dashboard-quick-review-button">
+                      {L.goReview}
+                    </Button>
+                  </Link>
+                )}
+                {canDo("trigger_run") && (
+                  <Link href={`${base}/runs`}>
+                    <Button variant="primary" size="sm" testId="dashboard-quick-run-button">
+                      {L.goRun}
+                    </Button>
+                  </Link>
+                )}
               </div>
             </Card>
+            )}
           </div>
 
           {/* pipeline strip */}
@@ -520,7 +541,6 @@ export default function ProjectDashboardPage() {
                 <div className="pipeline-step" key={i}>
                   <span
                     className="pipeline-num"
-                    dir="ltr"
                     style={{
                       color: PIPELINE_COLORS[i],
                       background: "var(--bg)",

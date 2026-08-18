@@ -1,638 +1,860 @@
-"""Integrations module — results land where the team already works (BR-09).
+"""Integrations module (v2 addendum) — public API keys, CI/CD gate, webhooks,
+Xray/Jira exports, scheduled runs and the PDPL organisation data export.
 
-FR-070 Jira / Xray   export a failure as an issue carrying reproduction steps,
-                     evidence and severity; a re-export UPDATES the issue it created
-                     the first time instead of opening a duplicate; where Xray is
-                     configured, a test execution is created and verdicts synced.
-FR-011 Confluence    list the pages of a space, parse selected pages through the same
-                     ingestion pipeline as an uploaded document, and flag requirements
-                     whose source page changed since the last import.
-FR-072 Slack         run summaries and failure alerts to a channel, at a configurable
-                     alert level.
-
-Credentials live in the encrypted `secret_encrypted` column and are never returned by
-any read path (FR-083). Every outbound call goes through `_request`, which honours
-on-premise egress rules (FR-081) and is the single seam tests replace.
+- API keys (FR-061 token surface): `X-API-Key: trc_...` accepted as an alternative
+  to Bearer JWT on the gate, traceability, run-read and run-launch endpoints. The
+  alt-auth wrappers live HERE (this router is mounted before the v1 modules so the
+  wrapped paths gain X-API-Key support without touching other modules' auth).
+- CI gate (FR-061): always HTTP 200 (CI checks `.pass`); `?exit=1` returns 412 on
+  failure so `curl -f` breaks the pipeline.
+- Webhooks (FR-070/072 transport): SSRF-guarded URLs, HMAC-SHA256 signatures,
+  Slack incoming-webhook special case ({"text": ...} Arabic summary).
+- Schedules (FR-060): daemon thread scans every 60s and launches the standard
+  run path. Started once from main.py startup.
+- Data export (FR-082, PDPL): full organisation JSON, evidence excluded.
 """
+import csv
+import hashlib
+import hmac
 import json
-from datetime import datetime, timezone
+import secrets as pysecrets
+import threading
+import time
+from datetime import datetime, timedelta, timezone
+from io import BytesIO, StringIO
+from urllib.parse import urlsplit
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..config import settings
-from ..db import get_db
-from ..deps import audit, get_project_scoped, require
-from ..models import (DefectExport, Integration, Requirement, RequirementTestCase,
-                      Run, TestCase, TestResult, User)
-from ..security import decrypt_secret, encrypt_secret, redact
-from .ingestion import numbered_criteria
+from .. import jobs as jobstore
+from ..db import SessionLocal, get_db
+from ..deps import audit, get_current_user, get_project_scoped, require
+from ..models import (ApiKey, AuditEntry, Environment, Organisation, Project,
+                      Requirement, RequirementTestCase, Run, Schedule, TestCase,
+                      TestResult, User, Webhook)
+from ..security import has_permission
+from .discovery import _assert_public_host  # SSRF guard (same rules as spec fetch)
 from .traceability import derive_severity, is_high_priority, run_display_id
 
 router = APIRouter()
 
-INTEGRATION_TYPES = ("jira", "xray", "confluence", "slack")
-ALERT_LEVELS = ("all", "failures", "regressions")
+KEY_PREFIX = "trc_"
+KEY_HEX_CHARS = 40
+WEBHOOK_TIMEOUT_S = 5.0
+SCHEDULER_INTERVAL_S = 60
+MIN_SCHEDULE_INTERVAL_MIN = 15
 
-# Non-secret config keys per type — everything else in `secret` is encrypted.
-_REQUIRED_CONFIG = {
-    "jira": ("base_url", "project_key", "email"),
-    "xray": ("base_url",),
-    "confluence": ("base_url", "space_key", "email"),
-    "slack": ("webhook_url",),
-}
-
-
-def _iso(dt: datetime | None) -> str | None:
-    return dt.isoformat() if dt else None
+SUPPORTED_EVENTS = ("run.completed",)
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class IntegrationError(Exception):
-    """Carries a message already safe to show the user (secrets redacted)."""
+def _iso(dt: datetime | None) -> str | None:
+    return dt.isoformat() if dt else None
 
 
 # ---------------------------------------------------------------------------
-# Outbound HTTP — the single egress seam
+# API keys (FR-061 token surface)
 # ---------------------------------------------------------------------------
 
-def _assert_egress_allowed(url: str) -> None:
-    """FR-081 AC2: in on-premise mode nothing leaves the network unless the operator
-    named the host explicitly."""
-    if not settings.ON_PREMISE:
-        return
-    host = httpx.URL(url).host or ""
-    allowed = any(host == entry or host.endswith("." + entry)
-                  for entry in settings.EGRESS_ALLOWLIST)
-    if not allowed:
-        raise IntegrationError(
-            f"on-premise mode blocks outbound calls to '{host}'; add it to "
-            f"TRACEO_EGRESS_ALLOWLIST to permit this integration")
+class ApiKeyCreate(BaseModel):
+    name: str
 
 
-def _request(method: str, url: str, *, secrets: list[str], **kwargs) -> httpx.Response:
-    """Every outbound integration call funnels through here."""
-    _assert_egress_allowed(url)
-    kwargs.setdefault("timeout", settings.INTEGRATION_TIMEOUT_S)
-    try:
-        with httpx.Client() as client:
-            return client.request(method, url, **kwargs)
-    except Exception as e:  # noqa: BLE001
-        raise IntegrationError(redact(f"{type(e).__name__}: {e}", secrets))
+def _key_dict(k: ApiKey) -> dict:
+    return {"id": k.id, "name": k.name, "prefix": k.prefix,
+            "created_at": _iso(k.created_at), "last_used_at": _iso(k.last_used_at),
+            "revoked": k.revoked}
 
 
-def _check_status(resp: httpx.Response, secrets: list[str], action: str) -> dict:
-    if resp.status_code >= 400:
-        body = redact((resp.text or "")[:400], secrets)
-        raise IntegrationError(f"{action} failed with HTTP {resp.status_code}: {body}")
-    try:
-        return resp.json()
-    except Exception:  # noqa: BLE001
-        return {}
-
-
-# ---------------------------------------------------------------------------
-# Integration CRUD
-# ---------------------------------------------------------------------------
-
-class IntegrationBody(BaseModel):
-    type: str
-    name: str = Field(default="", max_length=200)
-    project_id: str | None = None
-    config: dict = Field(default_factory=dict)
-    secret: dict | None = None       # write-only — {"api_token": "..."} / {"url": "..."}
-    alert_level: str = "failures"    # slack only
-
-
-class IntegrationUpdate(BaseModel):
-    name: str | None = Field(default=None, max_length=200)
-    config: dict | None = None
-    secret: dict | None = None       # {} clears the stored credential
-    alert_level: str | None = None
-
-
-def _integration_payload(i: Integration) -> dict:
-    # NEVER return the credential (FR-083 AC3) — only that one is held, and when.
-    return {"id": i.id, "type": i.type, "name": i.name, "project_id": i.project_id,
-            "config": i.config or {}, "secret_set": i.secret_encrypted is not None,
-            "state": i.state, "last_error": i.last_error,
-            "last_checked_at": _iso(i.last_checked_at),
-            "secret_rotated_at": _iso(i.updated_at) if i.secret_encrypted else None,
-            "alert_level": i.alert_level,
-            "created_at": _iso(i.created_at)}
-
-
-def _get_integration(integration_id: str, user: User, db: Session) -> Integration:
-    row = db.get(Integration, integration_id)
-    if not row or row.organisation_id != user.organisation_id:
-        raise HTTPException(404, detail={"code": "not_found",
-                                         "message": "Integration not found"})
-    return row
-
-
-def _secrets_of(row: Integration) -> tuple[dict, list[str]]:
-    cfg = decrypt_secret(row.secret_encrypted)
-    return cfg, [v for v in cfg.values() if isinstance(v, str) and len(v) > 3]
-
-
-@router.get("/integrations")
-def list_integrations(project_id: str | None = None,
-                      user: User = Depends(require("view")),
-                      db: Session = Depends(get_db)):
-    q = db.query(Integration).filter(Integration.organisation_id == user.organisation_id)
-    if project_id:
-        get_project_scoped(project_id, user, db)
-        q = q.filter(Integration.project_id.in_((project_id, None)))
-    rows = q.order_by(Integration.created_at.asc()).all()
-    return {"integrations": [_integration_payload(r) for r in rows]}
-
-
-@router.post("/integrations", status_code=201)
-def create_integration(body: IntegrationBody,
-                       user: User = Depends(require("manage_integrations")),
-                       db: Session = Depends(get_db)):
-    if body.type not in INTEGRATION_TYPES:
-        raise HTTPException(422, detail={
-            "code": "invalid_type",
-            "message": f"type must be one of: {', '.join(INTEGRATION_TYPES)}"})
-    if body.alert_level not in ALERT_LEVELS:
-        raise HTTPException(422, detail={
-            "code": "invalid_alert_level",
-            "message": f"alert_level must be one of: {', '.join(ALERT_LEVELS)}"})
-    missing = [k for k in _REQUIRED_CONFIG.get(body.type, ()) if not (body.config or {}).get(k)]
-    if missing:
-        raise HTTPException(422, detail={
-            "code": "missing_config",
-            "message": f"{body.type} requires: {', '.join(missing)}"})
-    if body.project_id:
-        get_project_scoped(body.project_id, user, db)
-
-    row = Integration(organisation_id=user.organisation_id, project_id=body.project_id,
-                      type=body.type, name=body.name or body.type.title(),
-                      config=body.config or {}, alert_level=body.alert_level,
-                      secret_encrypted=encrypt_secret(body.secret) if body.secret else None)
-    db.add(row)
+@router.post("/api-keys", status_code=201)
+def create_api_key(payload: ApiKeyCreate,
+                   user: User = Depends(require("manage_projects")),
+                   db: Session = Depends(get_db)):
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(422, detail={"code": "invalid_name",
+                                         "message": "API key name is required"})
+    full_key = KEY_PREFIX + pysecrets.token_hex(KEY_HEX_CHARS // 2)  # trc_ + 40 hex
+    k = ApiKey(organisation_id=user.organisation_id, name=name,
+               prefix=full_key[:8], key_hash=hashlib.sha256(full_key.encode()).hexdigest(),
+               created_by=user.id)
+    db.add(k)
     db.flush()
-    audit(db, user.organisation_id, user.id, "integration.created", "integration", row.id,
-          {"type": row.type, "project_id": row.project_id})
+    audit(db, user.organisation_id, user.id, "api_key.created", "api_key", k.id,
+          {"name": name, "prefix": k.prefix})
     db.commit()
-    return _integration_payload(row)
+    # The full key is returned ONCE — only the sha256 hash is stored.
+    return {"id": k.id, "name": k.name, "prefix": k.prefix, "key": full_key}
 
 
-@router.patch("/integrations/{integration_id}")
-def update_integration(integration_id: str, body: IntegrationUpdate,
-                       user: User = Depends(require("manage_integrations")),
-                       db: Session = Depends(get_db)):
-    row = _get_integration(integration_id, user, db)
-    if body.name is not None:
-        row.name = body.name
-    if body.config is not None:
-        row.config = {**(row.config or {}), **body.config}
-    if body.alert_level is not None:
-        if body.alert_level not in ALERT_LEVELS:
-            raise HTTPException(422, detail={
-                "code": "invalid_alert_level",
-                "message": f"alert_level must be one of: {', '.join(ALERT_LEVELS)}"})
-        row.alert_level = body.alert_level
-    if body.secret is not None:
-        # FR-083 AC4: rotation takes effect on the next call, nothing else changes.
-        row.secret_encrypted = encrypt_secret(body.secret) if body.secret else None
-    audit(db, user.organisation_id, user.id, "integration.updated", "integration", row.id,
-          {"secret_rotated": body.secret is not None})
+@router.get("/api-keys")
+def list_api_keys(user: User = Depends(require("view")), db: Session = Depends(get_db)):
+    keys = (db.query(ApiKey)
+            .filter(ApiKey.organisation_id == user.organisation_id)
+            .order_by(ApiKey.created_at.desc()).all())
+    return [_key_dict(k) for k in keys]
+
+
+@router.post("/api-keys/{key_id}/revoke")
+def revoke_api_key(key_id: str, user: User = Depends(require("manage_projects")),
+                   db: Session = Depends(get_db)):
+    k = db.get(ApiKey, key_id)
+    if not k or k.organisation_id != user.organisation_id:
+        raise HTTPException(404, detail={"code": "not_found", "message": "API key not found"})
+    k.revoked = True
+    audit(db, user.organisation_id, user.id, "api_key.revoked", "api_key", k.id,
+          {"name": k.name, "prefix": k.prefix})
     db.commit()
-    return _integration_payload(row)
-
-
-@router.delete("/integrations/{integration_id}", status_code=204)
-def delete_integration(integration_id: str,
-                       user: User = Depends(require("manage_integrations")),
-                       db: Session = Depends(get_db)):
-    row = _get_integration(integration_id, user, db)
-    db.query(DefectExport).filter(DefectExport.integration_id == row.id).delete()
-    db.delete(row)
-    audit(db, user.organisation_id, user.id, "integration.deleted", "integration", integration_id)
-    db.commit()
-    return None
-
-
-@router.post("/integrations/{integration_id}/check")
-def check_integration(integration_id: str,
-                      user: User = Depends(require("manage_integrations")),
-                      db: Session = Depends(get_db)):
-    """Reachability + credential probe. Records state so the screen can show it."""
-    row = _get_integration(integration_id, user, db)
-    cfg, secrets = _secrets_of(row)
-    try:
-        if row.type in ("jira", "xray"):
-            base = str(row.config.get("base_url", "")).rstrip("/")
-            resp = _request("GET", f"{base}/rest/api/3/myself",
-                            secrets=secrets, headers=_jira_headers(row, cfg))
-            _check_status(resp, secrets, "Jira authentication")
-        elif row.type == "confluence":
-            base = str(row.config.get("base_url", "")).rstrip("/")
-            resp = _request("GET", f"{base}/wiki/rest/api/space/{row.config.get('space_key')}",
-                            secrets=secrets, headers=_jira_headers(row, cfg))
-            _check_status(resp, secrets, "Confluence space lookup")
-        elif row.type == "slack":
-            url = cfg.get("webhook_url") or row.config.get("webhook_url", "")
-            resp = _request("POST", url, secrets=secrets,
-                            json={"text": "Traceo connectivity check"})
-            _check_status(resp, secrets, "Slack webhook")
-        row.state, row.last_error = "connected", None
-    except IntegrationError as e:
-        row.state, row.last_error = "error", str(e)
-    row.last_checked_at = _utcnow()
-    db.commit()
-    return _integration_payload(row)
+    return _key_dict(k)
 
 
 # ---------------------------------------------------------------------------
-# Jira / Xray (FR-070)
+# Alt auth: X-API-Key OR Bearer JWT (public API surface only)
 # ---------------------------------------------------------------------------
 
-def _jira_headers(row: Integration, cfg: dict) -> dict:
-    import base64
-    email = str(row.config.get("email", ""))
-    token = str(cfg.get("api_token", ""))
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
-    if token and email:
-        basic = base64.b64encode(f"{email}:{token}".encode()).decode()
-        headers["Authorization"] = f"Basic {basic}"
-    elif token:
-        headers["Authorization"] = f"Bearer {token}"
-    return headers
-
-
-_JIRA_SEVERITY_PRIORITY = {"critical": "Highest", "major": "High", "minor": "Medium"}
-
-
-def build_defect_document(db: Session, run: Run, result: TestResult,
-                          case: TestCase) -> dict:
-    """The reproducible bug report (FR-052) rendered as a portable document — the
-    same content the Jira description, the Xray comment and the Slack alert carry."""
-    rows = (db.query(Requirement, RequirementTestCase)
-            .join(RequirementTestCase, RequirementTestCase.requirement_id == Requirement.id)
-            .filter(RequirementTestCase.test_case_id == case.id).all())
-    reqs = [r for r, _link in rows]
-    high = any(is_high_priority(r.priority) for r in reqs)
-    # FR-042 AC2 — the exported issue quotes the criterion, so a developer who has
-    # never seen Traceo can judge the failure from the ticket alone.
-    criteria_cited: list[dict] = []
-    for req, link in rows:
-        statements = {c["index"]: c["statement"] for c in numbered_criteria(req)}
-        for index in (link.criterion_indexes or []):
-            criteria_cited.append({
-                "requirement": req.external_id or req.id[:8],
-                "index": index, "statement": statements.get(index, "")})
-    priorities = sorted((str(r.priority or "medium").lower() for r in reqs),
-                        key=lambda v: {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(v, 2))
-    severity = derive_severity(result.outcome, result.failure_reason, high,
-                               priorities[0] if priorities else None)
-    display = run_display_id(db, run)
-
-    steps: list[str] = []
-    for i, step in enumerate(sorted(case.steps, key=lambda s: s.order), start=1):
-        steps.append(f"{i}. {step.method.upper()} {step.path}")
-    fr = result.failure_reason or {}
-    assertion = fr.get("assertion") if isinstance(fr.get("assertion"), dict) else {}
-
-    return {
-        "summary": f"[Traceo #{display}] {case.title}"[:250],
-        "severity": severity,
-        "outcome": result.outcome,
-        "run_display_id": display,
-        "run_id": run.id,
-        "test_case_id": case.id,
-        "requirements": [{"external_id": r.external_id, "id": r.id,
-                          "priority": r.priority, "description": r.description}
-                         for r in reqs],
-        "criteria": criteria_cited,
-        "steps": steps,
-        "expected": assertion.get("expected", assertion.get("value")),
-        "actual": fr.get("actual", fr.get("error")),
-        "assertion_type": assertion.get("type"),
-        "evidence": result.evidence or [],
-    }
-
-
-def _defect_description(doc: dict) -> str:
-    """Plain-text rendering — readable in Jira, Slack and a terminal alike."""
-    lines = [f"Traceo run #{doc['run_display_id']} — {doc['outcome']} ({doc['severity']})", ""]
-    if doc["requirements"]:
-        lines.append("Requirements: " + ", ".join(
-            r["external_id"] or r["id"][:8] for r in doc["requirements"]))
-    for criterion in doc.get("criteria") or []:
-        lines.append(f"Violated criterion {criterion['requirement']} / "
-                     f"{criterion['index']}: {criterion['statement']}")
-    lines += ["", "Reproduction steps:"] + (doc["steps"] or ["1. (single request)"])
-    lines += ["", f"Expected: {doc.get('expected')}", f"Actual: {doc.get('actual')}"]
-    evidence = doc.get("evidence") or []
-    if evidence:
-        first = evidence[0] if isinstance(evidence[0], dict) else {}
-        req, resp = first.get("request") or {}, first.get("response") or {}
-        lines += ["", "Request:", json.dumps(req, ensure_ascii=False, indent=2)[:1500],
-                  "", "Response:", json.dumps(resp, ensure_ascii=False, indent=2)[:1500]]
-    lines += ["", f"Traceo report: /v1/runs/{doc['run_id']}/report.html"]
-    return "\n".join(lines)
-
-
-class ExportBody(BaseModel):
-    integration_id: str
-
-
-@router.post("/runs/{run_id}/results/{result_id}/export")
-def export_defect(run_id: str, result_id: str, body: ExportBody,
-                  user: User = Depends(require("export_defects")),
-                  db: Session = Depends(get_db)):
-    """FR-070 AC1/AC2/AC4 — create the issue, or update the one we created before."""
-    run = db.get(Run, run_id)
-    if not run or run.organisation_id != user.organisation_id:
-        raise HTTPException(404, detail={"code": "not_found", "message": "Run not found"})
-    result = db.get(TestResult, result_id)
-    if not result or result.run_id != run.id:
-        raise HTTPException(404, detail={"code": "not_found", "message": "Result not found"})
-    if result.outcome not in ("failed", "errored"):
-        raise HTTPException(409, detail={"code": "not_a_defect",
-                                         "message": "Only failed or errored results export as defects"})
-    case = db.get(TestCase, result.test_case_id)
-    row = _get_integration(body.integration_id, user, db)
-    if row.type != "jira":
-        raise HTTPException(422, detail={"code": "wrong_integration_type",
-                                         "message": "Defect export requires a Jira integration"})
-
-    cfg, secrets = _secrets_of(row)
-    doc = build_defect_document(db, run, result, case)
-    base = str(row.config.get("base_url", "")).rstrip("/")
-    headers = _jira_headers(row, cfg)
-
-    existing = (db.query(DefectExport)
-                .filter(DefectExport.integration_id == row.id,
-                        DefectExport.run_id == run.id,
-                        DefectExport.test_case_id == case.id).first())
-    description = _defect_description(doc)
-
-    try:
-        if existing and existing.external_key:
-            resp = _request("PUT", f"{base}/rest/api/3/issue/{existing.external_key}",
-                            secrets=secrets, headers=headers,
-                            json={"fields": {"summary": doc["summary"],
-                                             "description": description}})
-            _check_status(resp, secrets, "Jira issue update")
-            key, action = existing.external_key, "updated"
-        else:
-            fields = {
-                "project": {"key": row.config.get("project_key")},
-                "issuetype": {"name": row.config.get("issue_type", "Bug")},
-                "summary": doc["summary"],
-                "description": description,
-            }
-            priority_name = _JIRA_SEVERITY_PRIORITY.get(doc["severity"])
-            if priority_name and row.config.get("map_priority", True):
-                fields["priority"] = {"name": priority_name}
-            resp = _request("POST", f"{base}/rest/api/3/issue", secrets=secrets,
-                            headers=headers, json={"fields": fields})
-            created = _check_status(resp, secrets, "Jira issue creation")
-            key, action = created.get("key", ""), "created"
-    except IntegrationError as e:
-        row.state, row.last_error = "error", str(e)
+def user_or_api_key(x_api_key: str = Header(default="", alias="X-API-Key"),
+                    authorization: str = Header(default=""),
+                    db: Session = Depends(get_db)) -> User:
+    """Resolve either an `X-API-Key: trc_...` header (public API) or the standard
+    Bearer JWT. API keys map to a synthetic org-scoped qa_engineer actor."""
+    if x_api_key:
+        k = (db.query(ApiKey)
+             .filter(ApiKey.key_hash == hashlib.sha256(x_api_key.encode()).hexdigest())
+             .first())
+        if not k or k.revoked:
+            raise HTTPException(401, detail={"code": "invalid_api_key",
+                                             "message": "Unknown or revoked API key"})
+        k.last_used_at = _utcnow()
         db.commit()
-        raise HTTPException(502, detail={"code": "integration_failed", "message": str(e)})
-
-    record = existing or DefectExport(organisation_id=user.organisation_id,
-                                      integration_id=row.id, run_id=run.id,
-                                      test_case_id=case.id)
-    record.external_key = key
-    record.external_url = f"{base}/browse/{key}" if key else ""
-    record.severity = doc["severity"]
-    record.action = action
-    record.synced_at = _utcnow()
-    db.add(record)
-    row.state, row.last_error = "connected", None
-    audit(db, user.organisation_id, user.id, f"defect.{action}", "test_result", result.id,
-          {"integration_id": row.id, "external_key": key, "severity": doc["severity"]})
-    db.commit()
-    return {"external_key": key, "external_url": record.external_url,
-            "action": action, "severity": doc["severity"]}
+        # Transient (never persisted) actor — org-scoped, qa_engineer capabilities.
+        return User(id=k.id, organisation_id=k.organisation_id, email="",
+                    name=f"API key: {k.name}", password_hash="", role="qa_engineer",
+                    locale="en")
+    return get_current_user(authorization, db)
 
 
-@router.get("/runs/{run_id}/exports")
-def list_run_exports(run_id: str, user: User = Depends(require("view")),
+def _check_capability(actor: User, capability: str) -> None:
+    if not has_permission(actor.role, capability):
+        raise HTTPException(403, detail={
+            "code": "forbidden",
+            "message": f"Role '{actor.role}' lacks '{capability}'"})
+
+
+# --- Thin X-API-Key wrappers over existing read/launch endpoints.
+# This router is mounted BEFORE the v1 modules, so these definitions take over
+# the paths and delegate to the original handlers with the resolved actor.
+
+@router.get("/projects/{project_id}/traceability")
+def traceability_with_api_key(project_id: str, actor: User = Depends(user_or_api_key),
+                              db: Session = Depends(get_db)):
+    _check_capability(actor, "view")
+    from .traceability import traceability_matrix
+    return traceability_matrix(project_id, actor, db)
+
+
+@router.get("/runs/{run_id}")
+def run_with_api_key(run_id: str, actor: User = Depends(user_or_api_key),
                      db: Session = Depends(get_db)):
-    run = db.get(Run, run_id)
-    if not run or run.organisation_id != user.organisation_id:
-        raise HTTPException(404, detail={"code": "not_found", "message": "Run not found"})
-    rows = db.query(DefectExport).filter(DefectExport.run_id == run.id).all()
-    return {"exports": [{"test_case_id": r.test_case_id, "external_key": r.external_key,
-                         "external_url": r.external_url, "action": r.action,
-                         "severity": r.severity, "synced_at": _iso(r.synced_at)}
-                        for r in rows]}
+    _check_capability(actor, "view")
+    from .execution import get_run
+    return get_run(run_id, actor, db)
 
 
-@router.post("/runs/{run_id}/xray/sync")
-def sync_xray(run_id: str, body: ExportBody,
-              user: User = Depends(require("export_defects")),
-              db: Session = Depends(get_db)):
-    """FR-070 AC3 — create a test execution and sync each case verdict into it."""
-    run = db.get(Run, run_id)
-    if not run or run.organisation_id != user.organisation_id:
-        raise HTTPException(404, detail={"code": "not_found", "message": "Run not found"})
-    row = _get_integration(body.integration_id, user, db)
-    if row.type != "xray":
-        raise HTTPException(422, detail={"code": "wrong_integration_type",
-                                         "message": "This endpoint requires an Xray integration"})
-    cfg, secrets = _secrets_of(row)
-    base = str(row.config.get("base_url", "")).rstrip("/")
+@router.post("/projects/{project_id}/runs", status_code=202)
+def launch_run_with_api_key(project_id: str, payload: dict,
+                            actor: User = Depends(user_or_api_key),
+                            db: Session = Depends(get_db)):
+    _check_capability(actor, "trigger_run")
+    from .execution import RunCreate, create_run
+    try:
+        body = RunCreate(**payload)
+    except Exception:
+        raise HTTPException(422, detail={"code": "invalid_body",
+                                         "message": "environment_id is required"})
+    return create_run(project_id, body, actor, db)
 
-    rows = (db.query(TestResult, TestCase)
-            .join(TestCase, TestCase.id == TestResult.test_case_id)
-            .filter(TestResult.run_id == run.id).all())
-    status_of = {"passed": "PASSED", "failed": "FAILED", "errored": "FAILED"}
-    tests = [{"testKey": (tc.description or "").strip() or tc.id,
-              "status": status_of.get(res.outcome, "TODO"),
-              "comment": (res.failure_reason or {}).get("error", "")}
-             for res, tc in rows]
 
+# ---------------------------------------------------------------------------
+# CI/CD gate (FR-061)
+# ---------------------------------------------------------------------------
+
+def _project_coverage_pct(db: Session, project_id: str, org_id: str) -> float:
+    """Confirmed requirements with >=1 approved linked case / all confirmed."""
+    from sqlalchemy import func
+    confirmed = db.query(func.count(Requirement.id)).filter(
+        Requirement.project_id == project_id,
+        Requirement.organisation_id == org_id,
+        Requirement.state == "confirmed").scalar() or 0
+    if not confirmed:
+        return 0.0
+    covered = (db.query(func.count(func.distinct(RequirementTestCase.requirement_id)))
+               .select_from(RequirementTestCase)
+               .join(Requirement, Requirement.id == RequirementTestCase.requirement_id)
+               .join(TestCase, TestCase.id == RequirementTestCase.test_case_id)
+               .filter(Requirement.project_id == project_id,
+                       Requirement.organisation_id == org_id,
+                       Requirement.state == "confirmed",
+                       TestCase.state == "approved")
+               .scalar() or 0)
+    return round(100.0 * covered / confirmed, 1)
+
+
+def _latest_completed_run(db: Session, project_id: str, org_id: str) -> Run | None:
+    return (db.query(Run)
+            .filter(Run.project_id == project_id, Run.organisation_id == org_id,
+                    Run.state == "completed")
+            .order_by(Run.created_at.desc(), Run.id.desc()).first())
+
+
+def _failing_results(db: Session, run_id: str) -> dict[str, TestResult]:
+    """test_case_id -> latest failing/errored result within the run."""
+    latest: dict[str, TestResult] = {}
+    rows = (db.query(TestResult).filter(TestResult.run_id == run_id)
+            .order_by(TestResult.created_at.asc(), TestResult.id.asc()).all())
+    for res in rows:
+        latest[res.test_case_id] = res
+    return {cid: r for cid, r in latest.items() if r.outcome in ("failed", "errored")}
+
+
+def _requirements_of_cases(db: Session, case_ids: list[str]) -> dict[str, dict]:
+    """case_id -> {external_ids: [...], high_priority: bool}."""
+    info = {cid: {"external_ids": [], "high_priority": False} for cid in case_ids}
+    if not case_ids:
+        return info
+    rows = (db.query(RequirementTestCase.test_case_id,
+                     Requirement.external_id, Requirement.priority)
+            .join(Requirement, Requirement.id == RequirementTestCase.requirement_id)
+            .filter(RequirementTestCase.test_case_id.in_(case_ids)).all())
+    for cid, external_id, priority in rows:
+        if external_id:
+            info[cid]["external_ids"].append(external_id)
+        if is_high_priority(priority):
+            info[cid]["high_priority"] = True
+    return info
+
+
+@router.get("/projects/{project_id}/gate")
+def ci_gate(project_id: str, min_coverage: float = 80, max_critical: int = 0,
+            max_failed: int | None = None, exit: int = 0,
+            actor: User = Depends(user_or_api_key), db: Session = Depends(get_db)):
+    _check_capability(actor, "view")
+    get_project_scoped(project_id, actor, db)
+    org_id = actor.organisation_id
+
+    coverage_pct = _project_coverage_pct(db, project_id, org_id)
+
+    latest = _latest_completed_run(db, project_id, org_id)
+    latest_payload = None
+    failing: dict[str, TestResult] = {}
+    req_info: dict[str, dict] = {}
+    open_defects = {"total": 0, "critical": 0}
+    if latest:
+        latest_payload = {"id": latest.id, "display_id": run_display_id(db, latest),
+                          "counts": latest.counts or {}}
+        failing = _failing_results(db, latest.id)
+        req_info = _requirements_of_cases(db, list(failing))
+        open_defects["total"] = len(failing)
+        open_defects["critical"] = sum(
+            1 for cid, res in failing.items()
+            if derive_severity(res.outcome, res.failure_reason,
+                               req_info[cid]["high_priority"]) == "critical")
+
+    def _breach_reqs(case_ids) -> list[str]:
+        seen: list[str] = []
+        for cid in case_ids:
+            for ext in req_info.get(cid, {}).get("external_ids", []):
+                if ext not in seen:
+                    seen.append(ext)
+        return sorted(seen)
+
+    breaches: list[dict] = []
+    if coverage_pct < min_coverage:
+        breaches.append({"check": "min_coverage", "limit": min_coverage,
+                         "actual": coverage_pct})
+    if open_defects["critical"] > max_critical:
+        critical_ids = [cid for cid, res in failing.items()
+                        if derive_severity(res.outcome, res.failure_reason,
+                                           req_info[cid]["high_priority"]) == "critical"]
+        breaches.append({"check": "max_critical", "limit": max_critical,
+                         "actual": open_defects["critical"],
+                         "requirement_external_ids": _breach_reqs(critical_ids)})
+    if max_failed is not None and open_defects["total"] > max_failed:
+        breaches.append({"check": "max_failed", "limit": max_failed,
+                         "actual": open_defects["total"],
+                         "requirement_external_ids": _breach_reqs(list(failing))})
+
+    gate = {"pass": not breaches, "coverage_pct": coverage_pct,
+            "open_defects": open_defects, "latest_run": latest_payload,
+            "breaches": breaches}
+    if exit and breaches:
+        # `?exit=1`: non-2xx so `curl -f` fails the CI job (FR-061)
+        raise HTTPException(412, detail={"code": "gate_failed",
+                                         "message": "Quality gate failed",
+                                         "gate": gate})
+    return gate
+
+
+# ---------------------------------------------------------------------------
+# Webhooks (FR-070/072 transport)
+# ---------------------------------------------------------------------------
+
+class WebhookCreate(BaseModel):
+    name: str
+    url: str
+    secret: str | None = None
+    events: list[str] | None = None
+    enabled: bool = True
+
+
+class WebhookPatch(BaseModel):
+    name: str | None = None
+    url: str | None = None
+    secret: str | None = None
+    events: list[str] | None = None
+    enabled: bool | None = None
+
+
+def _validate_webhook_url(url: str) -> None:
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        raise HTTPException(422, detail={"code": "invalid_url",
+                                         "message": "Only http/https URLs are allowed."})
+    _assert_public_host(parts.hostname)
+
+
+def _validate_events(events: list[str]) -> list[str]:
+    for e in events:
+        if e not in SUPPORTED_EVENTS:
+            raise HTTPException(422, detail={
+                "code": "unsupported_event",
+                "message": f"Unsupported event '{e}'. Supported: {', '.join(SUPPORTED_EVENTS)}"})
+    return events
+
+
+def _webhook_dict(w: Webhook) -> dict:
+    return {"id": w.id, "project_id": w.project_id, "name": w.name, "url": w.url,
+            "secret_set": bool(w.secret), "events": w.events or [],
+            "enabled": w.enabled, "last_status": w.last_status,
+            "last_fired_at": _iso(w.last_fired_at), "created_at": _iso(w.created_at)}
+
+
+def _get_webhook(webhook_id: str, user: User, db: Session) -> Webhook:
+    w = db.get(Webhook, webhook_id)
+    if not w or w.organisation_id != user.organisation_id:
+        raise HTTPException(404, detail={"code": "not_found", "message": "Webhook not found"})
+    return w
+
+
+@router.get("/projects/{project_id}/webhooks")
+def list_webhooks(project_id: str, user: User = Depends(require("view")),
+                  db: Session = Depends(get_db)):
+    get_project_scoped(project_id, user, db)
+    hooks = (db.query(Webhook)
+             .filter(Webhook.project_id == project_id,
+                     Webhook.organisation_id == user.organisation_id)
+             .order_by(Webhook.created_at.asc()).all())
+    return [_webhook_dict(w) for w in hooks]
+
+
+@router.post("/projects/{project_id}/webhooks", status_code=201)
+def create_webhook(project_id: str, payload: WebhookCreate,
+                   user: User = Depends(require("manage_projects")),
+                   db: Session = Depends(get_db)):
+    get_project_scoped(project_id, user, db)
+    _validate_webhook_url(payload.url)
+    events = _validate_events(payload.events or ["run.completed"])
+    w = Webhook(organisation_id=user.organisation_id, project_id=project_id,
+                name=payload.name.strip(), url=payload.url.strip(),
+                secret=payload.secret or None, events=events, enabled=payload.enabled)
+    db.add(w)
+    db.flush()
+    audit(db, user.organisation_id, user.id, "webhook.created", "webhook", w.id,
+          {"name": w.name, "url": w.url})
+    db.commit()
+    return _webhook_dict(w)
+
+
+@router.patch("/webhooks/{webhook_id}")
+def update_webhook(webhook_id: str, payload: WebhookPatch,
+                   user: User = Depends(require("manage_projects")),
+                   db: Session = Depends(get_db)):
+    w = _get_webhook(webhook_id, user, db)
+    if payload.url is not None:
+        _validate_webhook_url(payload.url)
+        w.url = payload.url.strip()
+    if payload.name is not None:
+        w.name = payload.name.strip()
+    if payload.secret is not None:
+        w.secret = payload.secret or None
+    if payload.events is not None:
+        w.events = _validate_events(payload.events)
+    if payload.enabled is not None:
+        w.enabled = payload.enabled
+    audit(db, user.organisation_id, user.id, "webhook.updated", "webhook", w.id,
+          {"name": w.name})
+    db.commit()
+    return _webhook_dict(w)
+
+
+@router.delete("/webhooks/{webhook_id}")
+def delete_webhook(webhook_id: str, user: User = Depends(require("manage_projects")),
+                   db: Session = Depends(get_db)):
+    w = _get_webhook(webhook_id, user, db)
+    db.delete(w)
+    audit(db, user.organisation_id, user.id, "webhook.deleted", "webhook", webhook_id,
+          {"name": w.name})
+    db.commit()
+    return {"deleted": True}
+
+
+def _deliver(w: Webhook, event: str, payload: dict, summary: str) -> int | None:
+    """One delivery attempt, 5s timeout. Returns the HTTP status or None on
+    transport failure. Slack incoming webhooks get a {"text": ...} payload."""
+    if "hooks.slack.com" in w.url:
+        body = json.dumps({"text": summary}, ensure_ascii=False, default=str).encode()
+    else:
+        body = json.dumps(payload, ensure_ascii=False, default=str).encode()
+    headers = {"Content-Type": "application/json", "X-Traceo-Event": event}
+    if w.secret:
+        headers["X-Traceo-Signature"] = "sha256=" + hmac.new(
+            w.secret.encode(), body, hashlib.sha256).hexdigest()
+    try:
+        resp = httpx.post(w.url, content=body, headers=headers,
+                          timeout=WEBHOOK_TIMEOUT_S)
+        return resp.status_code
+    except Exception:  # noqa: BLE001 — delivery failure must never propagate
+        return None
+
+
+def _slack_summary(payload: dict) -> str:
+    run = payload.get("run") or {}
+    project = payload.get("project") or {}
+    counts = run.get("counts") or {}
+    return ("Run #{did} completed in project {name}: "
+            "{passed} passed, {failed} failed, {errored} errored of {total}").format(
+        did=run.get("display_id", "?"), name=project.get("name", "?"),
+        passed=counts.get("passed", 0), failed=counts.get("failed", 0),
+        errored=counts.get("errored", 0), total=counts.get("total", 0))
+
+
+def fire_webhooks(db: Session, project_id: str, event: str, payload: dict) -> None:
+    """Fire all enabled project webhooks subscribed to `event`. One attempt each,
+    status recorded, never raises (imported lazily by the execution module)."""
+    try:
+        hooks = (db.query(Webhook)
+                 .filter(Webhook.project_id == project_id, Webhook.enabled.is_(True))
+                 .all())
+        summary = _slack_summary(payload)
+        for w in hooks:
+            if event not in (w.events or []):
+                continue
+            w.last_status = _deliver(w, event, payload, summary)
+            w.last_fired_at = _utcnow()
+        db.commit()
+    except Exception:  # noqa: BLE001 — a webhook must never break a run
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+@router.post("/webhooks/{webhook_id}/test")
+def test_webhook(webhook_id: str, user: User = Depends(require("manage_projects")),
+                 db: Session = Depends(get_db)):
+    w = _get_webhook(webhook_id, user, db)
+    project = db.get(Project, w.project_id)
     payload = {
+        "event": "run.completed", "test": True,
+        "project": {"id": w.project_id, "name": project.name if project else ""},
+        "run": {"id": "00000000-0000-0000-0000-000000000000", "display_id": 1001,
+                "state": "completed",
+                "counts": {"total": 4, "passed": 3, "failed": 1, "errored": 0},
+                "coverage_pct": 75.0},
+        "timestamp": _iso(_utcnow()),
+    }
+    status = _deliver(w, "run.completed", payload, _slack_summary(payload))
+    w.last_status = status
+    w.last_fired_at = _utcnow()
+    audit(db, user.organisation_id, user.id, "webhook.tested", "webhook", w.id,
+          {"status": status})
+    db.commit()
+    return {"webhook_id": w.id, "delivered": status is not None and status < 400,
+            "status": status}
+
+
+# ---------------------------------------------------------------------------
+# Xray / Jira exports (FR-070 — file export, no tenant needed)
+# ---------------------------------------------------------------------------
+
+def _get_run_scoped(run_id: str, user: User, db: Session) -> Run:
+    run = db.get(Run, run_id)
+    if not run or run.organisation_id != user.organisation_id:
+        raise HTTPException(404, detail={"code": "not_found", "message": "Run not found"})
+    return run
+
+
+def _run_rows(db: Session, run: Run):
+    return (db.query(TestResult, TestCase)
+            .join(TestCase, TestCase.id == TestResult.test_case_id)
+            .filter(TestResult.run_id == run.id)
+            .order_by(TestResult.created_at.asc()).all())
+
+
+_JIRA_PRIORITY = {"critical": "Highest", "major": "High", "minor": "Medium"}
+
+
+@router.get("/runs/{run_id}/exports/xray.json")
+def export_xray(run_id: str, user: User = Depends(require("export")),
+                db: Session = Depends(get_db)):
+    run = _get_run_scoped(run_id, user, db)
+    project = db.get(Project, run.project_id)
+    rows = _run_rows(db, run)
+    req_info = _requirements_of_cases(db, [tc.id for _res, tc in rows])
+    display_id = run_display_id(db, run)
+
+    tests = []
+    for res, tc in rows:
+        finish = res.created_at
+        start = finish - timedelta(milliseconds=res.duration_ms or 0) if finish else None
+        ext_ids = req_info.get(tc.id, {}).get("external_ids", [])
+        steps = sorted(tc.steps, key=lambda s: s.order)
+        definition = " ; ".join(f"{s.method.upper()} {s.path}" for s in steps) or tc.title
+        comment = ""
+        if res.outcome != "passed" and res.failure_reason:
+            comment = json.dumps(res.failure_reason, ensure_ascii=False, default=str)
+        entry = {
+            "testInfo": {"summary": tc.title, "type": "Generic", "definition": definition},
+            "start": _iso(start), "finish": _iso(finish),
+            "status": "PASSED" if res.outcome == "passed" else "FAILED",
+            "comment": comment,
+        }
+        if ext_ids:
+            entry["testKey"] = ext_ids[0]
+        tests.append(entry)
+
+    doc = {
         "info": {
-            "summary": f"Traceo run #{run_display_id(db, run)}",
-            "description": f"Automated execution from Traceo (run {run.id})",
-            "startDate": _iso(run.started_at), "finishDate": _iso(run.finished_at),
-            "testEnvironments": [run.branch] if run.branch else [],
+            "summary": f"Traceo run #{display_id} — {project.name if project else run.project_id}",
+            "description": (f"State: {run.state} · counts: "
+                            f"{json.dumps(run.counts or {}, ensure_ascii=False)} · "
+                            f"finished: {_iso(run.finished_at) or '—'}"),
         },
         "tests": tests,
     }
-    headers = {"Content-Type": "application/json"}
-    if cfg.get("api_token"):
-        headers["Authorization"] = f"Bearer {cfg['api_token']}"
-    try:
-        resp = _request("POST", f"{base}/api/v2/import/execution", secrets=secrets,
-                        headers=headers, json=payload)
-        data = _check_status(resp, secrets, "Xray execution import")
-    except IntegrationError as e:
-        row.state, row.last_error = "error", str(e)
+    body = json.dumps(doc, ensure_ascii=False, indent=2, default=str).encode("utf-8")
+    return StreamingResponse(
+        BytesIO(body), media_type="application/json",
+        headers={"Content-Disposition":
+                 f'attachment; filename="traceo-run-{display_id}-xray.json"'})
+
+
+@router.get("/runs/{run_id}/exports/defects.csv")
+def export_defects_csv(run_id: str, user: User = Depends(require("export")),
+                       db: Session = Depends(get_db)):
+    run = _get_run_scoped(run_id, user, db)
+    rows = _run_rows(db, run)
+    req_info = _requirements_of_cases(db, [tc.id for _res, tc in rows])
+    display_id = run_display_id(db, run)
+
+    buf = StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Summary", "Description", "Priority", "Labels"])
+    for res, tc in rows:
+        if res.outcome not in ("failed", "errored"):
+            continue  # failures only
+        info = req_info.get(tc.id, {"external_ids": [], "high_priority": False})
+        severity = derive_severity(res.outcome, res.failure_reason, info["high_priority"])
+        fr = res.failure_reason or {}
+        steps = sorted(tc.steps, key=lambda s: s.order)
+        lines = [f"[Traceo run #{display_id}] {tc.title}", "", "Steps:"]
+        lines += [f"{i + 1}. {s.method.upper()} {s.path}" for i, s in enumerate(steps)]
+        if fr.get("assertion") is not None:
+            lines += ["", f"Expected: {json.dumps(fr.get('expected'), ensure_ascii=False, default=str)}",
+                      f"Actual: {json.dumps(fr.get('actual'), ensure_ascii=False, default=str)}"]
+        elif fr.get("error"):
+            lines += ["", f"Error: {fr['error']}"]
+        writer.writerow([
+            f"[{res.outcome.upper()}] {tc.title}",
+            "\n".join(lines),
+            _JIRA_PRIORITY.get(severity, "Medium"),
+            " ".join(info["external_ids"]),
+        ])
+
+    # UTF-8 BOM so Excel opens the file as UTF-8 rather than the local codepage
+    body = ("\ufeff" + buf.getvalue()).encode("utf-8")  # BOM
+    return StreamingResponse(
+        BytesIO(body), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition":
+                 f'attachment; filename="traceo-run-{display_id}-defects.csv"'})
+
+
+# ---------------------------------------------------------------------------
+# Schedules (FR-060)
+# ---------------------------------------------------------------------------
+
+class ScheduleCreate(BaseModel):
+    name: str
+    environment_id: str
+    interval_minutes: int
+    enabled: bool = True
+
+
+class SchedulePatch(BaseModel):
+    name: str | None = None
+    environment_id: str | None = None
+    interval_minutes: int | None = None
+    enabled: bool | None = None
+
+
+def _schedule_dict(s: Schedule) -> dict:
+    return {"id": s.id, "project_id": s.project_id, "environment_id": s.environment_id,
+            "name": s.name, "interval_minutes": s.interval_minutes, "enabled": s.enabled,
+            "last_run_at": _iso(s.last_run_at), "next_run_at": _iso(s.next_run_at),
+            "created_at": _iso(s.created_at)}
+
+
+def _check_interval(minutes: int) -> None:
+    if minutes < MIN_SCHEDULE_INTERVAL_MIN:
+        raise HTTPException(422, detail={
+            "code": "interval_too_short",
+            "message": f"interval_minutes must be at least {MIN_SCHEDULE_INTERVAL_MIN}"})
+
+
+def _env_in_project(env_id: str, project_id: str, user: User, db: Session) -> Environment:
+    env = db.get(Environment, env_id)
+    if (not env or env.project_id != project_id
+            or env.organisation_id != user.organisation_id):
+        raise HTTPException(404, detail={"code": "not_found",
+                                         "message": "Environment not found in this project"})
+    return env
+
+
+@router.get("/projects/{project_id}/schedules")
+def list_schedules(project_id: str, user: User = Depends(require("view")),
+                   db: Session = Depends(get_db)):
+    get_project_scoped(project_id, user, db)
+    schedules = (db.query(Schedule)
+                 .filter(Schedule.project_id == project_id,
+                         Schedule.organisation_id == user.organisation_id)
+                 .order_by(Schedule.created_at.asc()).all())
+    return [_schedule_dict(s) for s in schedules]
+
+
+@router.post("/projects/{project_id}/schedules", status_code=201)
+def create_schedule(project_id: str, payload: ScheduleCreate,
+                    user: User = Depends(require("manage_projects")),
+                    db: Session = Depends(get_db)):
+    get_project_scoped(project_id, user, db)
+    _check_interval(payload.interval_minutes)
+    _env_in_project(payload.environment_id, project_id, user, db)
+    s = Schedule(organisation_id=user.organisation_id, project_id=project_id,
+                 environment_id=payload.environment_id, name=payload.name.strip(),
+                 interval_minutes=payload.interval_minutes, enabled=payload.enabled,
+                 next_run_at=_utcnow() + timedelta(minutes=payload.interval_minutes),
+                 created_by=user.id)
+    db.add(s)
+    db.flush()
+    audit(db, user.organisation_id, user.id, "schedule.created", "schedule", s.id,
+          {"name": s.name, "interval_minutes": s.interval_minutes})
+    db.commit()
+    return _schedule_dict(s)
+
+
+def _get_schedule(schedule_id: str, user: User, db: Session) -> Schedule:
+    s = db.get(Schedule, schedule_id)
+    if not s or s.organisation_id != user.organisation_id:
+        raise HTTPException(404, detail={"code": "not_found", "message": "Schedule not found"})
+    return s
+
+
+@router.patch("/schedules/{schedule_id}")
+def update_schedule(schedule_id: str, payload: SchedulePatch,
+                    user: User = Depends(require("manage_projects")),
+                    db: Session = Depends(get_db)):
+    s = _get_schedule(schedule_id, user, db)
+    if payload.interval_minutes is not None:
+        _check_interval(payload.interval_minutes)
+        s.interval_minutes = payload.interval_minutes
+        s.next_run_at = _utcnow() + timedelta(minutes=payload.interval_minutes)
+    if payload.environment_id is not None:
+        _env_in_project(payload.environment_id, s.project_id, user, db)
+        s.environment_id = payload.environment_id
+    if payload.name is not None:
+        s.name = payload.name.strip()
+    if payload.enabled is not None:
+        s.enabled = payload.enabled
+    audit(db, user.organisation_id, user.id, "schedule.updated", "schedule", s.id,
+          {"name": s.name})
+    db.commit()
+    return _schedule_dict(s)
+
+
+@router.delete("/schedules/{schedule_id}")
+def delete_schedule(schedule_id: str, user: User = Depends(require("manage_projects")),
+                    db: Session = Depends(get_db)):
+    s = _get_schedule(schedule_id, user, db)
+    db.delete(s)
+    audit(db, user.organisation_id, user.id, "schedule.deleted", "schedule", schedule_id,
+          {"name": s.name})
+    db.commit()
+    return {"deleted": True}
+
+
+# --- Scheduler daemon (started once from main.py startup) --------------------
+
+_scheduler_started = False
+
+
+def _launch_scheduled_run(db: Session, sched: Schedule) -> str | None:
+    """Trigger the same run-launch path as POST /projects/{id}/runs for a due
+    schedule (all approved cases, the schedule's environment). Returns run_id
+    or None when skipped (no approved cases / missing environment)."""
+    sched.last_run_at = _utcnow()
+    sched.next_run_at = _utcnow() + timedelta(minutes=max(1, sched.interval_minutes))
+
+    env = db.get(Environment, sched.environment_id)
+    if not env or env.project_id != sched.project_id:
         db.commit()
-        raise HTTPException(502, detail={"code": "integration_failed", "message": str(e)})
-    row.state, row.last_error = "connected", None
-    audit(db, user.organisation_id, user.id, "xray.synced", "run", run.id,
-          {"integration_id": row.id, "tests": len(tests)})
+        return None
+    cases = (db.query(TestCase)
+             .filter(TestCase.project_id == sched.project_id,
+                     TestCase.organisation_id == sched.organisation_id,
+                     TestCase.state == "approved").all())
+    if not cases:  # skip silently — nothing approved to execute
+        db.commit()
+        return None
+
+    run = Run(organisation_id=sched.organisation_id, project_id=sched.project_id,
+              environment_id=env.id, state="queued", initiated_by=sched.created_by,
+              counts={})
+    db.add(run)
+    db.flush()
+    audit(db, sched.organisation_id, sched.created_by, "run.scheduled", "run", run.id,
+          {"schedule_id": sched.id, "environment_id": env.id, "case_count": len(cases)})
     db.commit()
-    return {"execution_key": data.get("key", ""), "synced": len(tests)}
+
+    run_id, case_ids = run.id, [c.id for c in cases]
+    from .execution import _execute_run  # lazy import — avoids module cycles
+    jobstore.submit("execute", lambda j: _execute_run(j, run_id, case_ids))
+    return run_id
 
 
-# ---------------------------------------------------------------------------
-# Slack (FR-072)
-# ---------------------------------------------------------------------------
-
-def _slack_summary(db: Session, run: Run, regressions: int = 0) -> str:
-    counts = run.counts or {}
-    display = run_display_id(db, run)
-    icon = "✅" if not counts.get("failed") and not counts.get("errored") else "❌"
-    line = (f"{icon} Traceo run #{display} {run.state} — "
-            f"{counts.get('passed', 0)} passed · {counts.get('failed', 0)} failed · "
-            f"{counts.get('errored', 0)} errored")
-    if run.branch:
-        line += f" · branch `{run.branch}`"
-    if regressions:
-        line += f" · {regressions} regression(s)"
-    return line + f"\n/v1/runs/{run.id}/report.html"
-
-
-def notify_run(db: Session, run: Run, regressions: int = 0) -> list[dict]:
-    """Post the run summary to every Slack integration whose alert level matches.
-    Returns a per-integration delivery report; never raises."""
-    counts = run.counts or {}
-    has_failures = bool(counts.get("failed", 0) or counts.get("errored", 0))
-    rows = (db.query(Integration)
-            .filter(Integration.organisation_id == run.organisation_id,
-                    Integration.type == "slack",
-                    Integration.project_id.in_((run.project_id, None))).all())
-    sent: list[dict] = []
-    for row in rows:
-        level = row.alert_level or "failures"
-        if level == "failures" and not has_failures:
-            continue
-        if level == "regressions" and not regressions:
-            continue
-        cfg, secrets = _secrets_of(row)
-        url = cfg.get("webhook_url") or row.config.get("webhook_url", "")
-        try:
-            resp = _request("POST", url, secrets=secrets,
-                            json={"text": _slack_summary(db, run, regressions)})
-            _check_status(resp, secrets, "Slack post")
-            row.state, row.last_error = "connected", None
-            sent.append({"integration_id": row.id, "delivered": True})
-        except IntegrationError as e:
-            row.state, row.last_error = "error", str(e)
-            sent.append({"integration_id": row.id, "delivered": False, "error": str(e)})
-    db.commit()
-    return sent
-
-
-@router.post("/runs/{run_id}/notify")
-def notify_run_endpoint(run_id: str, user: User = Depends(require("view")),
-                        db: Session = Depends(get_db)):
-    run = db.get(Run, run_id)
-    if not run or run.organisation_id != user.organisation_id:
-        raise HTTPException(404, detail={"code": "not_found", "message": "Run not found"})
-    return {"deliveries": notify_run(db, run)}
-
-
-# ---------------------------------------------------------------------------
-# Confluence (FR-011)
-# ---------------------------------------------------------------------------
-
-@router.get("/integrations/{integration_id}/confluence/pages")
-def list_confluence_pages(integration_id: str,
-                          user: User = Depends(require("view")),
-                          db: Session = Depends(get_db)):
-    """FR-011 AC1 — the pages of the connected space, for selection."""
-    row = _get_integration(integration_id, user, db)
-    if row.type != "confluence":
-        raise HTTPException(422, detail={"code": "wrong_integration_type",
-                                         "message": "This endpoint requires a Confluence integration"})
-    cfg, secrets = _secrets_of(row)
-    base = str(row.config.get("base_url", "")).rstrip("/")
-    space = row.config.get("space_key")
+def scheduler_tick() -> int:
+    """Scan enabled schedules that are due and launch them. Returns launches."""
+    launched = 0
+    db = SessionLocal()
     try:
-        resp = _request("GET", f"{base}/wiki/rest/api/content",
-                        secrets=secrets, headers=_jira_headers(row, cfg),
-                        params={"spaceKey": space, "expand": "version", "limit": 100})
-        data = _check_status(resp, secrets, "Confluence page listing")
-    except IntegrationError as e:
-        raise HTTPException(502, detail={"code": "integration_failed", "message": str(e)})
-    pages = [{"id": p.get("id"), "title": p.get("title"),
-              "version": (p.get("version") or {}).get("number", 1)}
-             for p in data.get("results", [])]
-    return {"space_key": space, "pages": pages}
+        due = (db.query(Schedule)
+               .filter(Schedule.enabled.is_(True),
+                       Schedule.next_run_at <= _utcnow())
+               .all())
+        for sched in due:
+            try:
+                if _launch_scheduled_run(db, sched):
+                    launched += 1
+            except Exception:  # noqa: BLE001 — one bad schedule must not stop the rest
+                db.rollback()
+    finally:
+        db.close()
+    return launched
 
 
-def fetch_confluence_page(row: Integration, page_id: str) -> dict:
-    """Returns {title, version, text} with storage-format markup flattened."""
-    cfg, secrets = _secrets_of(row)
-    base = str(row.config.get("base_url", "")).rstrip("/")
-    resp = _request("GET", f"{base}/wiki/rest/api/content/{page_id}",
-                    secrets=secrets, headers=_jira_headers(row, cfg),
-                    params={"expand": "body.storage,version"})
-    data = _check_status(resp, secrets, "Confluence page fetch")
-    storage = ((data.get("body") or {}).get("storage") or {}).get("value", "")
-    return {"title": data.get("title", ""),
-            "version": (data.get("version") or {}).get("number", 1),
-            "text": _strip_markup(storage)}
-
-
-class ConfluenceImportBody(BaseModel):
-    integration_id: str
-    page_ids: list[str] = Field(min_length=1)
-
-
-@router.post("/projects/{project_id}/confluence/import", status_code=202)
-def import_confluence_pages(project_id: str, body: ConfluenceImportBody,
-                            user: User = Depends(require("upload_documents")),
-                            db: Session = Depends(get_db)):
-    """FR-011 AC2/AC3 — selected pages are parsed by the same pipeline as an uploaded
-    document. The document filename is stable per page, so a re-import of a changed
-    page bumps the version and flags the affected requirements stale."""
-    from .ingestion import ingest_text
-
-    project = get_project_scoped(project_id, user, db)
-    row = _get_integration(body.integration_id, user, db)
-    if row.type != "confluence":
-        raise HTTPException(422, detail={"code": "wrong_integration_type",
-                                         "message": "This endpoint requires a Confluence integration"})
-    imported = []
-    for page_id in body.page_ids:
+def _scheduler_loop():
+    while True:
+        time.sleep(SCHEDULER_INTERVAL_S)
         try:
-            page = fetch_confluence_page(row, page_id)
-        except IntegrationError as e:
-            row.state, row.last_error = "error", str(e)
-            db.commit()
-            raise HTTPException(502, detail={"code": "integration_failed", "message": str(e)})
-        filename = f"confluence-{page_id}.md"
-        header = f"# {page['title']}\n\n"
-        job_id, doc_id = ingest_text(db, project, filename, header + page["text"],
-                                     user.id, "text/confluence")
-        imported.append({"page_id": page_id, "title": page["title"],
-                         "version": page["version"], "job_id": job_id,
-                         "document_id": doc_id})
-    row.state, row.last_error = "connected", None
-    audit(db, user.organisation_id, user.id, "confluence.imported", "project", project_id,
-          {"integration_id": row.id, "pages": len(imported)})
+            scheduler_tick()
+        except Exception:  # noqa: BLE001 — the daemon must survive anything
+            pass
+
+
+def start_scheduler() -> None:
+    """Start the schedule daemon thread exactly once (guarded — main.py startup)."""
+    global _scheduler_started
+    if _scheduler_started:
+        return
+    _scheduler_started = True
+    threading.Thread(target=_scheduler_loop, name="traceo-scheduler", daemon=True).start()
+
+
+# ---------------------------------------------------------------------------
+# Organisation data export (FR-082, PDPL)
+# ---------------------------------------------------------------------------
+
+@router.get("/export/organisation")
+def export_organisation(user: User = Depends(require("manage_members")),
+                        db: Session = Depends(get_db)):
+    org_id = user.organisation_id
+    org = db.get(Organisation, org_id)
+
+    projects = (db.query(Project).filter(Project.organisation_id == org_id)
+                .order_by(Project.created_at.asc()).all())
+    reqs = (db.query(Requirement).filter(Requirement.organisation_id == org_id)
+            .order_by(Requirement.created_at.asc()).all())
+    cases = (db.query(TestCase).filter(TestCase.organisation_id == org_id)
+             .order_by(TestCase.created_at.asc()).all())
+    runs = (db.query(Run).filter(Run.organisation_id == org_id)
+            .order_by(Run.created_at.asc()).all())
+    from sqlalchemy import func
+    audit_count = db.query(func.count(AuditEntry.id)).filter(
+        AuditEntry.organisation_id == org_id).scalar() or 0
+
+    result_summaries: dict[str, list[dict]] = {}
+    run_ids = [r.id for r in runs]
+    if run_ids:
+        for res in (db.query(TestResult).filter(TestResult.run_id.in_(run_ids))
+                    .order_by(TestResult.created_at.asc()).all()):
+            # Evidence EXCLUDED by design (PDPL data-minimisation)
+            result_summaries.setdefault(res.run_id, []).append({
+                "test_case_id": res.test_case_id,
+                "test_case_version": res.test_case_version,
+                "outcome": res.outcome, "duration_ms": res.duration_ms,
+                "executed_at": _iso(res.created_at)})
+
+    doc = {
+        "exported_at": _iso(_utcnow()),
+        "organisation": {"id": org.id, "name": org.name, "plan": org.plan,
+                         "created_at": _iso(org.created_at)} if org else None,
+        "projects": [{"id": p.id, "name": p.name,
+                      "status": p.status, "created_at": _iso(p.created_at)}
+                     for p in projects],
+        "requirements": [{"id": r.id, "project_id": r.project_id,
+                          "external_id": r.external_id, "description": r.description,
+                          "acceptance_criteria": r.acceptance_criteria or [],
+                          "type": r.type, "priority": r.priority, "state": r.state,
+                          "version": r.version, "source_text": r.source_text}
+                         for r in reqs],
+        "test_cases": [{"id": c.id, "project_id": c.project_id, "title": c.title,
+                        "description": c.description, "preconditions": c.preconditions,
+                        "type": c.type, "priority": c.priority, "state": c.state,
+                        "technique": c.technique, "edge_category": c.edge_category,
+                        "generated": c.generated,
+                        "version": c.version,
+                        "steps": [{"order": s.order, "method": s.method,
+                                   "path": s.path, "request": s.request or {},
+                                   "assertions": s.assertions or [],
+                                   "extractions": s.extractions or []}
+                                  for s in sorted(c.steps, key=lambda s: s.order)]}
+                       for c in cases],
+        "runs": [{"id": r.id, "project_id": r.project_id,
+                  "environment_id": r.environment_id, "state": r.state,
+                  "started_at": _iso(r.started_at), "finished_at": _iso(r.finished_at),
+                  "counts": r.counts or {}, "initiated_by": r.initiated_by,
+                  "results": result_summaries.get(r.id, [])}
+                 for r in runs],
+        "audit_entry_count": audit_count,
+    }
+    audit(db, org_id, user.id, "organisation.exported", "organisation", org_id,
+          {"projects": len(projects), "runs": len(runs)})
     db.commit()
-    return {"imported": imported}
-
-
-def _strip_markup(markup: str) -> str:
-    """Confluence storage format → plain text, preserving block boundaries so the
-    requirement segmenter still sees paragraphs and list items."""
-    import re
-    text = re.sub(r"<br\s*/?>", "\n", markup or "")
-    text = re.sub(r"</(p|li|h[1-6]|tr|div)>", "\n", text)
-    text = re.sub(r"<[^>]+>", "", text)
-    text = (text.replace("&nbsp;", " ").replace("&amp;", "&")
-            .replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"'))
-    return "\n".join(line.strip() for line in text.splitlines() if line.strip())
+    body = json.dumps(doc, ensure_ascii=False, indent=2, default=str).encode("utf-8")
+    return StreamingResponse(
+        BytesIO(body), media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="traceo_export.json"'})

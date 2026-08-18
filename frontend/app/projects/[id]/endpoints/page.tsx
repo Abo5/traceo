@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
-import { api } from "@/lib/api";
-import { useLang } from "@/lib/i18n";
+import { ApiError, api } from "@/lib/api";
+import { useCan } from "@/lib/permissions";
 import { Badge, Button, Card, Empty, Input, PageHeader, Pill, Progress, RefChip, StatusDot, Table } from "@/components/ui";
 
 function asList(x: any): any[] {
@@ -14,7 +15,7 @@ function asList(x: any): any[] {
 
 function M({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
-    <span dir="ltr" style={{ fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12, ...style }}>
+    <span style={{ fontFamily: "'JetBrains Mono',ui-monospace,monospace", fontSize: 12, ...style }}>
       {children}
     </span>
   );
@@ -33,9 +34,8 @@ function MethodBadge({ method }: { method: string }) {
   const color = METHOD_COLORS[m] ?? "var(--text-secondary)";
   return (
     <span
-      dir="ltr"
       style={{
-        fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace",
+        fontFamily: "'JetBrains Mono',ui-monospace,monospace",
         fontSize: 11,
         fontWeight: 700,
         letterSpacing: "0.04em",
@@ -54,13 +54,58 @@ function MethodBadge({ method }: { method: string }) {
   );
 }
 
-function Toggle({ on, onChange, disabled }: { on: boolean; onChange: () => void; disabled?: boolean }) {
+/** Human labels for the `format` the import endpoint reports back. */
+const FORMAT_LABELS: Record<string, string> = {
+  openapi3: "OpenAPI 3.x",
+  swagger2: "Swagger 2.0",
+  postman2: "Postman Collection v2",
+  har: "HAR 1.2",
+  insomnia4: "Insomnia v4",
+};
+
+const CRITICALITY_TONES: Record<string, "error" | "warning" | "muted"> = {
+  high: "error",
+  medium: "warning",
+  low: "muted",
+};
+
+/** Small marker that flags neighbouring content as AI-suggested, not discovered fact. */
+function AiMark({ title }: { title: string }) {
+  return (
+    <span
+      title={title}
+      aria-label={title}
+      style={{
+        fontFamily: "'JetBrains Mono',ui-monospace,monospace",
+        fontSize: 9,
+        fontWeight: 700,
+        letterSpacing: "0.1em",
+        color: "var(--c-violet-text)",
+        border: "1px solid var(--c-violet)",
+        borderRadius: 4,
+        padding: "0 4px",
+        lineHeight: "14px",
+        display: "inline-block",
+        flexShrink: 0,
+      }}
+    >
+      AI
+    </span>
+  );
+}
+
+function Toggle({ on, onChange, disabled, testId, label }: { on: boolean; onChange: () => void; disabled?: boolean; testId?: string; label?: string }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={on}
+      // The switch has no text of its own, so without a name a screen reader
+      // announces 37 identical "switch, on" controls with nothing to tell them
+      // apart (axe: button-name). The caller names the row it belongs to.
+      aria-label={label}
       disabled={disabled}
+      data-testid={testId}
       onClick={onChange}
       style={{
         width: 38,
@@ -80,12 +125,12 @@ function Toggle({ on, onChange, disabled }: { on: boolean; onChange: () => void;
         style={{
           position: "absolute",
           top: 2,
-          insetInlineStart: on ? 18 : 2,
+          left: on ? 18 : 2,
           width: 16,
           height: 16,
           borderRadius: 999,
           background: on ? "var(--accent-fg)" : "var(--text-muted)",
-          transition: "inset-inline-start 120ms",
+          transition: "left 120ms",
         }}
       />
     </button>
@@ -94,115 +139,56 @@ function Toggle({ on, onChange, disabled }: { on: boolean; onChange: () => void;
 
 export default function EndpointsPage() {
   const { id } = useParams<{ id: string }>();
-  const { lang } = useLang();
+  const canDo = useCan();
 
-  const L =
-    lang === "ar"
-      ? {
-          title: "الواجهات",
-          sub: "استورد مواصفة OpenAPI / Swagger لاكتشاف الواجهات القابلة للاختبار",
-          importCard: "استيراد المواصفة",
-          tabUrl: "جلب من رابط",
-          tabFile: "رفع ملف",
-          urlPh: "https://example.com/openapi.json",
-          fetchBtn: "استيراد",
-          filePick: "اختر ملف JSON / YAML",
-          importing: "جارٍ الاستيراد…",
-          warnings: "تحذيرات",
-          importResult: "نتيجة الاستيراد",
-          inventory: "مخزون الواجهات",
-          method: "الطريقة",
-          path: "المسار",
-          summary: "الملخّص",
-          params: "المعاملات",
-          tests: "الاختبارات",
-          coverage: "التغطية",
-          lastOutcome: "آخر نتيجة",
-          security: "الأمان",
-          secured: "مؤمَّن",
-          open: "مفتوح",
-          included: "مضمّن",
-          empty: "لا توجد واجهات بعد",
-          emptyHint: "استورد مواصفة OpenAPI لاكتشاف الواجهات",
-          loadError: "تعذّر تحميل البيانات",
-          retry: "إعادة المحاولة",
-          added: "مضافة",
-          updated: "محدَّثة",
-          removed: "محذوفة",
-          total: "الإجمالي",
-          source: "المصدر",
-          seen: "مرات الرصد",
-          neverSeen: "معلن ولم يُرصد",
-          inferred: "مستنتج",
-          tabTraffic: "حركة مرور (HAR)",
-          tabPostman: "مجموعة Postman",
-          tabDom: "نماذج DOM",
-          harHint: "الصق ملف HAR من أدوات المطوّر أو من وسيط — تُنقّح بيانات الاعتماد قبل الحفظ",
-          postmanHint: "الصق مجموعة Postman v2.1 — المجلدات تصبح وسوماً",
-          domHint: "الصق وصف النماذج [{action, method, fields:[…]}]",
-          pastePh: "{ … }",
-          importCapture: "استيراد",
-          baseUrl: "الرابط الأساسي (اختياري)",
-          invalidJson: "المحتوى ليس JSON صالحاً",
-          uncovered: "فروع غير مغطّاة",
-          coverageHint: "متوسط المعاملات المستخدمة وفروع الاستجابة المُتحقَّق منها — لا عدد الطلبات",
-        }
-      : {
-          title: "Endpoints",
-          sub: "Import an OpenAPI / Swagger spec to discover testable endpoints",
-          importCard: "Import spec",
-          tabUrl: "Fetch from URL",
-          tabFile: "Upload file",
-          urlPh: "https://example.com/openapi.json",
-          fetchBtn: "Import",
-          filePick: "Pick a JSON / YAML file",
-          importing: "Importing…",
-          warnings: "Warnings",
-          importResult: "Import result",
-          inventory: "Endpoint inventory",
-          method: "Method",
-          path: "Path",
-          summary: "Summary",
-          params: "Params",
-          tests: "Tests",
-          coverage: "Coverage",
-          lastOutcome: "Last outcome",
-          security: "Security",
-          secured: "Secured",
-          open: "Open",
-          included: "Included",
-          empty: "No endpoints yet",
-          emptyHint: "Import an OpenAPI spec to discover endpoints",
-          loadError: "Failed to load data",
-          retry: "Retry",
-          added: "Added",
-          updated: "Updated",
-          removed: "Removed",
-          total: "Total",
-          source: "Source",
-          seen: "Seen",
-          neverSeen: "Declared, never seen",
-          inferred: "Inferred",
-          tabTraffic: "Traffic (HAR)",
-          tabPostman: "Postman collection",
-          tabDom: "DOM forms",
-          harHint: "Paste a HAR from devtools or a proxy — credentials are redacted before storage",
-          postmanHint: "Paste a Postman v2.1 collection — folders become tags",
-          domHint: "Paste form descriptors [{action, method, fields:[…]}]",
-          pastePh: "{ … }",
-          importCapture: "Import",
-          baseUrl: "Base URL (optional)",
-          invalidJson: "That is not valid JSON",
-          uncovered: "Uncovered branches",
-          coverageHint: "Mean of parameters exercised and declared response branches asserted — not request count",
-        };
+  const L = {
+    title: "Endpoints",
+    sub: "Import an API spec or request collection to discover testable endpoints",
+    importCard: "Import spec or collection",
+    accepts:
+      "Accepts OpenAPI 3.x, Swagger 2.0, Postman Collection v2, HAR 1.2 and Insomnia v4 exports (JSON or YAML).",
+    tabUrl: "Fetch from URL",
+    tabFile: "Upload file",
+    urlPh: "https://example.com/openapi.json",
+    fetchBtn: "Import",
+    filePick: "Pick a file",
+    importing: "Importing…",
+    warnings: "Warnings",
+    rejected: "File rejected",
+    importResult: "Import result",
+    format: "Format",
+    enriched: "AI enriched",
+    discarded: "Discarded",
+    envCreated: "Environment created",
+    envCreatedLink: "Environments",
+    aiNote: "AI-suggested — not discovered from the spec",
+    inventory: "Endpoint inventory",
+    method: "Method",
+    path: "Path",
+    summary: "Summary",
+    params: "Params",
+    tests: "Tests",
+    coverage: "Coverage",
+    lastOutcome: "Last outcome",
+    security: "Security",
+    secured: "Secured",
+    open: "Open",
+    included: "Included",
+    empty: "No endpoints yet",
+    emptyHint: "Import an OpenAPI spec, Postman collection, HAR or Insomnia export to discover endpoints",
+    loadError: "Failed to load data",
+    retry: "Retry",
+    added: "Added",
+    updated: "Updated",
+    removed: "Removed",
+    total: "Total",
+  };
 
-  const [tab, setTab] = useState<"url" | "file" | "traffic" | "postman" | "dom">("url");
+  const [tab, setTab] = useState<"url" | "file">("url");
   const [url, setUrl] = useState("");
-  const [captureText, setCaptureText] = useState("");
-  const [captureBase, setCaptureBase] = useState("");
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const [importErrorList, setImportErrorList] = useState<string[]>([]);
   const [result, setResult] = useState<any | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -232,6 +218,7 @@ export default function EndpointsPage() {
   async function doImport(payload: { url?: string; file?: File }) {
     setImporting(true);
     setImportError(null);
+    setImportErrorList([]);
     setResult(null);
     try {
       let res: any;
@@ -246,37 +233,7 @@ export default function EndpointsPage() {
       await loadEps();
     } catch (e: any) {
       setImportError(e?.message || String(e));
-    } finally {
-      setImporting(false);
-    }
-  }
-
-  /** FR-021/022/023 — a capture produced elsewhere becomes part of the surface. */
-  async function importCapture(kind: "traffic" | "postman" | "dom") {
-    setImporting(true);
-    setImportError(null);
-    setResult(null);
-    let parsed: any;
-    try {
-      parsed = JSON.parse(captureText);
-    } catch {
-      setImportError(L.invalidJson);
-      setImporting(false);
-      return;
-    }
-    const body =
-      kind === "traffic"
-        ? { har: parsed, base_url: captureBase || undefined }
-        : kind === "postman"
-          ? { collection: parsed }
-          : { forms: parsed, base_url: captureBase || undefined };
-    try {
-      const res = await api(`/projects/${id}/discovery/${kind}`, { body });
-      setResult(res ?? {});
-      setCaptureText("");
-      await loadEps();
-    } catch (e: any) {
-      setImportError(e?.message || String(e));
+      setImportErrorList(e instanceof ApiError ? e.errors : []);
     } finally {
       setImporting(false);
     }
@@ -305,69 +262,51 @@ export default function EndpointsPage() {
     ? diffKeys.filter(([k]) => typeof result[k] === "number")
     : [];
   const warnings: any[] = Array.isArray(result?.warnings) ? result.warnings : [];
+  const detectedFormat: string | null =
+    result && typeof result.format === "string" && result.format ? result.format : null;
+  const enrichedCount: number | null =
+    result && typeof result.enriched === "number" ? result.enriched : null;
+  const discardedCount: number | null =
+    result && typeof result.enrichment_discarded === "number" ? result.enrichment_discarded : null;
+  // The import auto-creates an environment only when the project had none and a
+  // base URL was derivable from the document — otherwise the key is null.
+  const envCreated: { id?: string; name?: string; base_url?: string } | null =
+    result && result.environment_created && typeof result.environment_created === "object"
+      ? result.environment_created
+      : null;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      <PageHeader title={L.title} sub={L.sub} actions={<RefChip id="FR-024" />} />
+    <div data-testid="endpoints-page-root" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <PageHeader title={L.title} sub={L.sub} actions={<RefChip id="FR-024" />} testId="endpoints-page-header" />
 
-      <Card title={L.importCard}>
+      {canDo("import_spec") && (
+      <Card title={L.importCard} testId="endpoints-import-card">
+        <div
+          data-testid="endpoints-import-accepts-hint"
+          style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 12, lineHeight: 1.6 }}
+        >
+          {L.accepts}
+        </div>
+
         <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
-          <Pill active={tab === "url"} onClick={() => setTab("url")}>
+          <Pill active={tab === "url"} onClick={() => setTab("url")} testId="endpoints-import-url-pill">
             {L.tabUrl}
           </Pill>
-          <Pill active={tab === "file"} onClick={() => setTab("file")}>
+          <Pill active={tab === "file"} onClick={() => setTab("file")} testId="endpoints-import-file-pill">
             {L.tabFile}
-          </Pill>
-          <Pill active={tab === "traffic"} onClick={() => setTab("traffic")}>
-            {L.tabTraffic}
-          </Pill>
-          <Pill active={tab === "postman"} onClick={() => setTab("postman")}>
-            {L.tabPostman}
-          </Pill>
-          <Pill active={tab === "dom"} onClick={() => setTab("dom")}>
-            {L.tabDom}
           </Pill>
         </div>
 
-        {tab === "traffic" || tab === "postman" || tab === "dom" ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-              {tab === "traffic" ? L.harHint : tab === "postman" ? L.postmanHint : L.domHint}
-            </div>
-            <textarea
-              className="input textarea"
-              dir="ltr"
-              rows={7}
-              placeholder={L.pastePh}
-              value={captureText}
-              onChange={(e) => setCaptureText(e.target.value)}
-              style={{ fontFamily: "'JetBrains Mono',ui-monospace,monospace", fontSize: 11.5 }}
-            />
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {tab !== "postman" && (
-                <Input
-                  dir="ltr"
-                  placeholder={L.baseUrl}
-                  value={captureBase}
-                  onChange={(e: any) => setCaptureBase(e.target.value)}
-                  style={{ flex: 1, minWidth: 220, fontSize: 12 }}
-                />
-              )}
-              <Button disabled={importing || !captureText.trim()} onClick={() => importCapture(tab)}>
-                {importing ? L.importing : L.importCapture}
-              </Button>
-            </div>
-          </div>
-        ) : tab === "url" ? (
+        {tab === "url" ? (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Input
-              dir="ltr"
               placeholder={L.urlPh}
               value={url}
               onChange={(e: any) => setUrl(e.target.value)}
-              style={{ flex: 1, minWidth: 260, fontFamily: "'JetBrains Mono','IBM Plex Sans Arabic',ui-monospace,monospace", fontSize: 12 }}
+              testId="endpoints-import-url-input"
+              style={{ flex: 1, minWidth: 260, fontFamily: "'JetBrains Mono',ui-monospace,monospace", fontSize: 12 }}
             />
-            <Button disabled={importing || !url.trim()} onClick={() => doImport({ url: url.trim() })}>
+            <Button disabled={importing || !url.trim()} onClick={() => doImport({ url: url.trim() })} testId="endpoints-import-submit-button">
               {importing ? L.importing : L.fetchBtn}
             </Button>
           </div>
@@ -375,8 +314,9 @@ export default function EndpointsPage() {
           <div>
             <input
               ref={fileRef}
+              data-testid="endpoints-import-file-input"
               type="file"
-              accept=".json,.yaml,.yml"
+              accept=".json,.yaml,.yml,.har,application/json,application/yaml,text/yaml"
               style={{ display: "none" }}
               onChange={(e) => {
                 const f = e.target.files?.[0];
@@ -384,26 +324,106 @@ export default function EndpointsPage() {
                 e.target.value = "";
               }}
             />
-            <Button variant="secondary" disabled={importing} onClick={() => fileRef.current?.click()}>
+            <Button variant="secondary" disabled={importing} onClick={() => fileRef.current?.click()} testId="endpoints-import-file-button">
               {importing ? L.importing : L.filePick}
             </Button>
           </div>
         )}
 
         {importError && (
-          <div style={{ marginTop: 12, fontSize: 13, color: "var(--error)" }}>{importError}</div>
+          <div
+            data-testid="endpoints-import-error"
+            style={{
+              marginTop: 12,
+              border: "1px solid var(--error)",
+              background: "var(--error-subtle, rgba(255,92,114,.12))",
+              borderRadius: 12,
+              padding: "10px 14px",
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--error)" }}>
+              {L.rejected} — {importError}
+            </div>
+            {importErrorList.length > 0 && (
+              <ul
+                data-testid="endpoints-import-error-list"
+                style={{ margin: "6px 0 0", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 4 }}
+              >
+                {importErrorList.map((msg, i) => (
+                  <li key={i} data-testid="endpoints-import-error-item" style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                    <M style={{ fontSize: 11 }}>{msg}</M>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         )}
 
         {result && (
           <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-            {diffEntries.length > 0 && (
+            {(detectedFormat || diffEntries.length > 0) && (
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{L.importResult}:</span>
+                {detectedFormat && (
+                  <span
+                    data-testid="endpoints-import-format-badge"
+                    data-format={detectedFormat}
+                    data-state={detectedFormat}
+                    title={detectedFormat}
+                  >
+                    <Badge tone="info">
+                      {L.format} <M style={{ fontSize: 11 }}>{FORMAT_LABELS[detectedFormat] ?? detectedFormat}</M>
+                    </Badge>
+                  </span>
+                )}
                 {diffEntries.map(([k, label]) => (
-                  <Badge key={k} tone={k === "removed" ? "error" : k === "updated" ? "warning" : k === "added" ? "success" : "muted"}>
+                  <Badge key={k} tone={k === "removed" ? "error" : k === "updated" ? "warning" : k === "added" ? "success" : "muted"} testId={`endpoints-import-${k}-badge`}>
                     {label} <M style={{ fontSize: 11 }}>{result[k]}</M>
                   </Badge>
                 ))}
+              </div>
+            )}
+            {envCreated && (
+              <div
+                data-testid="endpoints-import-environment-created"
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  fontSize: 12,
+                  color: "var(--text-secondary)",
+                }}
+              >
+                <Badge tone="success">{L.envCreated}</Badge>
+                <span style={{ color: "var(--text)", fontWeight: 600 }}>{envCreated.name}</span>
+                <M style={{ fontSize: 11, overflowWrap: "anywhere" }}>{envCreated.base_url}</M>
+                <Link
+                  href={`/projects/${id}/environments`}
+                  data-testid="endpoints-import-environment-created-link"
+                  style={{ color: "var(--accent)", fontSize: 12 }}
+                >
+                  {L.envCreatedLink} →
+                </Link>
+              </div>
+            )}
+            {(enrichedCount !== null || discardedCount !== null) && (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <AiMark title={L.aiNote} />
+                {enrichedCount !== null && (
+                  <Badge tone="accent" testId="endpoints-import-enriched-badge">
+                    {L.enriched} <M style={{ fontSize: 11 }}>{enrichedCount}</M>
+                  </Badge>
+                )}
+                {discardedCount !== null && (
+                  <Badge
+                    tone={discardedCount > 0 ? "warning" : "muted"}
+                    testId="endpoints-import-enrichment-discarded-badge"
+                  >
+                    {L.discarded} <M style={{ fontSize: 11 }}>{discardedCount}</M>
+                  </Badge>
+                )}
+                <span style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>{L.aiNote}</span>
               </div>
             )}
             {warnings.length > 0 && (
@@ -418,7 +438,7 @@ export default function EndpointsPage() {
                 <div style={{ fontSize: 12, fontWeight: 600, color: "var(--warning)", marginBottom: 6 }}>
                   {L.warnings} ({warnings.length})
                 </div>
-                <ul style={{ margin: 0, paddingInlineStart: 18, display: "flex", flexDirection: "column", gap: 4 }}>
+                <ul style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 4 }}>
                   {warnings.map((w, i) => (
                     <li key={i} style={{ fontSize: 12, color: "var(--text-secondary)" }}>
                       <M style={{ fontSize: 11 }}>{typeof w === "string" ? w : w?.message ?? JSON.stringify(w)}</M>
@@ -430,10 +450,11 @@ export default function EndpointsPage() {
           </div>
         )}
       </Card>
+      )}
 
-      <Card title={`${L.inventory}${eps.length ? ` (${eps.length})` : ""}`} pad={false}>
+      <Card title={`${L.inventory}${eps.length ? ` (${eps.length})` : ""}`} pad={false} testId="endpoints-inventory-card">
         {loading ? (
-          <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 13 }}>…</div>
+          <div style={{ padding: 24, color: "var(--text-secondary)", fontSize: 13 }}>…</div>
         ) : error ? (
           <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-start" }}>
             <div style={{ color: "var(--error)", fontSize: 13 }}>
@@ -442,6 +463,7 @@ export default function EndpointsPage() {
             <Button
               variant="secondary"
               size="sm"
+              testId="endpoints-inventory-retry-button"
               onClick={() => {
                 setError(null);
                 setLoading(true);
@@ -454,22 +476,23 @@ export default function EndpointsPage() {
             </Button>
           </div>
         ) : eps.length === 0 ? (
-          <Empty title={L.empty} hint={L.emptyHint} />
+          <Empty title={L.empty} hint={L.emptyHint} testId="endpoints-empty-state" />
         ) : (
-          <Table head={[L.method, L.path, L.source, L.summary, L.params, L.tests, L.coverage, L.lastOutcome, L.security, L.included]}>
+          <Table head={[L.method, L.path, L.summary, L.params, L.tests, L.coverage, L.lastOutcome, L.security, L.included]} testId="endpoints-table-root">
             {eps.map((ep) => {
               const params = Array.isArray(ep.parameters) ? ep.parameters.length : 0;
               const secured = Array.isArray(ep.security) ? ep.security.length > 0 : !!ep.security;
               const testCount = ep.test_count ?? 0;
-              // FR-024 AC2 — the headline number blends parameters and response
-              // branches; falling back keeps older payloads rendering.
-              const covPct = ep.coverage_pct ?? ep.covered_params_pct ?? null;
-              const uncovered: number[] = Array.isArray(ep.uncovered_statuses)
-                ? ep.uncovered_statuses
-                : [];
+              const covPct = ep.covered_params_pct ?? null;
+              const aiDescription = typeof ep.ai_description === "string" && ep.ai_description ? ep.ai_description : null;
+              const aiGroup = typeof ep.ai_group === "string" && ep.ai_group ? ep.ai_group : null;
+              const aiCriticality =
+                typeof ep.ai_criticality === "string" && ep.ai_criticality ? ep.ai_criticality : null;
+              const hasAi = !!(aiDescription || aiGroup || aiCriticality);
               return (
                 <tr
                   key={ep.id}
+                  data-testid="endpoints-row"
                   style={{
                     opacity: ep.excluded ? 0.5 : 1,
                     background: !ep.excluded && testCount === 0 ? "rgba(255,197,61,.07)" : undefined,
@@ -479,35 +502,55 @@ export default function EndpointsPage() {
                     <MethodBadge method={ep.method} />
                   </td>
                   <td>
-                    <M style={{ color: "var(--text)" }}>{ep.path}</M>
-                    {ep.declared_never_seen && (
-                      <div>
-                        <Badge tone="warning">{L.neverSeen}</Badge>
-                      </div>
-                    )}
-                  </td>
-                  <td>
-                    <Badge
-                      tone={
-                        ep.discovery_source === "openapi"
-                          ? "info"
-                          : ep.discovery_source === "traffic"
-                            ? "accent"
-                            : "muted"
-                      }
-                    >
-                      {ep.discovery_source ?? "openapi"}
-                    </Badge>
-                    {(ep.times_seen ?? 0) > 0 && (
-                      <M style={{ fontSize: 10.5, color: "var(--text-muted)", marginInlineStart: 6 }}>
-                        {L.seen} {ep.times_seen}
-                      </M>
-                    )}
-                    {ep.inferred && (
-                      <div>
-                        <M style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{L.inferred}</M>
-                      </div>
-                    )}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4, maxWidth: 380 }}>
+                      <M style={{ color: "var(--text)" }}>{ep.path}</M>
+                      {hasAi && (
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                          <AiMark title={L.aiNote} />
+                          {aiGroup && (
+                            <span
+                              data-testid="endpoints-row-ai-group"
+                              title={L.aiNote}
+                              style={{
+                                fontSize: 10.5,
+                                color: "var(--c-violet-text)",
+                                background: "rgba(155,107,255,.12)",
+                                border: "1px solid transparent",
+                                borderRadius: 6,
+                                padding: "1px 7px",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {aiGroup}
+                            </span>
+                          )}
+                          {aiCriticality && (
+                            <span
+                              data-testid="endpoints-row-ai-criticality"
+                              data-state={aiCriticality}
+                              title={L.aiNote}
+                            >
+                              <Badge
+                                tone={CRITICALITY_TONES[aiCriticality] ?? "muted"}
+                                state={aiCriticality}
+                                testId="endpoints-row-ai-criticality-badge"
+                              >
+                                {aiCriticality}
+                              </Badge>
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {aiDescription && (
+                        <div
+                          data-testid="endpoints-row-ai-description"
+                          title={L.aiNote}
+                          style={{ fontSize: 12, lineHeight: 1.5, color: "var(--text-secondary)" }}
+                        >
+                          {aiDescription}
+                        </div>
+                      )}
+                    </div>
                   </td>
                   <td style={{ fontSize: 13, color: "var(--text-secondary)" }}>{ep.summary ?? "—"}</td>
                   <td>
@@ -518,38 +561,43 @@ export default function EndpointsPage() {
                   </td>
                   <td style={{ minWidth: 90 }}>
                     {covPct == null ? (
-                      <span style={{ color: "var(--text-muted)" }}>—</span>
+                      <span style={{ color: "var(--text-secondary)" }}>—</span>
                     ) : (
-                      <div title={L.coverageHint}>
-                        <div className="row" style={{ gap: 6, alignItems: "center" }}>
-                          <div style={{ width: 52 }}>
-                            <Progress pct={covPct} tone={covPct >= 80 ? "success" : covPct >= 40 ? "warning" : "error"} />
-                          </div>
-                          <M style={{ fontSize: 10.5, color: "var(--text-secondary)" }}>{covPct}%</M>
+                      <div className="row" style={{ gap: 6, alignItems: "center" }}>
+                        <div style={{ width: 52 }}>
+                          <Progress
+                            pct={covPct}
+                            tone={covPct >= 80 ? "success" : covPct >= 40 ? "warning" : "error"}
+                            label={`Parameter coverage for ${ep.method} ${ep.path}`}
+                          />
                         </div>
-                        {uncovered.length > 0 && (
-                          <M style={{ fontSize: 10, color: "var(--warning)" }}>
-                            {L.uncovered}: {uncovered.join(", ")}
-                          </M>
-                        )}
+                        <M style={{ fontSize: 10.5, color: "var(--text-secondary)" }}>{covPct}%</M>
                       </div>
                     )}
                   </td>
                   <td>
                     {ep.last_outcome ? (
                       <span className="row" style={{ gap: 6, alignItems: "center" }}>
-                        <StatusDot state={ep.last_outcome} />
+                        <StatusDot state={ep.last_outcome} testId="endpoints-row-outcome-dot" />
                         <M style={{ fontSize: 10.5 }}>{ep.last_outcome}</M>
                       </span>
                     ) : (
-                      <span style={{ color: "var(--text-muted)" }}>—</span>
+                      <span style={{ color: "var(--text-secondary)" }}>—</span>
                     )}
                   </td>
                   <td>
                     <Badge tone={secured ? "info" : "muted"}>{secured ? L.secured : L.open}</Badge>
                   </td>
                   <td>
-                    <Toggle on={!ep.excluded} disabled={busyRow === ep.id} onChange={() => toggleRow(ep)} />
+                    {canDo("import_spec") && (
+                      <Toggle
+                        on={!ep.excluded}
+                        disabled={busyRow === ep.id}
+                        onChange={() => toggleRow(ep)}
+                        testId="endpoints-row-include-toggle"
+                        label={`Include ${ep.method} ${ep.path} in generation`}
+                      />
+                    )}
                   </td>
                 </tr>
               );

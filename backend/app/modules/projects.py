@@ -24,13 +24,15 @@ from ..models import (ApiSpec, Endpoint, Environment, Project, Requirement,
                       RequirementTestCase, Run, SourceDocument, TestCase,
                       TestResult, TestStep, User)
 from ..security import decrypt_secret, encrypt_secret, redact
+from ..testtypes import (DEFAULT_PROJECT_TEST_TYPES, TEST_TYPES, project_test_types,
+                         validate_test_types)
 from .traceability import (GAP_NEXT_ACTIONS, derive_severity, gap_reason,
                            is_high_priority, project_coverage, run_display_ids)
 
 router = APIRouter()
 
 _AUTH_TYPES = ("none", "api_key", "basic", "bearer", "oauth2_cc")
-_LANGUAGES = ("en", "ar")
+_AUTOMATIONS = ("auto", "manual")
 _TC_STATES = ("draft", "approved", "rejected", "stale", "archived")
 
 
@@ -41,7 +43,9 @@ def _iso(dt):
 
 
 def _project_payload(p: Project) -> dict:
-    return {"id": p.id, "name": p.name, "language": p.language, "status": p.status,
+    return {"id": p.id, "name": p.name,
+            "automation": p.automation, "status": p.status,
+            "test_types": project_test_types(p),
             "created_at": _iso(p.created_at), "updated_at": _iso(p.updated_at)}
 
 
@@ -84,12 +88,16 @@ def _validate_auth_type(auth_type: str) -> str:
 
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
-    language: str = "en"
+    automation: str = "auto"  # auto|manual
+    # Omitted means all five (app/testtypes.py): a project narrows its scope by
+    # saying so, never by staying silent.
+    test_types: list[str] | None = None
 
 
 class ProjectUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
-    language: str | None = None
+    automation: str | None = None  # auto|manual
+    test_types: list[str] | None = None
     status: str | None = None  # active|archived
 
 
@@ -118,15 +126,18 @@ class EnvironmentUpdate(BaseModel):
 @router.post("/projects", status_code=201)
 def create_project(body: ProjectCreate, user: User = Depends(require("manage_projects")),
                    db: Session = Depends(get_db)):
-    if body.language not in _LANGUAGES:
-        raise HTTPException(422, detail={"code": "invalid_language",
-                                         "message": "Language must be 'en' or 'ar'"})
+    if body.automation not in _AUTOMATIONS:
+        raise HTTPException(422, detail={"code": "invalid_automation",
+                                         "message": "Automation must be 'auto' or 'manual'"})
+    test_types = (validate_test_types(body.test_types) if body.test_types is not None
+                  else list(DEFAULT_PROJECT_TEST_TYPES))
     project = Project(organisation_id=user.organisation_id, name=body.name.strip(),
-                      language=body.language)
+                      automation=body.automation, test_types=test_types)
     db.add(project)
     db.flush()
     audit(db, user.organisation_id, user.id, "project.create", "project", project.id,
-          {"name": project.name})
+          {"name": project.name, "automation": project.automation,
+           "test_types": test_types})
     db.commit()
     return _project_payload(project)
 
@@ -155,12 +166,16 @@ def update_project(project_id: str, body: ProjectUpdate,
     if body.name is not None:
         changes["name"] = {"from": project.name, "to": body.name.strip()}
         project.name = body.name.strip()
-    if body.language is not None:
-        if body.language not in _LANGUAGES:
-            raise HTTPException(422, detail={"code": "invalid_language",
-                                             "message": "Language must be 'en' or 'ar'"})
-        changes["language"] = {"from": project.language, "to": body.language}
-        project.language = body.language
+    if body.automation is not None:
+        if body.automation not in _AUTOMATIONS:
+            raise HTTPException(422, detail={"code": "invalid_automation",
+                                             "message": "Automation must be 'auto' or 'manual'"})
+        changes["automation"] = {"from": project.automation, "to": body.automation}
+        project.automation = body.automation
+    if body.test_types is not None:
+        chosen = validate_test_types(body.test_types)
+        changes["test_types"] = {"from": project_test_types(project), "to": chosen}
+        project.test_types = chosen
     if body.status is not None:
         if body.status not in ("active", "archived"):
             raise HTTPException(422, detail={"code": "invalid_status",
@@ -443,13 +458,19 @@ def list_environments(project_id: str, user: User = Depends(require("view")),
     return [_env_payload(e) for e in envs]
 
 
-@router.post("/projects/{project_id}/environments", status_code=201)
-def create_environment(project_id: str, body: EnvironmentCreate,
-                       user: User = Depends(require("manage_environments")),
-                       db: Session = Depends(get_db)):
-    get_project_scoped(project_id, user, db)
+def create_environment_record(db: Session, *, org_id: str, user_id: str, project_id: str,
+                              body: EnvironmentCreate, action: str = "environment.create",
+                              extra_audit: dict | None = None) -> Environment:
+    """THE write path for a new environment — validation, secret encryption and
+    the audit entry in one place.
+
+    The route below and the import-time auto-creation (discovery.py) both go
+    through here, so a derived environment is validated exactly like a typed one
+    and can never drift from it. Callers commit; the row is flushed so `env.id`
+    is available for the audit entry and the response.
+    """
     _validate_auth_type(body.auth_type)
-    env = Environment(organisation_id=user.organisation_id, project_id=project_id,
+    env = Environment(organisation_id=org_id, project_id=project_id,
                       name=body.name.strip(), base_url=body.base_url.strip(),
                       auth_type=body.auth_type, variables=body.variables or {},
                       tls_strict=body.tls_strict, fixtures=body.fixtures or [])
@@ -457,9 +478,20 @@ def create_environment(project_id: str, body: EnvironmentCreate,
         env.auth_config_encrypted = encrypt_secret(body.auth_config)
     db.add(env)
     db.flush()
-    audit(db, user.organisation_id, user.id, "environment.create", "environment", env.id,
-          {"name": env.name, "auth_type": env.auth_type,
-           "auth_config_set": env.auth_config_encrypted is not None})
+    meta = {"name": env.name, "auth_type": env.auth_type,
+            "auth_config_set": env.auth_config_encrypted is not None}
+    meta.update(extra_audit or {})
+    audit(db, org_id, user_id, action, "environment", env.id, meta)
+    return env
+
+
+@router.post("/projects/{project_id}/environments", status_code=201)
+def create_environment(project_id: str, body: EnvironmentCreate,
+                       user: User = Depends(require("manage_environments")),
+                       db: Session = Depends(get_db)):
+    get_project_scoped(project_id, user, db)
+    env = create_environment_record(db, org_id=user.organisation_id, user_id=user.id,
+                                   project_id=project_id, body=body)
     db.commit()
     return _env_payload(env)
 

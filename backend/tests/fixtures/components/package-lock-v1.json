@@ -1,0 +1,28 @@
+{
+  "name": "legacy-web",
+  "version": "0.1.0",
+  "lockfileVersion": 1,
+  "requires": true,
+  "dependencies": {
+    "minimist": {
+      "version": "1.2.8",
+      "resolved": "https://registry.npmjs.org/minimist/-/minimist-1.2.8.tgz",
+      "integrity": "sha512-fixture"
+    },
+    "mkdirp": {
+      "version": "0.5.6",
+      "resolved": "https://registry.npmjs.org/mkdirp/-/mkdirp-0.5.6.tgz",
+      "integrity": "sha512-fixture",
+      "requires": {
+        "minimist": "^1.2.6"
+      },
+      "dependencies": {
+        "nested-dep": {
+          "version": "2.0.1",
+          "resolved": "https://registry.npmjs.org/nested-dep/-/nested-dep-2.0.1.tgz",
+          "integrity": "sha512-fixture"
+        }
+      }
+    }
+  }
+}
