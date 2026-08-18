@@ -28,7 +28,7 @@ from ..security import decrypt_secret, encrypt_secret, redact
 from ..testtypes import (DEFAULT_PROJECT_TEST_TYPES, TEST_TYPES, project_test_types,
                          validate_test_types)
 from .traceability import (GAP_NEXT_ACTIONS, derive_severity, gap_reason,
-                           is_high_priority, project_coverage, run_display_ids)
+                           is_high_priority, run_display_ids)
 
 router = APIRouter()
 
@@ -54,10 +54,8 @@ def _env_payload(e: Environment) -> dict:
     # NEVER return decrypted auth values (FR-PRJ-04).
     return {"id": e.id, "project_id": e.project_id, "name": e.name, "base_url": e.base_url,
             "auth_type": e.auth_type, "variables": e.variables or {},
-            "tls_strict": e.tls_strict, "fixtures": e.fixtures or [],
+            "tls_strict": e.tls_strict,
             "auth_config_masked": e.auth_config_encrypted is not None,
-            # FR-083 AC3: name and rotation date only — never the value.
-            "secret_rotated_at": _iso(e.updated_at) if e.auth_config_encrypted else None,
             "created_at": _iso(e.created_at), "updated_at": _iso(e.updated_at)}
 
 
@@ -109,7 +107,6 @@ class EnvironmentCreate(BaseModel):
     auth_config: dict | None = None  # write-only; e.g. {"key","header"} | {"username","password"} | {"token"} | {"client_id","client_secret","token_url"}
     variables: dict = Field(default_factory=dict)
     tls_strict: bool = True
-    fixtures: list = Field(default_factory=list)  # FR-043 test-data lifecycle
 
 
 class EnvironmentUpdate(BaseModel):
@@ -119,7 +116,6 @@ class EnvironmentUpdate(BaseModel):
     auth_config: dict | None = None  # write-only; {} clears the stored secret
     variables: dict | None = None
     tls_strict: bool | None = None
-    fixtures: list | None = None
 
 
 # --- projects ----------------------------------------------------------------
@@ -267,9 +263,7 @@ def _run_coverage_pct(run: Run) -> float:
 
 def _case_requirement_info(db: Session, case_ids: list[str]) -> dict[str, dict]:
     """case_id -> {external_ids: [...], high_priority: bool} over linked requirements."""
-    info = {cid: {"external_ids": [], "high_priority": False, "priority": None}
-            for cid in case_ids}
-    order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    info = {cid: {"external_ids": [], "high_priority": False} for cid in case_ids}
     if not case_ids:
         return info
     rows = (db.query(RequirementTestCase.test_case_id,
@@ -283,9 +277,6 @@ def _case_requirement_info(db: Session, case_ids: list[str]) -> dict[str, dict]:
             entry["external_ids"].append(external_id)
         if is_high_priority(priority):
             entry["high_priority"] = True
-        level = str(priority or "medium").lower()
-        if entry["priority"] is None or order.get(level, 2) < order.get(entry["priority"], 2):
-            entry["priority"] = level  # the most severe linked requirement governs
     return info
 
 
@@ -300,14 +291,8 @@ def _run_outcome_map(db: Session, run_id: str) -> dict[str, TestResult]:
 
 
 @router.get("/projects/{project_id}/dashboard")
-def project_dashboard(project_id: str, branch: str | None = None,
-                      environment_id: str | None = None,
-                      drop_threshold: float = 5.0,
-                      user: User = Depends(require("view")),
+def project_dashboard(project_id: str, user: User = Depends(require("view")),
                       db: Session = Depends(get_db)):
-    """FR-054: the trend series can be filtered by branch and environment, and a
-    coverage drop larger than `drop_threshold` points is marked on the point where
-    it happened."""
     get_project_scoped(project_id, user, db)
     org_id = user.organisation_id
 
@@ -327,10 +312,17 @@ def project_dashboard(project_id: str, branch: str | None = None,
         if state in tc_counts:
             tc_counts[state] = count
 
-    # One coverage computation for the whole product (SRS §4.5) — the dashboard, the
-    # matrix and the CI gate must never show three different numbers.
-    project_cov = project_coverage(db, project_id, org_id)
-    coverage_pct = project_cov["coverage_pct"]
+    # coverage: confirmed requirements with >=1 approved linked case / confirmed (0 if none)
+    covered = (db.query(func.count(func.distinct(RequirementTestCase.requirement_id)))
+               .select_from(RequirementTestCase)
+               .join(Requirement, Requirement.id == RequirementTestCase.requirement_id)
+               .join(TestCase, TestCase.id == RequirementTestCase.test_case_id)
+               .filter(Requirement.project_id == project_id,
+                       Requirement.organisation_id == org_id,
+                       Requirement.state == "confirmed",
+                       TestCase.state == "approved")
+               .scalar() or 0)
+    coverage_pct = round(100.0 * covered / confirmed_count, 1) if confirmed_count else 0.0
 
     latest = (db.query(Run)
               .filter(Run.project_id == project_id, Run.organisation_id == org_id)
@@ -340,37 +332,19 @@ def project_dashboard(project_id: str, branch: str | None = None,
     display_ids = run_display_ids(db, project_id)
 
     # -- trend (FR-054): last 14 completed runs, oldest -> newest
-    trend_q = (db.query(Run)
-               .filter(Run.project_id == project_id, Run.organisation_id == org_id,
-                       Run.state == "completed"))
-    if branch:
-        trend_q = trend_q.filter(Run.branch == branch)
-    if environment_id:
-        trend_q = trend_q.filter(Run.environment_id == environment_id)
-    completed = (trend_q.order_by(Run.created_at.desc(), Run.id.desc()).limit(14).all())
+    completed = (db.query(Run)
+                 .filter(Run.project_id == project_id, Run.organisation_id == org_id,
+                         Run.state == "completed")
+                 .order_by(Run.created_at.desc(), Run.id.desc())
+                 .limit(14).all())
     completed.reverse()
     trend = []
-    previous_coverage = None
     for r in completed:
         c = r.counts or {}
-        coverage = _run_coverage_pct(r)
-        # AC3: a drop beyond the threshold is marked, not merely plotted.
-        dropped = (previous_coverage is not None
-                   and previous_coverage - coverage > drop_threshold)
         trend.append({"run_id": r.id, "display_id": display_ids.get(r.id),
-                      "coverage_pct": coverage,
+                      "coverage_pct": _run_coverage_pct(r),
                       "passed": c.get("passed", 0), "failed": c.get("failed", 0),
-                      "errored": c.get("errored", 0),
-                      "branch": r.branch or "", "source": r.source or "manual",
-                      "environment_id": r.environment_id,
-                      "dropped": dropped,
-                      "delta": round(coverage - previous_coverage, 1)
-                      if previous_coverage is not None else None})
-        previous_coverage = coverage
-
-    branches = sorted({r.branch for r in db.query(Run)
-                       .filter(Run.project_id == project_id,
-                               Run.organisation_id == org_id).all() if r.branch})
+                      "errored": c.get("errored", 0)})
 
     # -- median run duration over the same window
     durations = [(r.finished_at - r.started_at).total_seconds() * 1000
@@ -390,8 +364,7 @@ def project_dashboard(project_id: str, branch: str | None = None,
         open_defects["critical"] = sum(
             1 for cid, res in failing.items()
             if derive_severity(res.outcome, res.failure_reason,
-                               req_info[cid]["high_priority"],
-                               req_info[cid]["priority"]) == "critical")
+                               req_info[cid]["high_priority"]) == "critical")
 
         if len(completed) >= 2:
             previous_results = _run_outcome_map(db, completed[-2].id)
@@ -410,8 +383,7 @@ def project_dashboard(project_id: str, branch: str | None = None,
                         "run_id": latest_completed.id,
                         "outcome": res.outcome,
                         "severity": derive_severity(res.outcome, res.failure_reason,
-                                                    req_info[cid]["high_priority"],
-                                                    req_info[cid]["priority"]),
+                                                    req_info[cid]["high_priority"]),
                     })
 
     # -- gap detail (FR-051): uncovered confirmed requirements + next action
@@ -447,13 +419,8 @@ def project_dashboard(project_id: str, branch: str | None = None,
         "confirmed_count": confirmed_count,
         "test_case_counts": tc_counts,
         "coverage_pct": coverage_pct,
-        "requirement_coverage_pct": project_cov["requirement_coverage_pct"],
-        "criteria_covered": project_cov["criteria_covered"],
-        "criteria_total": project_cov["criteria_total"],
         "latest_run": latest_payload,
         "trend": trend,
-        "branches": branches,
-        "drop_threshold": drop_threshold,
         "regression_watch": regression_watch,
         "gaps_detail": gaps_detail,
         "open_defects": open_defects,
@@ -489,7 +456,7 @@ def create_environment_record(db: Session, *, org_id: str, user_id: str, project
     env = Environment(organisation_id=org_id, project_id=project_id,
                       name=body.name.strip(), base_url=body.base_url.strip(),
                       auth_type=body.auth_type, variables=body.variables or {},
-                      tls_strict=body.tls_strict, fixtures=body.fixtures or [])
+                      tls_strict=body.tls_strict)
     if body.auth_config:
         env.auth_config_encrypted = encrypt_secret(body.auth_config)
     db.add(env)
@@ -543,9 +510,6 @@ def update_environment(project_id: str, env_id: str, body: EnvironmentUpdate,
     if body.tls_strict is not None:
         env.tls_strict = body.tls_strict
         changed.append("tls_strict")
-    if body.fixtures is not None:
-        env.fixtures = body.fixtures
-        changed.append("fixtures")
     if changed:
         audit(db, user.organisation_id, user.id, "environment.update", "environment", env.id,
               {"fields": changed})

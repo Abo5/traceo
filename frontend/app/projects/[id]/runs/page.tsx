@@ -3,9 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { api, pollJob } from "@/lib/api";
 import { useCan } from "@/lib/permissions";
+import { useProject } from "@/lib/project-context";
+import { TEST_TYPES, TEST_TYPE_META, projectTestTypes, type TestType } from "@/lib/test-types";
 import { Badge, Button, Callout, Card, DateTimeText, Empty, Field, Input, PageHeader, RefChip, Select, SeverityBadge, StatCard, StatusDot, Table, TrendBars, stateTone } from "@/components/ui";
 
 function asList(x: any): any[] {
@@ -27,21 +29,6 @@ function shortId(id?: string): string {
 
 const VIEWPORTS = ["1280x800", "1440x900", "1920x1080", "390x844"];
 
-/** The five tracks the scan can build, in the order the design shows them. */
-const PIPELINE_TYPES = [
-  { v: "functional", label: "Functionality",
-    hint: "Every form on the page: are its fields there, and does it enforce its own rules?" },
-  { v: "ui", label: "UI",
-    hint: "Palette, surfaces and contrast read from a screenshot of the page." },
-  { v: "api", label: "API",
-    hint: "Every request the page makes becomes an endpoint we can call back." },
-  { v: "performance", label: "Performance",
-    hint: "The measured load time against a stated budget." },
-  { v: "security", label: "Security",
-    hint: "Catalogued weakness checks over the endpoints the page revealed." },
-] as const;
-
-type PipelineType = (typeof PIPELINE_TYPES)[number]["v"];
 
 /** One line summarising what a pipeline stage did, from its own detail keys. */
 function stageDetail(s: any): string {
@@ -66,6 +53,13 @@ function stageDetail(s: any): string {
 export default function RunsPage() {
   const { id } = useParams<{ id: string }>();
   const canDo = useCan();
+  const { project } = useProject();
+  const search = useSearchParams();
+
+  // The types this project declared it is for. Offering one the server would
+  // refuse is, from the user's side, indistinguishable from a broken product.
+  const allowed = useMemo(() => projectTestTypes(project), [project]);
+  const narrowed = allowed.length < TEST_TYPES.length;
 
   const L = {
     title: "Runs",
@@ -106,6 +100,8 @@ export default function RunsPage() {
     urlLabel: "App URL",
     urlHint: "Rendered in a real browser, so client-rendered pages are read like any other.",
     viewportLabel: "Viewport",
+    typeNotForProject: "This project is not declared for this kind of testing.",
+    typesScoped: "Only the kinds this project is for can be run. Change them in the project's settings.",
     typeOne: "type selected",
     typeMany: "types selected",
     pipelineFoot: "Traceo only interacts with this page. Nothing is approved automatically.",
@@ -142,8 +138,7 @@ export default function RunsPage() {
   // ---- the whole-process run (target + optional document + test types) ----
   const [pUrl, setPUrl] = useState("");
   const [pViewport, setPViewport] = useState(VIEWPORTS[0]);
-  const [pTypes, setPTypes] = useState<Set<PipelineType>>(
-    () => new Set<PipelineType>(["functional", "ui", "performance"]));
+  const [pTypes, setPTypes] = useState<Set<TestType>>(new Set());
   const [docId, setDocId] = useState<string | null>(null);
   const [docName, setDocName] = useState<string | null>(null);
   const [docRules, setDocRules] = useState<number | null>(null);
@@ -179,7 +174,32 @@ export default function RunsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  function togglePType(t: PipelineType) {
+  // A project created with a URL lands here ready to go: the field is filled and,
+  // when the dialog asked for it, the run starts by itself. Carrying that from the
+  // create dialog is the whole point of the field — otherwise it is a hunt through
+  // the sidebar for where a URL goes.
+  useEffect(() => {
+    const fromQuery = search?.get("url");
+    if (fromQuery && !pUrl) setPUrl(fromQuery);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
+
+  useEffect(() => {
+    setPTypes(new Set(allowed));
+  }, [allowed]);
+
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (autoStarted.current) return;
+    if (search?.get("start") !== "1") return;
+    if (!pUrl.trim() || pTypes.size === 0 || !canDo("trigger_run")) return;
+    autoStarted.current = true;
+    void startPipeline();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pUrl, pTypes, search]);
+
+  function togglePType(t: TestType) {
+    if (!allowed.includes(t)) return;
     setPTypes((prev) => {
       const n = new Set(prev);
       if (n.has(t)) n.delete(t);
@@ -227,7 +247,7 @@ export default function RunsPage() {
         body: {
           url: trimmedUrl,
           viewport: pViewport,
-          test_types: PIPELINE_TYPES.filter((t) => pTypes.has(t.v)).map((t) => t.v),
+          test_types: TEST_TYPES.filter((t) => pTypes.has(t)),
           allow_submit: allowSubmit,
           ...(docId ? { document_id: docId } : {}),
         },
@@ -495,6 +515,15 @@ export default function RunsPage() {
                 <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 8 }}>
                   {L.step3Sub}
                 </div>
+                {narrowed && (
+                  <div
+                    className="callout"
+                    data-testid="runs-pipeline-types-scope-hint"
+                    style={{ marginBottom: 10, fontSize: 11.5 }}
+                  >
+                    {L.typesScoped}
+                  </div>
+                )}
                 <div
                   style={{
                     display: "grid",
@@ -502,31 +531,39 @@ export default function RunsPage() {
                     gap: 10,
                   }}
                 >
-                  {PIPELINE_TYPES.map((t) => {
-                    const on = pTypes.has(t.v);
+                  {TEST_TYPES.map((t) => {
+                    const on = pTypes.has(t);
+                    const permitted = allowed.includes(t);
+                    const meta = TEST_TYPE_META[t];
                     return (
                       <label
-                        key={t.v}
-                        data-testid={`runs-pipeline-type-${t.v}`}
+                        key={t}
+                        data-testid={`runs-pipeline-type-${t}`}
                         data-state={on ? "on" : "off"}
+                        title={permitted ? undefined : L.typeNotForProject}
                         style={{
                           display: "flex", gap: 10, alignItems: "flex-start",
                           border: `1px solid ${on ? "var(--blue)" : "var(--border)"}`,
                           background: on ? "var(--blueS)" : "var(--surface)",
-                          borderRadius: "var(--r-lg)", padding: "10px 12px", cursor: "pointer",
+                          borderRadius: "var(--r-lg)", padding: "10px 12px",
+                          cursor: permitted ? "pointer" : "not-allowed",
+                          opacity: permitted ? 1 : 0.55,
                         }}
                       >
                         <input
                           type="checkbox"
                           checked={on}
-                          disabled={!!pipelineJob}
-                          onChange={() => togglePType(t.v)}
+                          // Disabled, not merely unchecked: the server refuses a
+                          // type the project excluded, so the UI must not offer a
+                          // control that always fails.
+                          disabled={!permitted || !!pipelineJob}
+                          onChange={() => togglePType(t)}
                           style={{ marginTop: 2 }}
                         />
                         <span style={{ minWidth: 0 }}>
-                          <b style={{ fontSize: 12.5, display: "block" }}>{t.label}</b>
+                          <b style={{ fontSize: 12.5, display: "block" }}>{meta.label}</b>
                           <span style={{ fontSize: 10.5, color: "var(--text-secondary)", lineHeight: 1.5 }}>
-                            {t.hint}
+                            {meta.hint}
                           </span>
                         </span>
                       </label>

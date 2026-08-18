@@ -184,7 +184,9 @@ export default function ProjectsPage() {
       // something the product can already see.
       router.push(
         target
-          ? `/projects/${p.id}/target?url=${encodeURIComponent(target)}&start=1`
+          // Runs is where a URL is scanned and executed now; the Target screen
+          // it used to land on no longer exists.
+          ? `/projects/${p.id}/runs?url=${encodeURIComponent(target)}&start=1`
           : `/projects/${p.id}`,
       );
     } catch (err: any) {

@@ -25,9 +25,6 @@ os.environ["TRACEO_SEED_DEMO"] = "0"
 # local demo stack. Tests that need it turn it on per-test via monkeypatch.
 os.environ["TRACEO_DEV_AUTOLOGIN"] = "0"
 os.environ.setdefault("TRACEO_LLM_PROVIDER", "mock")
-# The scheduler thread is exercised directly (test_automation) rather than left
-# ticking against tables the fixtures drop between tests.
-os.environ["TRACEO_SCHEDULER"] = "0"
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
