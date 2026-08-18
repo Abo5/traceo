@@ -47,6 +47,13 @@ class Project(TimestampMixin, Base):
     # (BO-07).
     automation: Mapped[str] = mapped_column(String(10), default="auto",
                                             server_default="auto")  # auto|manual
+    # Which of the five kinds of testing this project is for (app/testtypes.py).
+    # Declared when the project is created and editable afterwards; the engines
+    # that produce cases read it, so narrowing it narrows what the project does.
+    # An empty list means the same as all five — a project that had nothing said
+    # about it predates the field, and reading that as "test nothing" would
+    # silently disable every existing project.
+    test_types: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
     status: Mapped[str] = mapped_column(String(20), default="active")  # active|archived
 
 
@@ -155,6 +162,11 @@ class Endpoint(TimestampMixin, Base):
 TECHNIQUES: tuple[str, ...] = (
     "ep", "bva", "decision_table", "negative", "manual", "localisation", "edge_case",
     "security", "design", "a11y", "performance",
+    # A behaviour a model proposed for a crawled screen and the grounding gate
+    # admitted (modules/pageintel.py). Kept apart from the deterministic
+    # techniques because it is the one kind whose EXPECTATION nothing verified —
+    # only its targets were checked — and a reviewer needs to see that.
+    "scenario",
 )
 
 # Legal Run.kind values (SECURITY_TESTING_PLAN §8). A run carries exactly one
@@ -363,6 +375,17 @@ class WebTarget(TimestampMixin, Base):
     # Why status is "failed" — a failed target with no reason is indistinguishable
     # from one nobody looked at.
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The sign-in credentials the crawl submits to THE LOGIN FORM ONLY, sealed
+    # with the same envelope environments use (app.security.encrypt_secret). The
+    # column is WRITE-ONLY on the wire: the API answers auth_configured
+    # true/false and never returns a username or a password, so a leaked payload
+    # or a shoulder-surfed screen cannot hand over the account.
+    auth_config_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    # How many pages one crawl may visit (1..50). The default explores: a user
+    # who hands Traceo a URL expects the product behind it to be examined, not
+    # one screen of it, and a default of 1 would mean the tool does nothing
+    # until someone finds the knob.
+    max_pages: Mapped[int] = mapped_column(Integer, default=25)
 # --- end web targets -------------------------------------------------------------------
 
 

@@ -9,6 +9,7 @@
 | 03 | [SRS](03-SRS-Traceo.md) | How the system behaves — information model, layer-by-layer specification, non-functional requirements |
 | 04 | [User Flows](04-User-Flows.md) | Eight end-to-end flows across the 11 screens, with alternates and error paths |
 | 05 | [Design Spec](05-Design-Spec.md) | Tokens, components, layout rules, RTL behaviour, accessibility |
+| 06 | [Delivery Notes v2.1](06-Delivery-Notes-v2.1.md) | What changed on contact with implementation — corrections, shortfalls and the reasons |
 | — | `index.html` | The interactive design — all 11 screens, navigable |
 
 ## The reference system
@@ -34,5 +35,18 @@ BR-03  (business requirement)
 
 - **37** features documented across **8** capability groups
 - **19** P0 · **13** P1 · **5** P2
-- **35** built in the 2.0 design · **2** planned
+- **37** shipped — implemented in the codebase and covered by the test suite
 - **10** business requirements · **11** screens · **8** user flows
+
+## Implementation status
+
+Every FR in this set is implemented and covered by tests.
+
+**Read [06-Delivery-Notes-v2.1](06-Delivery-Notes-v2.1.md) before quoting anything in
+this set to a client.** It records where implementation corrected the specification —
+including the headline coverage number, which moved from 100% to 87.8% once coverage was
+measured per acceptance criterion as `03-SRS §4.5` always specified — and where the build
+falls short of what is written here, with the reason in each case.
+
+The `TADQEEQ_*_v2.0.docx` deliverables are dated snapshots and are deliberately not
+edited in place; the delivery notes are their addendum.

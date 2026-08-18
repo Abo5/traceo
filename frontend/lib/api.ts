@@ -120,11 +120,25 @@ export function ensureSession(force = false): Promise<boolean> {
   return sessionBootstrap;
 }
 
+/**
+ * Discard the stored session so the next call bootstraps a fresh one.
+ *
+ * This build has no sign-out control and no login screen, so a stored token
+ * that the backend rejects — minted before the database was recreated, or
+ * against a different signing key — would otherwise be permanent: every screen
+ * shows "Invalid or expired token" forever and the user has no way to clear it.
+ * Recovery has to be automatic because there is no manual path left.
+ */
+export function resetSession(): void {
+  sessionBootstrap = null;
+  setToken(null);
+  setUser(null);
+}
+
 export async function api<T = any>(
   path: string,
   opts?: { method?: string; body?: any; form?: FormData },
-  /** Internal: set once when a 401 has already been retried with a fresh session. */
-  _retried = false
+  retriedAfterReset = false
 ): Promise<T> {
   const headers: Record<string, string> = {};
   if (!getToken()) await ensureSession();
@@ -158,21 +172,17 @@ export async function api<T = any>(
     }
   }
 
-  /**
-   * A 401 in this build means the stored token expired, not that the user needs
-   * to sign in — there is no sign-in screen to send them to. Drop the dead
-   * token, mint a fresh session and replay the request exactly once. Without
-   * this the app is stuck on "Invalid or expired token" until site data is
-   * cleared by hand, because ensureSession() would see a token and do nothing.
-   *
-   * On a backend WITH login the dev-session endpoint 404s, the forced mint
-   * returns false, and the 401 surfaces on the retry as it should.
-   */
-  if (res.status === 401 && !_retried) {
-    setToken(null);
-    setUser(null);
-    const minted = await ensureSession(true);
-    if (minted && getToken()) return api<T>(path, opts, true);
+  // A rejected token is thrown away and the request retried once with a fresh
+  // session. Once only, and only for this code: a second 401 is a real refusal
+  // and must surface, not loop. A FormData body cannot be replayed after the
+  // fetch consumed it, so an upload reports the failure instead — the next
+  // call, made with the cleared session, succeeds.
+  if (res.status === 401 && !retriedAfterReset && !opts?.form) {
+    const code = data?.detail?.code ?? data?.code;
+    if (code === "invalid_token" && getToken()) {
+      resetSession();
+      if (await ensureSession()) return api<T>(path, opts, true);
+    }
   }
 
   if (!res.ok) {

@@ -9,12 +9,16 @@ Endpoints (mounted under /v1 by main.py):
 - PATCH /members/{id}    (manage_members) — cannot demote the last admin
 - DELETE /members/{id}   (manage_members) — cannot delete yourself
 - GET   /audit           (view_audit_log) — newest first, cursor pagination
+- GET   /audit/export.csv, GET/PUT /audit/retention, POST /audit/purge  (FR-082)
 """
+import json
 import re
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -288,6 +292,83 @@ def audit_log(limit: int = 50, cursor: str | None = None,
             "object_id": e.object_id,
             "detail": e.detail or {},
             "occurred_at": _iso(e.occurred_at),
+            "retain_until": _iso(e.retain_until),
         } for e in items],
         "next_cursor": items[-1].id if has_more and items else None,
     }
+
+
+# --- audit retention + export (FR-082 AC2/AC3/AC4) ----------------------------
+
+@router.get("/audit/retention")
+def get_retention(user: User = Depends(require("view_audit_log")),
+                  db: Session = Depends(get_db)):
+    org = db.get(Organisation, user.organisation_id)
+    days = int((org.settings or {}).get("audit_retention_days") or settings.AUDIT_RETENTION_DAYS)
+    purgeable = (db.query(func.count(AuditEntry.id))
+                 .filter(AuditEntry.organisation_id == user.organisation_id,
+                         AuditEntry.retain_until != None,  # noqa: E711
+                         AuditEntry.retain_until <= datetime.now(timezone.utc))
+                 .scalar() or 0)
+    total = (db.query(func.count(AuditEntry.id))
+             .filter(AuditEntry.organisation_id == user.organisation_id).scalar() or 0)
+    return {"retention_days": days, "default_days": settings.AUDIT_RETENTION_DAYS,
+            "entries": total, "past_retention": purgeable}
+
+
+@router.put("/audit/retention")
+def set_retention(body: dict = Body(...),
+                  user: User = Depends(require("manage_members")),
+                  db: Session = Depends(get_db)):
+    days = body.get("retention_days")
+    if not isinstance(days, int) or not (1 <= days <= 3650):
+        raise HTTPException(422, detail={
+            "code": "invalid_retention",
+            "message": "retention_days must be an integer between 1 and 3650"})
+    org = db.get(Organisation, user.organisation_id)
+    org.settings = {**(org.settings or {}), "audit_retention_days": days}
+    audit(db, user.organisation_id, user.id, "audit.retention_changed", "organisation",
+          org.id, {"retention_days": days})
+    db.commit()
+    return {"retention_days": days}
+
+
+@router.post("/audit/purge")
+def purge_expired(user: User = Depends(require("manage_members")),
+                  db: Session = Depends(get_db)):
+    """The ONLY deletion path, and it cannot touch an entry before its retention date
+    (FR-082 AC2). Entries are never editable through any route."""
+    now = datetime.now(timezone.utc)
+    removed = (db.query(AuditEntry)
+               .filter(AuditEntry.organisation_id == user.organisation_id,
+                       AuditEntry.retain_until != None,  # noqa: E711
+                       AuditEntry.retain_until <= now)
+               .delete(synchronize_session=False))
+    audit(db, user.organisation_id, user.id, "audit.purged", "organisation",
+          user.organisation_id, {"removed": removed})
+    db.commit()
+    return {"removed": removed}
+
+
+@router.get("/audit/export.csv")
+def export_audit(user: User = Depends(require("view_audit_log")),
+                 db: Session = Depends(get_db)):
+    """FR-082 AC4 — the whole log, in the format an auditor asks for."""
+    import csv
+    import io
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["id", "occurred_at", "actor_id", "action", "object_type",
+                     "object_id", "retain_until", "detail"])
+    rows = (db.query(AuditEntry)
+            .filter(AuditEntry.organisation_id == user.organisation_id)
+            .order_by(AuditEntry.occurred_at.asc(), AuditEntry.id.asc()).all())
+    for e in rows:
+        writer.writerow([e.id, _iso(e.occurred_at), e.actor_id or "", e.action,
+                         e.object_type, e.object_id, _iso(e.retain_until) or "",
+                         json.dumps(e.detail or {}, ensure_ascii=False)])
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="traceo-audit.csv"'})

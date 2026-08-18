@@ -45,6 +45,10 @@ ROLES = ("admin", "qa_lead", "qa_engineer", "viewer")
 
 PERMISSIONS: dict[str, set[str]] = {
     "manage_members":      {"admin"},
+    "manage_tokens":       {"admin"},
+    "manage_integrations": {"admin", "qa_lead"},
+    "manage_schedules":    {"admin", "qa_lead"},
+    "export_defects":      {"admin", "qa_lead", "qa_engineer"},
     "manage_projects":     {"admin", "qa_lead"},
     "manage_environments": {"admin", "qa_lead"},
     "upload_documents":    {"admin", "qa_lead", "qa_engineer"},
@@ -61,6 +65,20 @@ PERMISSIONS: dict[str, set[str]] = {
 
 def has_permission(role: str, capability: str) -> bool:
     return role in PERMISSIONS.get(capability, set())
+
+
+# --- CI runner tokens (FR-061) ---
+API_TOKEN_PREFIX = "trc_"
+
+def generate_api_token() -> tuple[str, str, str]:
+    """Returns (clear_token, sha256_hash, display_prefix). The clear token is shown
+    exactly once — only the hash is persisted."""
+    body = base64.urlsafe_b64encode(os.urandom(30)).decode().rstrip("=")
+    clear = API_TOKEN_PREFIX + body
+    return clear, hash_api_token(clear), clear[:12]
+
+def hash_api_token(clear: str) -> str:
+    return hashlib.sha256(("traceo-token:" + clear).encode()).hexdigest()
 
 
 # --- Environment secret encryption (NFR-SEC-02, simplified envelope) ---

@@ -39,6 +39,32 @@ func AfterParse(projectID, orgID, actorID string) {
 	maybeGenerate(projectID, orgID, actorID)
 }
 
+// AfterWebTarget runs after a browser discovery succeeds. A crawl leaves its
+// requirements in "extracted", so without this the model-assisted generator
+// never sees them and the URL path stops at whatever the deterministic builders
+// produced. Same chain as AfterParse; the audit entry names the source, because
+// "which upload confirmed these?" is the first question asked of a project whose
+// requirements appeared on their own.
+func AfterWebTarget(projectID, orgID, actorID string) {
+	var project models.Project
+	if err := db.DB.First(&project, "id = ? AND organisation_id = ?",
+		projectID, orgID).Error; err != nil {
+		return
+	}
+	if project.Automation != "auto" {
+		return
+	}
+	res := db.DB.Model(&models.Requirement{}).
+		Where("project_id = ? AND organisation_id = ? AND state = ?",
+			projectID, orgID, "extracted").
+		Update("state", "confirmed")
+	if res.RowsAffected > 0 {
+		httpx.Audit(orgID, &actorID, "auto.requirements.confirm_all", "project", projectID,
+			models.JSONMap{"count": int(res.RowsAffected), "source": "web_target"})
+	}
+	maybeGenerate(projectID, orgID, actorID)
+}
+
 // AfterSpecImport runs after a successful api-spec import (item 4b) — the
 // generation trigger only.
 func AfterSpecImport(projectID, orgID, actorID string) {

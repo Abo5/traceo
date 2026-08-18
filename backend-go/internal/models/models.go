@@ -42,6 +42,24 @@ func (l *JSONList) Scan(v any) error {
 	return scanJSON(v, l)
 }
 
+// StringList is a JSON array of strings. JSONList would store the same bytes,
+// but every reader would then have to assert each element back to a string;
+// the columns that hold a fixed vocabulary use this instead so the type says
+// what is in them.
+type StringList []string
+
+func (l StringList) Value() (driver.Value, error) {
+	if l == nil {
+		l = StringList{}
+	}
+	b, err := json.Marshal(l)
+	return string(b), err
+}
+
+func (l *StringList) Scan(v any) error {
+	return scanJSON(v, l)
+}
+
 func scanJSON(v, dst any) error {
 	switch t := v.(type) {
 	case nil:
@@ -103,6 +121,13 @@ type Project struct {
 	// extracted requirements -> enqueue generation); "manual" preserves the
 	// hand-driven flow. Approval and runs stay manual either way (BO-07).
 	Automation string `gorm:"not null;default:auto" json:"automation"`
+	// TestTypes: which of the five kinds of testing this project is for
+	// (internal/testtypes). Declared when the project is created and editable
+	// afterwards; the engines that produce cases read it, so narrowing it
+	// narrows what the project does. An empty list means the same as all five —
+	// a project that had nothing said about it predates the field, and reading
+	// that as "test nothing" would silently disable every existing project.
+	TestTypes StringList `gorm:"type:json;not null;default:'[]'" json:"test_types"`
 }
 
 type Environment struct {
@@ -212,6 +237,11 @@ type TestCase struct {
 	Model          string `json:"model"`
 	PromptVersion  string `json:"prompt_version"`
 	// ep|bva|decision_table|negative|manual|localisation|edge_case|security
+	// |design|a11y|performance|scenario — the canonical list is
+	// backend/app/models.py TECHNIQUES. "scenario" is a behaviour a model
+	// proposed for a crawled screen and the grounding gate admitted; it is kept
+	// apart from the deterministic techniques because it is the one kind whose
+	// EXPECTATION nothing verified, only its targets.
 	Technique string `json:"technique"`
 	// EdgeCategory is set ONLY by the insight engine (technique "edge_case") and
 	// carries one of insight's 9 canonical category ids. NULL for every other
@@ -393,6 +423,14 @@ type WebTarget struct {
 	// LastError states why Status is "failed". A failed target with no reason is
 	// indistinguishable from one nobody ever looked at.
 	LastError *string `gorm:"type:text" json:"last_error"`
+	// AuthConfigEncrypted holds {username, password} for the crawl's sign-in,
+	// sealed with the same envelope environment secrets use. `json:"-"` is not
+	// decoration: this value has no representation on the wire at all, and the
+	// API answers auth_configured true/false instead.
+	AuthConfigEncrypted []byte `json:"-"`
+	// MaxPages is the crawl's page budget (1..50). The default explores — a user
+	// who hands Traceo a URL is asking about the product, not one screen of it.
+	MaxPages int `gorm:"default:25" json:"max_pages"`
 }
 
 func All() []any {

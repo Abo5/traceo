@@ -45,8 +45,11 @@ def recorded_payload():
 
 @pytest.fixture()
 def project(client, register_org, create_project):
+    """automation="manual" on purpose: these tests are about the tracks, and the
+    autopilot chain would confirm their requirements out from under them. The
+    handover itself is tested separately, in auto mode."""
     headers = register_org("Web Target Org")
-    return headers, create_project(headers, "Web Target Project")
+    return headers, create_project(headers, "Web Target Project", automation="manual")
 
 
 @pytest.fixture(autouse=True)
@@ -61,8 +64,8 @@ def sidecar(monkeypatch, recorded_payload):
     """Replace the browser invocation with the recorded document."""
     calls = []
 
-    def _fake(url, viewport, out_dir, timeout_s=None):
-        calls.append({"url": url, "viewport": viewport})
+    def _fake(url, viewport, out_dir, timeout_s=None, crawl=None):
+        calls.append({"url": url, "viewport": viewport, "crawl": crawl})
         return recorded_payload
 
     monkeypatch.setattr(webtarget, "run_sidecar", _fake)
@@ -283,7 +286,10 @@ def test_the_recorded_payload_drives_every_selected_track(client, project, sidec
     assert result["forms"] == 2
     assert result["controls"] == 3
     assert result["requests"] == 8            # every request, not only the API ones
-    assert result["endpoints"] == 4           # the xhr/fetch ones, ids templated
+    # 4 from the captured xhr/fetch traffic (ids templated) plus the 2 the page
+    # DECLARES in its own markup: the login form's POST action and the search
+    # form's GET back to the page itself.
+    assert result["endpoints"] == 5
     assert result["requirements"] >= 5        # 2 forms + perf + ui + api surface
     for kind in ("functional", "ui", "performance", "security", "api"):
         assert result["cases_by_type"][kind] > 0, (kind, result)
@@ -310,8 +316,17 @@ def test_the_api_track_writes_dom_endpoints_with_templated_ids(client, project, 
         ("GET", "/web/index.php/api/v2/admin/validation/user-name"),
         ("GET", "/web/index.php/api/v2/pim/employees/{id}"),
         ("POST", "/web/index.php/api/v2/auth/session"),
-        ("GET", "/web/index.php/api/v2/core/i18n/messages"),
+        # declared by the markup, not observed on the wire
+        ("POST", "/web/index.php/auth/validate"),
+        ("GET", "/web/index.php/auth/login"),
     }
+    # The i18n call in this payload is served from cdn.orangehrm.example, an
+    # origin the crawl never visited, so it is NOT adopted. That costs a real
+    # endpoint when an app serves its own API from a second host — a loss the
+    # result reports by origin and count — and it is the price of never adopting
+    # an embedded third party's API, which the security builders would then aim
+    # probes at.
+    assert not any("i18n" in path for _m, path in by_key)
     assert all(e["source"] == "dom" for e in rows)
     # the two concrete employee ids collapsed onto ONE templated endpoint, and the
     # count says it was seen twice
@@ -327,6 +342,23 @@ def test_the_api_track_writes_dom_endpoints_with_templated_ids(client, project, 
     assert query[0]["constraints"]["example"] == "Admin"
     # document/script/image requests are NOT endpoints
     assert not any("logo.png" in e["path"] for e in rows)
+
+    # A form's action is an operation the page declares. Its parameters are the
+    # form's OWN fields, with required-ness exactly as the page marks it.
+    validate = by_key[("POST", "/web/index.php/auth/validate")]
+    assert validate["source"] == "dom"
+    # never observed on the wire, and it does not pretend otherwise
+    assert validate["observed_count"] == 0
+    body = validate["request_schema"]
+    assert list(body["properties"]) == ["username", "password", "_token"]
+    # the hidden token is not required — the page does not say it is
+    assert body["required"] == ["username", "password"]
+    # a GET form puts its fields in the query string instead
+    search = by_key[("GET", "/web/index.php/auth/login")]
+    assert search["request_schema"] is None
+    assert [p["name"] for p in search["parameters"]] == ["q"]
+    assert search["parameters"][0]["location"] == "query"
+    assert search["parameters"][0]["required"] is False
 
 
 def test_a_spec_endpoint_is_never_downgraded_by_a_crawl(client, project, sidecar):
@@ -355,6 +387,29 @@ def test_a_spec_endpoint_is_never_downgraded_by_a_crawl(client, project, sidecar
     assert rows[("POST", "/web/index.php/api/v2/auth/session")]["source"] == "dom"
 
 
+def test_a_spec_owned_path_is_not_downgraded_by_a_form_action(client, project, sidecar):
+    """A form's action is read from markup — the weakest evidence there is. It
+    must never overwrite a contract a spec declared."""
+    headers, pid = project
+    spec = {
+        "openapi": "3.0.3", "info": {"title": "Auth", "version": "1"},
+        "paths": {"/web/index.php/auth/validate": {"post": {
+            "operationId": "validate", "summary": "Declared by the spec",
+            "responses": {"200": {"description": "OK"}}}}},
+    }
+    r = client.post(f"/v1/projects/{pid}/api-specs",
+                    files={"file": ("spec.json", json.dumps(spec).encode(), "application/json")},
+                    headers=headers)
+    assert r.status_code in (200, 201), r.text
+
+    run(client, headers, pid, ["api"])
+    rows = {(e["method"], e["path"]): e
+            for e in client.get(f"/v1/projects/{pid}/endpoints", headers=headers).json()}
+    declared = rows[("POST", "/web/index.php/auth/validate")]
+    assert declared["source"] == "spec"
+    assert declared["summary"] == "Declared by the spec"
+
+
 def test_the_functional_track_makes_a_requirement_per_form(client, project, sidecar):
     headers, pid = project
     run(client, headers, pid, ["functional"])
@@ -367,13 +422,17 @@ def test_the_functional_track_makes_a_requirement_per_form(client, project, side
     assert "form.oxd-form" in login[0]["description"]
     assert "input[name=username]" in login[0]["description"]
     assert "Required: Username, Password" in login[0]["description"]
-    # One per discovered form, plus the page-scoped navigation requirement:
-    # links belong to the page, not to any single form, so hanging them off an
-    # arbitrary form would misattribute every broken link on the page.
-    forms = [r for r in reqs if r["external_id"].rsplit("-", 1)[-1].startswith("F")]
-    assert len(forms) == 2                           # one per discovered form
-    assert len([r for r in reqs if r["external_id"].endswith("-NAV")]) == 1
-    assert len(reqs) == 3
+    # Three kinds of requirement, counted apart on purpose: the form ones are
+    # what the page DECLARES, the behaviour one (-BEH) is what the model says it
+    # is FOR, and the navigation one (-NAV) is the page's links. Conflating them
+    # would hide a whole track disappearing.
+    from_forms = [r for r in reqs if not (r["external_id"] or "").endswith(("-BEH", "-NAV"))]
+    behaviours = [r for r in reqs if (r["external_id"] or "").endswith("-BEH")]
+    navigation = [r for r in reqs if (r["external_id"] or "").endswith("-NAV")]
+    assert len(from_forms) == 2                      # one per discovered form
+    assert len(behaviours) == 1
+    assert behaviours[0]["state"] == "extracted"
+    assert len(navigation) == 1                      # the fixture has one http link
 
 
 def test_functional_cases_carry_the_form_selectors_verbatim(client, project, sidecar):
@@ -386,15 +445,19 @@ def test_functional_cases_carry_the_form_selectors_verbatim(client, project, sid
                  .join(models.TestCase, models.TestCase.id == models.TestStep.test_case_id)
                  .filter(models.TestCase.project_id == pid).all())
         assert steps
-        form_steps = [s for s in steps if "form" in (s.request or {})]
-        assert form_steps
-        for step in form_steps:
-            assert step.request["form"].startswith(("form.", "form#"))
-        # The navigation case is page-scoped: it names no form, and asserting it
-        # did would be asserting the wrong thing about it.
-        nav_steps = [s for s in steps if (s.request or {}).get("check") == "links_resolve"]
-        for step in nav_steps:
-            assert "form" not in step.request and step.request.get("links")
+        # The form-derived cases carry their form's selector; the model-proposed
+        # ones address the fields directly; the navigation case is page-scoped
+        # and cites the links. Each is checked on its own terms rather than
+        # being exempted from checking.
+        for step in steps:
+            form = step.request.get("form", "")
+            if form:
+                assert form.startswith(("form.", "form#"))
+            elif step.request.get("check") == "links_resolve":
+                assert step.request.get("links"), "a navigation case cited no link"
+            else:
+                cited = (step.request.get("fields") or []) + (step.request.get("controls") or [])
+                assert cited, "a model-proposed case cited no element of the page"
         payloads = json.dumps([s.request for s in steps])
         assert "input[name=username]" in payloads
         assert "input[name=password]" in payloads
@@ -575,17 +638,51 @@ def test_a_target_without_a_screenshot_says_so(client, project, monkeypatch, rec
     assert r.json()["detail"]["code"] == "no_screenshot"
 
 
-def test_a_page_with_no_api_calls_reports_the_reason(client, project, monkeypatch,
-                                                     recorded_payload):
+def test_a_page_with_no_api_surface_at_all_reports_the_reason(client, project, monkeypatch,
+                                                              recorded_payload):
+    """No XHR AND no form action. Either one on its own is an API surface, so
+    the reason is only honest when the page states neither."""
     headers, pid = project
     recorded_payload["requests"] = [r for r in recorded_payload["requests"]
                                     if r["resourceType"] not in ("xhr", "fetch")]
+    recorded_payload["forms"] = []
     monkeypatch.setattr(webtarget, "run_sidecar", lambda *a, **k: recorded_payload)
     job, _accepted = run(client, headers, pid, ["api", "security"])
     reasons = {s["type"]: s["reason"] for s in job["result"]["skipped"]}
     assert "api" in reasons and "security" in reasons
-    assert "XHR/fetch" in reasons["api"]
+    assert "XHR/fetch" in reasons["api"] and "form action" in reasons["api"]
     assert job["result"]["endpoints"] == 0
+
+
+def test_a_form_action_alone_is_still_an_api_surface(client, project, monkeypatch,
+                                                     recorded_payload):
+    """The owner's report: a page whose server interaction is a classic form
+    POST used to discover ZERO endpoints, and every requirement then came back
+    unmappable because the inventory was empty."""
+    headers, pid = project
+    recorded_payload["requests"] = [r for r in recorded_payload["requests"]
+                                    if r["resourceType"] not in ("xhr", "fetch")]
+    monkeypatch.setattr(webtarget, "run_sidecar", lambda *a, **k: recorded_payload)
+    job, _accepted = run(client, headers, pid, ["api"])
+    assert job["result"]["endpoints"] == 2, job["result"]["skipped"]
+    rows = client.get(f"/v1/projects/{pid}/endpoints", headers=headers).json()
+    assert ("POST", "/web/index.php/auth/validate") in {(e["method"], e["path"]) for e in rows}
+    assert job["result"]["cases_by_type"]["api"] > 0
+
+
+def test_a_form_posting_to_another_origin_is_skipped_with_the_reason(client, project,
+                                                                     monkeypatch,
+                                                                     recorded_payload):
+    """Somebody else's endpoint is not this project's endpoint."""
+    headers, pid = project
+    recorded_payload["forms"][0]["action"] = "https://analytics.example.com/collect"
+    monkeypatch.setattr(webtarget, "run_sidecar", lambda *a, **k: recorded_payload)
+    job, _accepted = run(client, headers, pid, ["api"])
+    reasons = [s["reason"] for s in job["result"]["skipped"] if s["type"] == "api"]
+    assert any("analytics.example.com" in r and "different origin" in r for r in reasons), \
+        job["result"]["skipped"]
+    rows = client.get(f"/v1/projects/{pid}/endpoints", headers=headers).json()
+    assert not any("analytics" in e["path"] for e in rows)
 
 
 # ---------------------------------------------------------------------------
@@ -670,7 +767,7 @@ def test_unknown_sidecar_keys_are_tolerated(recorded_payload):
 
 def test_endpoints_from_requests_ignores_non_api_resources(recorded_payload):
     inv = normalise_payload(recorded_payload)
-    ops = endpoints_from_requests(inv["requests"])
+    ops, _reasons = endpoints_from_requests(inv["requests"])
     assert {op["source"] for op in ops} == {"dom"}
     assert all(op["path"].startswith("/") for op in ops)
     assert not any("logo" in op["path"] for op in ops)
@@ -921,3 +1018,76 @@ def test_navigation_takes_each_http_link_once_and_nothing_else():
     links = cases[0]["steps"][0]["request"]["links"]
     assert [x["href"] for x in links] == ["http://app.example.com/a"]
     assert webtarget.navigation_cases(dict(_INV, controls=[])) == []
+def test_a_third_partys_calls_never_become_this_projects_endpoints(recorded_payload):
+    """A page that embeds a third party makes that party's calls from the same
+    browser. Recording them would put somebody else's API into this project —
+    and the security builders would then aim probes at a host the user never
+    named. Measured on the real target: the Buzz page embeds YouTube, and
+    without this filter the crawl adopted four Google endpoints and twelve
+    security cases were built on them, one of them a rate-limit probe."""
+    inv = normalise_payload(recorded_payload)
+    ours = "https://opensource-demo.orangehrmlive.com"
+    # copy a real capture so it survives the resource-type filter and is
+    # rejected for its ORIGIN, which is what this test is about
+    embedded = dict(next(r for r in inv["requests"]
+                         if r["resource_type"] in ("xhr", "fetch")))
+    embedded["url"] = "https://www.youtube.com/youtubei/v1/log_event?alt=json"
+    inv["requests"].append(embedded)
+
+    ops, reasons = endpoints_from_requests(inv["requests"], {ours})
+
+    assert ops, "the target's own captures must still be recorded"
+    assert not any("youtube" in json.dumps(op) for op in ops)
+    assert any("youtube.com" in r for r in reasons)
+    # and with no origin set given, the filter is off — the older callers that
+    # pass nothing must behave exactly as they did
+    unfiltered, no_reasons = endpoints_from_requests(inv["requests"])
+    assert len(unfiltered) > len(ops) and no_reasons == []
+
+
+def test_discovery_hands_over_to_the_autopilot_in_auto_mode(client, register_org,
+                                                            create_project, sidecar):
+    """A crawl's requirements must not stop at "extracted".
+
+    The whole point of pointing Traceo at a URL and walking away is that the
+    chain continues: confirm what the crawl extracted, then run the generator
+    over it. Without this the URL path silently ends at the deterministic
+    builders and the model-assisted cases are never produced — a difference the
+    counts alone would not reveal, since the deterministic ones are still there.
+    It still stops at DRAFT cases: approval and runs stay manual (BO-07).
+    """
+    headers = register_org("Autopilot Org")
+    pid = create_project(headers, "Auto Project", automation="auto")
+
+    job, _accepted = run(client, headers, pid, list(TEST_TYPES))
+    assert job["status"] == "completed", job.get("error")
+    assert job["result"]["auto_confirmed"] >= 1
+
+    states = {r["state"] for r in client.get(
+        f"/v1/projects/{pid}/requirements", headers=headers).json()}
+    assert states == {"confirmed"}, f"the crawl's requirements were left at {states}"
+
+    entries = client.get("/v1/audit", headers=headers).json()["items"]
+    actions = {e["action"]: e["detail"] for e in entries}
+    assert "auto.requirements.confirm_all" in actions
+    assert actions["auto.requirements.confirm_all"]["source"] == "web_target"
+
+    cases = client.get(f"/v1/projects/{pid}/test-cases?limit=500",
+                       headers=headers).json()["test_cases"]
+    assert cases and all(c["state"] == "draft" for c in cases), \
+        "the autopilot must stop at draft — approval stays manual"
+
+
+def test_manual_mode_leaves_the_crawls_requirements_alone(client, register_org,
+                                                          create_project, sidecar):
+    """automation="manual" means manual: nothing is confirmed on the user's behalf."""
+    headers = register_org("Manual Org")
+    pid = create_project(headers, "Manual Project", automation="manual")
+
+    job, _accepted = run(client, headers, pid, list(TEST_TYPES))
+    assert job["status"] == "completed", job.get("error")
+    assert "auto_confirmed" not in job["result"]
+
+    states = {r["state"] for r in client.get(
+        f"/v1/projects/{pid}/requirements", headers=headers).json()}
+    assert states == {"extracted"}

@@ -380,9 +380,17 @@ test.describe('web target discovery @critical @regression', () => {
         // must be free of catalogued weaknesses), so each owns its own
         // requirement. Nothing else may appear in a project from pointing it at
         // a URL.
-        const NON_FORM_REQUIREMENTS = 4; // api, security, ui, performance
+        // …plus at most one BEHAVIOUR requirement per crawled page, holding the
+        // cases the model proposed for that screen. That one is per page rather
+        // than per crawl because it is a statement about a single screen, so the
+        // bound has to count pages — a fixed number here would have to be raised
+        // every time a crawl got wider, which is how a bound stops bounding.
+        const CRAWL_WIDE_REQUIREMENTS = 4; // api, security, ui, performance
+        const pages = Math.max(1, result.pages_visited ?? 1);
         expect(result.requirements).toBeGreaterThanOrEqual(result.forms);
-        expect(result.requirements).toBeLessThanOrEqual(result.forms + NON_FORM_REQUIREMENTS);
+        expect(result.requirements).toBeLessThanOrEqual(
+          result.forms + CRAWL_WIDE_REQUIREMENTS + pages,
+        );
         for (const requirement of requirements) {
           expect(
             requirement.external_id.startsWith('WEB-'),
@@ -475,13 +483,17 @@ test.describe('web target discovery @critical @regression', () => {
           expect(endpoint.path.startsWith('/'), `"${endpoint.path}" is not a server-relative path`).toBe(
             true,
           );
-          // The page only ever GETs. A POST or DELETE in the inventory would
-          // mean the discovery submitted the form or clicked the destructive
-          // control — the safety rule, observed from the persisted side.
+          // A POST endpoint here is legitimate: a form DECLARES its action, and
+          // recording that declaration is not performing it. What must stay true
+          // is the safety rule itself, and the only witness for that is the
+          // target server's own log — asserted below, outside this loop.
+          // Reading "no POST endpoint" as proof of "nothing was submitted" would
+          // conflate the inventory with the traffic, and would go on passing if
+          // discovery started submitting forms that happened to be GET.
           expect(
             endpoint.method.toUpperCase(),
-            `a ${endpoint.method} endpoint was discovered from a page that only issues GETs`,
-          ).toBe('GET');
+            `"${endpoint.method}" is not an HTTP method`,
+          ).toMatch(/^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/);
           for (const concrete of CONCRETE_IDS) {
             expect(
               endpoint.path,

@@ -65,7 +65,8 @@ Each flow names the screens it crosses and the features (FR-###) it exercises.
 |---|---|---|---|
 | 1 | Open the **Coverage gaps** tab; REQ-021 and REQ-033 have zero tests | Run report | FR-051 |
 | 2 | Read the reason for REQ-021: the invoice rendering path is not reachable through the discovered surface | Run report | FR-051 |
-| 3 | See the three acceptance criteria awaiting coverage | Run report | FR-013 |
+| 3 | See the three acceptance criteria awaiting coverage, each named `AC1`…`AC3` | Run report | FR-013 |
+| 3b | REQ-033 is a subtler gap: it *has* an approved case, but `AC2` has none — the matrix reports `criteria_uncovered` naming AC2 rather than showing the row green | Report / Matrix | FR-013, FR-051 |
 | 4 | **Resolve in API surface** | API surface | FR-024 |
 | 5 | Upload the OpenAPI spec for the invoice-render service | API surface | FR-020 |
 | 6 | The endpoint appears in the surface at 0% coverage | API surface | FR-024 |
@@ -106,7 +107,7 @@ Each flow names the screens it crosses and the features (FR-###) it exercises.
 | 2 | Set the gate: minimum coverage 80%, maximum new failures 0, block on *P0 regressions only* | Integrations | FR-061 |
 | 3 | Copy the step definition into the workflow | Integrations | FR-061 |
 | 4 | A pull request triggers a run on the `ci` environment | CI | FR-040 |
-| 5 | Coverage drops to 78% — below the threshold | CI | FR-050 |
+| 5 | Coverage drops to 78% — below the threshold. It is the same number the matrix shows, from one computation | CI | FR-050 |
 | 6 | The job exits non-zero and names REQ-019 in its output | CI | FR-061 |
 | 7 | The developer opens the linked report and sees the regression | Run report | FR-052, FR-053 |
 
@@ -123,9 +124,9 @@ Each flow names the screens it crosses and the features (FR-###) it exercises.
 
 | # | Step | Screen | Features |
 |---|---|---|---|
-| 1 | Enable nightly scheduling at 02:00 AST on `staging` | Settings | FR-060 |
+| 1 | Enable nightly scheduling at 02:00 AST on `staging` | Integrations | FR-060 |
 | 2 | The scheduler starts the run; overlapping runs are queued | — | FR-060 |
-| 3 | In the morning, the dashboard shows coverage 86% (+2 pts) and the trend for the last 14 runs | Dashboard | FR-054 |
+| 3 | In the morning, the dashboard shows coverage 86% (+2 pts) — criterion-level and priority-weighted — and the trend for the last 14 runs, filterable by branch | Dashboard | FR-054 |
 | 4 | **Regression watch** lists a requirement that was verified yesterday and failed tonight | Dashboard | FR-062 |
 | 5 | Open the run report and triage | Run report | FR-052 |
 
@@ -179,3 +180,4 @@ Each flow names the screens it crosses and the features (FR-###) it exercises.
 | **Partial** — discovery incomplete | API surface | Show what was found and name what was not |
 | **Error** — credential rejected | New run | Fail before fixtures; no partial state; the vault entry is named |
 | **Stale** — source document changed | Requirements | Flag affected requirements; offer re-parse |
+| **Needs criteria** — nothing testable stated | Requirements, Matrix | Flag the requirement; generation reports it rather than skipping it silently (FR-013) |

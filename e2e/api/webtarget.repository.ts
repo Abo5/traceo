@@ -12,8 +12,14 @@
  * `browser_discovery_unavailable` rather than report an empty success.
  *
  * Verified shapes (fixed contract §2):
- * - POST /projects/{id}/web-targets {url, viewport?, test_types[]}
+ * - POST /projects/{id}/web-targets {url, viewport?, test_types[], auth?, max_pages?}
  *     -> 202 {job_id}; capability "import_spec"
+ *     auth {username, password} is WRITE-ONLY: the target answers
+ *     `auth_configured: true|false` and never the pair. A blank half of it is
+ *     422 invalid_credentials; max_pages outside 1..50 is 422 invalid_max_pages
+ *     with errors ["1","50"]; credentials the site rejects fail the JOB with
+ *     error_code "login_failed" — which never says WHICH half was wrong, for
+ *     the same reason identity.py answers a generic 401.
  *     unknown test type -> 422 {code:"invalid_test_type", errors:[legal list]}
  *     non-http(s) or private/loopback host -> the SSRF refusal the spec fetcher
  *     already applies (`invalid_url` / `ssrf_blocked`), unless the backend runs
@@ -28,16 +34,19 @@ import { ApiError } from './errors';
 import type { TraceoHttp } from './http';
 import type { JobPoller } from './job-poller';
 import type {
+  CredentialSource,
   Job,
   NewWebTarget,
   TestCase,
   WebTarget,
   WebTargetAccepted,
+  WebTargetCrawlSummary,
   WebTargetDesign,
   WebTargetDetail,
   WebTargetForm,
   WebTargetInventory,
   WebTargetJobResult,
+  WebTargetPageSkip,
   WebTargetRequest,
 } from './types';
 
@@ -62,8 +71,12 @@ const SETTLE_TIMEOUT_MS = 240_000;
  */
 export type WebTargetDiscovery =
   | { kind: 'refused'; error: ApiError }
-  | { kind: 'failed'; job: Job; code: string; error: string }
-  | { kind: 'completed'; job: Job; result: WebTargetJobResult };
+  // `accepted` is the 202 body, carried through because it is the FIRST place a
+  // write-only credential could come back out, and re-creating the target just
+  // to look at it would run a second crawl — which would break the "the login
+  // form was submitted exactly once" assertion it was meant to support.
+  | { kind: 'failed'; accepted: WebTargetAccepted; job: Job; code: string; error: string }
+  | { kind: 'completed'; accepted: WebTargetAccepted; job: Job; result: WebTargetJobResult };
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -137,11 +150,17 @@ export class WebTargetRepository {
     while (Date.now() - started < SETTLE_TIMEOUT_MS) {
       last = await this.http.get<Job>(`/jobs/${accepted.job_id}`);
       if (last.status === 'completed') {
-        return { kind: 'completed', job: last, result: last.result as WebTargetJobResult };
+        return {
+          kind: 'completed',
+          accepted,
+          job: last,
+          result: last.result as WebTargetJobResult,
+        };
       }
       if (last.status === 'failed') {
         return {
           kind: 'failed',
+          accepted,
           job: last,
           code: failureCode(last),
           error: last.error ?? '',
@@ -188,6 +207,131 @@ export function designOf(detail: WebTargetDetail): WebTargetDesign {
     fact_count: design.fact_count ?? 0,
     failing_contrast: design.failing_contrast ?? 0,
   };
+}
+
+// --- the authenticated crawl ----------------------------------------------------
+
+/**
+ * The crawl summary of a target, with the two spellings of each count folded
+ * into one. The JOB RESULT is the closed contract (`pages_visited`,
+ * `pages_skipped`, `login`); the inventory's summary is the backend's own
+ * echo of it, so it is read tolerantly and never used to prove a count on its
+ * own.
+ */
+export function crawlOf(detail: WebTargetDetail): WebTargetCrawlSummary {
+  const crawl = detail.inventory?.crawl ?? {};
+  return {
+    ...crawl,
+    visited: crawl.visited ?? crawl.pages_visited,
+    pages_visited: crawl.pages_visited ?? crawl.visited,
+    skipped: crawl.skipped ?? crawl.pages_skipped ?? [],
+    pages_skipped: crawl.pages_skipped ?? crawl.skipped ?? [],
+    pages: crawl.pages ?? [],
+  };
+}
+
+/**
+ * Pages the run says it visited. A discovery that crawled nothing still visited
+ * ONE page — the target itself — so a missing field reads as 1, never as 0: the
+ * single-page contract is the same contract with a budget of one.
+ */
+export function pagesVisited(result: WebTargetJobResult): number {
+  return typeof result.pages_visited === 'number' ? result.pages_visited : 1;
+}
+
+export function pagesSkipped(result: WebTargetJobResult): WebTargetPageSkip[] {
+  return result.pages_skipped ?? [];
+}
+
+/**
+ * Which account signed the crawl in — `null` when nothing did. The distinction
+ * is the whole of the credential rule: `"user"` is a secret the run may not
+ * describe any further, `"page"` is a fact the page itself published and a run
+ * MUST be auditable for. A missing field is read as `null`, never as "user".
+ */
+export function credentialsSource(result: WebTargetJobResult): CredentialSource | null {
+  return result.credentials_source ?? null;
+}
+
+/**
+ * The "there is a login here and nothing could pass it" report, read tolerantly
+ * because a backend may spell it as a flag beside its selectors or as one
+ * object carrying both. What is NOT tolerated is the substance: `present`
+ * without selectors is an apology, and the spec fails on it.
+ */
+export function loginRequirement(result: WebTargetJobResult): {
+  present: boolean;
+  selectors: string[];
+  raw: unknown;
+} {
+  // Both engines carry it inside the login report as `required` beside the
+  // form; a flag of its own is the other legal spelling. Either is read, and
+  // neither excuses a report with no selectors in it.
+  const nested = result.login && result.login.required ? result.login : null;
+  const raw = result.login_required ?? nested;
+  if (raw === null || raw === undefined || raw === false) {
+    return { present: false, selectors: [], raw: raw ?? null };
+  }
+  // Read structurally: the two spellings are different declared types that
+  // carry the same three facts, and widening one to the other would let a
+  // future field of either be asserted on by accident.
+  const marker = (typeof raw === 'object' ? raw : {}) as {
+    selectors?: string[];
+    form?: {
+      selector?: string | null;
+      fields?: Array<string | { selector?: string | null }>;
+      submit?: string | null;
+    } | null;
+  };
+  const selectors = new Set<string>(marker.selectors ?? []);
+  if (marker.form?.selector) selectors.add(marker.form.selector);
+  // A field arrives either as its selector or as the whole field object.
+  for (const field of marker.form?.fields ?? []) {
+    if (typeof field === 'string') selectors.add(field);
+    else if (field?.selector) selectors.add(field.selector);
+  }
+  if (marker.form?.submit) selectors.add(marker.form.submit);
+  return { present: true, selectors: [...selectors], raw };
+}
+
+/**
+ * The pages one case cites. The artefact vocabulary fixes the spelling
+ * `page:<final_url>` (docs/WEB_TARGETS.md §2), which is what makes "this case
+ * came from a page the crawl never visited" a checkable statement rather than
+ * an impression.
+ */
+export function citedPageUrls(testCase: TestCase): string[] {
+  const haystack = JSON.stringify({
+    title: testCase.title,
+    description: testCase.description,
+    preconditions: testCase.preconditions,
+    steps: testCase.steps ?? [],
+  });
+  const cited = new Set<string>();
+  for (const match of haystack.matchAll(/page:(https?:\/\/[^\s"'\\,)\]]+)/g)) {
+    cited.add(match[1]);
+  }
+  return [...cited];
+}
+
+/**
+ * Every encoding of a secret found anywhere in a payload — empty means clean.
+ *
+ * A password leak is not only a literal one: a value that travelled through a
+ * query string arrives percent-encoded, and one that travelled through a header
+ * or a stored blob can arrive base64'd. Checking the literal alone would pass a
+ * payload that still hands the reader the password.
+ */
+export function secretTraces(payload: unknown, secret: string): string[] {
+  const haystack = typeof payload === 'string' ? payload : JSON.stringify(payload ?? null);
+  const encodings: Array<[string, string]> = [
+    ['literal', secret],
+    ['urlencoded', encodeURIComponent(secret)],
+    ['base64', Buffer.from(secret, 'utf8').toString('base64')],
+  ];
+  return encodings
+    .filter(([, encoded]) => encoded.length > 0 && haystack.includes(encoded))
+    .map(([name]) => name);
 }
 
 /** Every selector the discovery reported — forms, their fields, and controls. */

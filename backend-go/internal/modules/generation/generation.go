@@ -160,6 +160,20 @@ func runGeneration(job *jobs.Job, orgID, userID, projectID string,
 			ref = req.ID[:8]
 		}
 		job.Set(math.Round(float64(idx)/float64(total)*0.95*1000)/1000, "Mapping requirement "+ref)
+		// A requirement extracted from a rendered PAGE is grounded in that page —
+		// a form selector or a design fact — not in an HTTP operation, so this
+		// generator has nothing to map it onto and never will. Saying "endpoint
+		// inventory is empty" here reads as a mistake the user made and sends
+		// them looking for a spec to import; the truth is that its cases are
+		// produced by the discovery itself, and re-running that is the action
+		// that regenerates them.
+		if isPageGrounded(req) {
+			unmappable = append(unmappable, map[string]any{
+				"requirement_id": req.ID,
+				"reason": "grounded in a page, not an endpoint — its cases come from " +
+					"the discovery on Target, not from this generator"})
+			continue
+		}
 		if len(endpoints) == 0 {
 			unmappable = append(unmappable, map[string]any{
 				"requirement_id": req.ID, "reason": "endpoint inventory is empty"})

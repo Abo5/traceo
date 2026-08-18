@@ -69,6 +69,12 @@ type Inventory struct {
 	Controls      []Control `json:"controls"`
 	Requests      []Request `json:"requests"`
 	ConsoleErrors []string  `json:"console_errors"`
+	// Depth and Status exist only for a crawled page: how many links from the
+	// target it was reached at, and what the navigation answered. A single-page
+	// discovery leaves them at their zero values, which is what it has always
+	// reported by saying nothing.
+	Depth  int  `json:"depth"`
+	Status *int `json:"status"`
 }
 
 // APIResourceTypes: the XHR/fetch inventory IS the API surface a page exposes.
@@ -227,6 +233,17 @@ func (inv Inventory) pageURL() string {
 // Grounding — one artefact set, checked by every track
 // ---------------------------------------------------------------------------
 
+// PageRef is the `page:<final_url>` reference every case on this page also
+// cites. It is what makes a case answer "which page is this about" without
+// reading its steps, and what lets the gate reject a case attributed to a page
+// the crawl never visited.
+func PageRef(inv Inventory) string {
+	if url := inv.pageURL(); url != "" {
+		return "page:" + url
+	}
+	return ""
+}
+
 // ArtefactIDs is everything this discovery actually found, as reference ids. A
 // case may only cite ids from this set; an artefact that never survived
 // normalisation cannot be cited either.
@@ -247,8 +264,8 @@ func ArtefactIDs(inv Inventory, factIDs []string) map[string]bool {
 	for _, req := range inv.Requests {
 		out["request:"+req.Method+" "+req.URL] = true
 	}
-	if inv.FinalURL != "" {
-		out["page:"+inv.FinalURL] = true
+	if ref := PageRef(inv); ref != "" {
+		out[ref] = true
 	}
 	for _, id := range factIDs {
 		out["fact:"+id] = true
@@ -286,6 +303,20 @@ type Operation struct {
 	Origins       []string
 	Statuses      []int
 	URLs          []string
+	// RequestSchema is set only for an operation a FORM declares: the browser
+	// was never seen to call it, so there is no captured body to infer from —
+	// the schema IS the form's own fields.
+	RequestSchema map[string]any
+	// DeclaredBy names the form element and page that declared this operation,
+	// which is what a case built on it cites. Nil for a captured request: that
+	// stands on the request itself.
+	DeclaredBy *Declaration
+}
+
+// Declaration is the markup that declared an operation.
+type Declaration struct {
+	Selector string
+	Page     string
 }
 
 // EndpointsFromRequests turns captured XHR/fetch requests into inventory
@@ -297,12 +328,60 @@ type Operation struct {
 // here exactly as it would from a HAR file. Query values become
 // constraints.example on a query parameter. Nothing is invented: a request with
 // no query string yields no query parameters.
-func EndpointsFromRequests(requests []Request) []Operation {
+// EndpointsFromRequests returns (operations, skip reasons) for the captured
+// XHR/fetch requests. ONLY requests to an origin the crawl itself visited become
+// endpoints. A page that embeds a third party — a video, a map, an analytics tag
+// — makes that party's calls from the same browser, and recording them would put
+// somebody else's API into this project's inventory. Measured on the owner's
+// target: the Buzz page embeds YouTube, and without this filter the crawl
+// adopted four Google endpoints and the security builders aimed twelve probes at
+// them, including a rate-limit probe. Traceo must never generate a test that
+// attacks a host the user did not point it at.
+//
+// A nil origins set disables the filter, which is what the older callers that
+// pass nothing expect.
+// queryPair is one name=value of a query string, kept in the order it appeared.
+type queryPair struct {
+	key   string
+	value string
+}
+
+// queryNamesInOrder reads a raw query string the way Python's parse_qsl does
+// with keep_blank_values=True: split on "&", split each pair on the first "=",
+// percent-decode both halves and turn "+" into a space. A half that cannot be
+// decoded is kept verbatim rather than dropping the parameter, because a
+// parameter the page really sent is a fact even when its encoding is broken.
+func queryNamesInOrder(raw string) []queryPair {
+	if raw == "" {
+		return nil
+	}
+	unescape := func(s string) string {
+		if decoded, err := url.QueryUnescape(s); err == nil {
+			return decoded
+		}
+		return s
+	}
+	out := make([]queryPair, 0, 8)
+	for _, pair := range strings.Split(raw, "&") {
+		if pair == "" {
+			continue
+		}
+		name, value := pair, ""
+		if i := strings.Index(pair, "="); i >= 0 {
+			name, value = pair[:i], pair[i+1:]
+		}
+		out = append(out, queryPair{key: unescape(name), value: unescape(value)})
+	}
+	return out
+}
+
+func EndpointsFromRequests(requests []Request, origins map[string]bool) ([]Operation, []string) {
 	type entry struct {
 		op    *Operation
 		known map[string]bool
 	}
 	byKey := map[string]*entry{}
+	foreign := map[string]int{}
 	var order []string
 	for _, req := range requests {
 		if !APIResourceTypes[req.ResourceType] {
@@ -310,6 +389,11 @@ func EndpointsFromRequests(requests []Request) []Operation {
 		}
 		parsed, err := url.Parse(req.URL)
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			continue
+		}
+		requestOrigin := parsed.Scheme + "://" + parsed.Host
+		if origins != nil && !origins[requestOrigin] {
+			foreign[requestOrigin]++
 			continue
 		}
 		path, names := collections.TemplateConcretePath(parsed.Path)
@@ -339,23 +423,20 @@ func EndpointsFromRequests(requests []Request) []Operation {
 		if !contains(e.op.URLs, req.URL) {
 			e.op.URLs = append(e.op.URLs, req.URL)
 		}
-		query := parsed.Query()
-		qnames := make([]string, 0, len(query))
-		for name := range query {
-			qnames = append(qnames, name)
-		}
-		sort.Strings(qnames)
-		for _, name := range qnames {
-			if name == "" || e.known[name] {
+		// In the order the request's own query string stated them. url.Query()
+		// returns a map, and taming a map's iteration order with a sort makes
+		// this engine disagree with webtarget.py, which reads the string in
+		// order with parse_qsl. The parameter list's order is not cosmetic: the
+		// security builders test the FIRST parameter of a kind, so on the real
+		// target the two engines built a different case for 3 of 139 security
+		// cases from the same document.
+		for _, name := range queryNamesInOrder(parsed.RawQuery) {
+			if name.key == "" || e.known[name.key] {
 				continue
 			}
-			e.known[name] = true
-			value := ""
-			if vals := query[name]; len(vals) > 0 {
-				value = vals[0]
-			}
+			e.known[name.key] = true
 			e.op.Parameters = append(e.op.Parameters,
-				collections.Param(name, "query", false, value))
+				collections.Param(name.key, "query", false, name.value))
 		}
 	}
 	sort.Strings(order)
@@ -372,7 +453,20 @@ func EndpointsFromRequests(requests []Request) []Operation {
 			op.ObservedCount, plural, strings.Join(op.Origins, ", ")), 500)
 		out = append(out, *op)
 	}
-	return out
+	var reasons []string
+	if len(foreign) > 0 {
+		hosts := make([]string, 0, len(foreign))
+		total := 0
+		for origin, n := range foreign {
+			hosts = append(hosts, fmt.Sprintf("%s (%d)", origin, n))
+			total += n
+		}
+		sort.Strings(hosts)
+		reasons = append(reasons, fmt.Sprintf(
+			"%d captured request(s) went to an origin the crawl never visited and were "+
+				"not recorded: %s", total, strings.Join(hosts, ", ")))
+	}
+	return out, reasons
 }
 
 // ---------------------------------------------------------------------------
@@ -463,11 +557,14 @@ func FormRequirementText(form Form, inv Inventory) (string, []string, string) {
 
 // FormCases builds the deterministic functional cases for one form. The
 // selectors travel VERBATIM into the step request — that is what makes the case
-// runnable against the page and auditable back to the render.
+// runnable against the page and auditable back to the render. Every case also
+// cites the page it came from, so a crawl of twenty pages cannot end up with a
+// case that is checkable but unplaceable.
 func FormCases(form Form, inv Inventory) []Case {
 	label := FormLabel(form)
 	pageURL := inv.pageURL()
 	path := inv.PagePath()
+	ref := PageRef(inv)
 	var cases []Case
 
 	mk := func(title, ctype, technique, check string, request map[string]any,
@@ -476,6 +573,9 @@ func FormCases(form Form, inv Inventory) []Case {
 			"form": form.Selector}
 		for k, v := range request {
 			req[k] = v
+		}
+		if ref != "" {
+			grounds = append(append([]string{}, grounds...), ref)
 		}
 		return Case{
 			Title: trunc(title, 500),

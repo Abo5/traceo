@@ -310,14 +310,20 @@ def _is_free_text(sch: dict) -> bool:
 
 
 def _free_text_body_fields(ep) -> list[dict]:
-    """Top-level free-text string fields of the request body (FR-034 targets)."""
+    """Top-level free-text string fields of the request body (FR-034 targets).
+
+    Sorted by name, NOT left in declaration order. The callers take [0], so the
+    order decides which field gets the localisation and injection coverage, and
+    declaration order does not survive the trip through Go: encoding/json emits
+    map keys sorted, so the two engines would read the same schema and pick a
+    different field. Sorting is the only order both can agree on."""
     rs = _body_object_schema(ep)
     if not rs:
         return []
     required = rs.get("required") or []
     return [{"name": name, "where": "body", "schema": sch,
              "required": name in required, "location": "body"}
-            for name, sch in rs["properties"].items()
+            for name, sch in sorted(rs["properties"].items())
             if isinstance(sch, dict) and _is_free_text(sch)]
 
 
@@ -697,6 +703,17 @@ def _generate_cases(req: Requirement, ep: Endpoint, depth: str) -> list[dict]:
 # Mapper — lexical prefilter + closed-list LLM pick (TRD §4.3)
 # ---------------------------------------------------------------------------
 
+def _is_page_grounded(req) -> bool:
+    """True when this requirement was extracted from a rendered page.
+
+    The web-target engine records the page it read in `source_location["url"]`;
+    document- and spec-derived requirements have no such key. This is a read of
+    stored provenance, not a guess from the text — a requirement that merely
+    mentions a URL is still an ordinary requirement."""
+    location = req.source_location if isinstance(req.source_location, dict) else {}
+    return bool(location.get("url"))
+
+
 def _tokens(text: str) -> set[str]:
     return set(_WORD_RE.findall((text or "").lower()))
 
@@ -791,6 +808,19 @@ def _run_generation(job, org_id: str, user_id: str, project_id: str,
         for idx, req in enumerate(reqs):
             job.progress = round(idx / total * 0.95, 3)
             job.message = f"Mapping requirement {req.external_id or req.id[:8]}"
+            # A requirement extracted from a rendered PAGE is grounded in that
+            # page — a form selector or a design fact — not in an HTTP operation,
+            # so this generator has nothing to map it onto and never will. Saying
+            # "endpoint inventory is empty" here reads as a mistake the user made
+            # and sends them looking for a spec to import; the truth is that its
+            # cases are produced by the discovery itself, and re-running that is
+            # the action that regenerates them.
+            if _is_page_grounded(req):
+                unmappable.append({
+                    "requirement_id": req.id,
+                    "reason": ("grounded in a page, not an endpoint — its cases come from "
+                               "the discovery on Target, not from this generator")})
+                continue
             if not endpoints:
                 unmappable.append({"requirement_id": req.id, "reason": "endpoint inventory is empty"})
                 continue

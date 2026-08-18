@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useCan } from "@/lib/permissions";
+import { TEST_TYPES, type TestType } from "@/lib/test-types";
+import { TestTypePicker } from "@/components/test-type-picker";
 import {
   Badge,
   Button,
@@ -67,7 +69,10 @@ export default function ProjectsPage() {
   const [health, setHealth] = useState<Record<string, Health>>({});
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [form, setForm] = useState({ name: "" });
+  const [form, setForm] = useState({ name: "", url: "" });
+  // A new project is for every kind of testing until its owner narrows it —
+  // the same default the backend applies when the field is omitted.
+  const [types, setTypes] = useState<TestType[]>([...TEST_TYPES]);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -143,7 +148,17 @@ export default function ProjectsPage() {
 
   function openCreate() {
     setCreateError(null);
+    setTypes([...TEST_TYPES]);
+    setForm({ name: "", url: "" });
     setCreateOpen(true);
+  }
+
+  function toggleType(type: TestType) {
+    setTypes((current) =>
+      current.includes(type)
+        ? current.filter((t) => t !== type)
+        : TEST_TYPES.filter((t) => t === type || current.includes(t)),
+    );
   }
 
   async function create(e: React.FormEvent) {
@@ -152,11 +167,26 @@ export default function ProjectsPage() {
     setCreateError(null);
     try {
       const p = await api<Project>("/projects", {
-        body: { name: form.name.trim() },
+        body: { name: form.name.trim(), test_types: types },
       });
       setCreateOpen(false);
-      setForm({ name: "" });
-      router.push(`/projects/${p.id}`);
+      const target = form.url.trim();
+      setForm({ name: "", url: "" });
+      setTypes([...TEST_TYPES]);
+      // A URL was given, so go straight to the screen that runs it and let that
+      // screen start the discovery. Starting it from here would be a second
+      // place that launches a job — and the error handling, the progress bar
+      // and the result card all already live there.
+      //
+      // It starts for a page behind a sign-in too: discovery recognises a login
+      // page by itself and uses the credentials the page publishes about
+      // itself. Asking the user to declare that up front would be a knob for
+      // something the product can already see.
+      router.push(
+        target
+          ? `/projects/${p.id}/target?url=${encodeURIComponent(target)}&start=1`
+          : `/projects/${p.id}`,
+      );
     } catch (err: any) {
       setCreateError(err?.message || String(err));
     } finally {
@@ -414,12 +444,69 @@ export default function ProjectsPage() {
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
             />
           </Field>
+          <div>
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                letterSpacing: ".08em",
+                textTransform: "uppercase",
+                color: "var(--text-secondary)",
+                marginBottom: 4,
+              }}
+            >
+              Test types
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 10 }}>
+              What this project is for. You can change it later from Overview.
+            </div>
+            <TestTypePicker
+              selected={types}
+              onToggle={toggleType}
+              testIdPrefix="projects-create-type"
+            />
+            {types.length === 0 && (
+              <div
+                data-testid="projects-create-types-hint"
+                style={{ fontSize: 12, color: "var(--warning)", marginTop: 8 }}
+              >
+                Pick at least one — a project that tests nothing has nothing to do.
+              </div>
+            )}
+          </div>
+          <Field
+            label="Page URL (optional)"
+            hint="Give a URL and Traceo opens it in a browser and starts testing it right away — including a page behind a sign-in, which it recognises on its own. You can add one later instead."
+            testId="projects-create-url-input"
+          >
+            <Input
+              type="url"
+              maxLength={1000}
+              placeholder="https://example.com/login"
+              value={form.url}
+              onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
+            />
+          </Field>
+          {form.url.trim() !== "" && !/^https?:\/\/\S+$/i.test(form.url.trim()) && (
+            <div
+              data-testid="projects-create-url-hint"
+              style={{ fontSize: 12, color: "var(--warning)" }}
+            >
+              Enter an absolute http:// or https:// URL, or leave it empty.
+            </div>
+          )}
           {createError && <div className="error-text" data-testid="projects-create-error-text">{createError}</div>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <Button variant="ghost" testId="projects-create-cancel-button" onClick={() => setCreateOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" testId="projects-create-submit-button" disabled={creating || !form.name.trim()}>
+            <Button type="submit" variant="primary" testId="projects-create-submit-button" disabled={
+                creating ||
+                !form.name.trim() ||
+                types.length === 0 ||
+                (form.url.trim() !== "" && !/^https?:\/\/\S+$/i.test(form.url.trim()))
+              }
+            >
               {creating ? "Creating…" : "Create project"}
             </Button>
           </div>

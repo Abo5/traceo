@@ -23,6 +23,8 @@ class MockProvider:
             data = self._map(prompt)
         elif prompt_id.startswith("enrich_endpoints"):
             data = self._enrich(prompt)
+        elif prompt_id.startswith("pageintel"):
+            data = self._page_behaviours(prompt)
         else:
             data = {}
         jsonschema.validate(data, schema)
@@ -125,6 +127,103 @@ class MockProvider:
                 "criticality": MOCK_CRITICALITY.get(method, "low"),
             })
         return {"endpoints": out}
+
+
+    # --- behaviours for one crawled screen -----------------------------------
+    #
+    # The real value of this track is a model's reading of a screen, which a mock
+    # cannot have. What it CAN do is exercise the whole path honestly: propose
+    # cases that cite real ids from the payload, so the caller's grounding gate,
+    # the persistence and the tests all run against the shape they will see in
+    # production — and produce them deterministically, so an offline suite is
+    # reproducible. The behaviours below are the ones that follow from the page's
+    # own declarations; nothing here pretends to understand the domain.
+    def _page_behaviours(self, prompt: str) -> dict:
+        # SENTINEL CONTRACT: pageintel.INSTRUCTIONS ends with "PAYLOAD:\n" and the
+        # payload is wrapped by llm.base.frame_untrusted.
+        try:
+            payload = json.loads(strip_untrusted_frame(prompt.split("PAYLOAD:\n", 1)[-1]))
+        except Exception:
+            return {"cases": []}
+
+        cases = []
+        for form in payload.get("forms", []):
+            fields = [f for f in form.get("fields", []) if isinstance(f, dict) and f.get("id")]
+            # A hidden field is not something a person fills in, so a behaviour
+            # written about one would be noise on every screen that carries a CSRF
+            # token.
+            usable = [f for f in fields if f.get("type") != "hidden"]
+            if not usable:
+                continue
+            name = form.get("name") or "the form"
+            label = lambda f: f.get("label") or f.get("placeholder") or f["id"]
+
+            # Required flags are the page's own statement, and plenty of real
+            # forms carry none: the OrangeHRM demo marks nothing required and
+            # still refuses an empty submission. So the empty-submission case is
+            # written from the FIELDS, not from the flags, and the per-field ones
+            # only when the page actually claims the field is required.
+            cases.append({
+                "title": f"Submitting {name} with every field empty is refused",
+                "expected": ("The submission does not succeed and the screen says what "
+                             "is missing."),
+                "type": "negative", "priority": "high",
+                "field_ids": [f["id"] for f in usable],
+                "control_ids": [],
+            })
+            cases.append({
+                "title": f"Submitting {name} with a valid value in every field is accepted",
+                "expected": ("The submission is accepted and the screen moves on rather "
+                             "than reporting an error."),
+                "type": "positive", "priority": "high",
+                "field_ids": [f["id"] for f in usable],
+                "control_ids": [],
+            })
+            for field in [f for f in usable if f.get("required")][:4]:
+                cases.append({
+                    "title": f"Submitting {name} without {label(field)} is refused",
+                    "expected": f"The submission is refused and {label(field)} is reported "
+                                "as required.",
+                    "type": "negative", "priority": "medium",
+                    "field_ids": [field["id"]], "control_ids": [],
+                })
+            for field in usable:
+                if field.get("maxlength"):
+                    cases.append({
+                        "title": f"{label(field)} refuses more than "
+                                 f"{field['maxlength']} characters",
+                        "expected": f"Input longer than {field['maxlength']} characters is "
+                                    "refused or truncated, never stored whole.",
+                        "type": "negative", "priority": "low",
+                        "field_ids": [field["id"]], "control_ids": [],
+                    })
+                    break
+            for field in usable:
+                if field.get("pattern"):
+                    cases.append({
+                        "title": f"{label(field)} refuses a value its format rule forbids",
+                        "expected": f"A value not matching {field['pattern']} is refused "
+                                    "with a message naming the field.",
+                        "type": "negative", "priority": "medium",
+                        "field_ids": [field["id"]], "control_ids": [],
+                    })
+                    break
+
+        # A screen with no form still has actions, and whether they lead anywhere
+        # is a real behaviour. Only named controls are described, so only named
+        # ones can be cited.
+        if not cases:
+            for control in payload.get("controls", [])[:5]:
+                cases.append({
+                    "title": f"'{control['name']}' leads somewhere and reports failure "
+                             "when it cannot",
+                    "expected": f"Activating '{control['name']}' reaches its destination, or "
+                                "says why it could not — it never fails silently.",
+                    "type": "positive", "priority": "low",
+                    "field_ids": [], "control_ids": [control["id"]],
+                })
+
+        return {"cases": cases[:12]}
 
 
 # Deterministic enrichment vocabulary — kept module level so the Go mock can
