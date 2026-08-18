@@ -542,6 +542,13 @@ function extractDom(limits) {
       visible: isVisible(el),
       box: box(el),
       options: null,
+      // The state the control STARTS in. Without this a "loads with the
+      // documented defaults" case would have nothing to compare against, and
+      // the only honest alternative is not to write one.
+      value: (el.tagName === 'SELECT' || el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')
+        ? String(el.value ?? '').slice(0, 300) : null,
+      checked: (el.tagName === 'INPUT' && ['checkbox', 'radio'].includes(type))
+        ? el.checked === true : null,
     };
     if (tag === 'select') {
       field.options = Array.from(el.options).slice(0, 50).map((o) => ({

@@ -310,6 +310,26 @@ def _field(raw: dict) -> dict | None:
         "maxlength": _int_or_none(raw.get("maxlength") if "maxlength" in raw
                                   else raw.get("maxLength")),
         "pattern": _s(raw.get("pattern"), 300),
+        # The constraints the sidecar already reads off the element. They were
+        # being dropped here, which meant a field that declares min=1 max=5 was
+        # tested for nothing but presence — the rule was measured and thrown
+        # away. Kept verbatim: a case may only assert what the page declared.
+        "minlength": _int_or_none(raw.get("minlength") if "minlength" in raw
+                                  else raw.get("minLength")),
+        "min": _s(raw.get("min"), 100),
+        "max": _s(raw.get("max"), 100),
+        "step": _s(raw.get("step"), 40),
+        # Shape and state, for the cases that assert what the page DOES rather
+        # than what one field accepts.
+        "tag": _s(raw.get("tag"), 20).lower() or "input",
+        "disabled": bool(raw.get("disabled")),
+        "visible": raw.get("visible") is not False,
+        "options": [
+            {"value": _s(o.get("value"), 200), "label": _s(o.get("label"), 200)}
+            for o in (raw.get("options") or []) if isinstance(o, dict)
+        ] or None,
+        "value": _s(raw.get("value"), 300) if raw.get("value") is not None else None,
+        "checked": bool(raw["checked"]) if raw.get("checked") is not None else None,
     }
 
 
@@ -340,6 +360,9 @@ def _form(raw: dict, index: int) -> dict | None:
         "id": _s(raw.get("id"), 200),
         "action": _s(raw.get("action"), 500),
         "method": (_s(raw.get("method"), 10) or "GET").upper(),
+        # A form that turns the browser's validation off has taken the rules on
+        # itself; the cases below say so when it then fails to keep them.
+        "novalidate": bool(raw.get("novalidate")),
         "fields": fields,
         "submit": submit,
         "submit_name": submit_name,
@@ -369,6 +392,9 @@ def _request(raw: dict) -> dict | None:
         return None
     return {
         "method": (_s(raw.get("method"), 10) or "GET").upper(),
+        # A form that turns the browser's validation off has taken the rules on
+        # itself; the cases below say so when it then fails to keep them.
+        "novalidate": bool(raw.get("novalidate")),
         "url": url,
         "resource_type": _s(raw.get("resourceType") or raw.get("resource_type"), 40).lower(),
         "status": _int_or_none(raw.get("status")),
@@ -599,6 +625,387 @@ def form_requirement_text(form: dict, inv: dict) -> tuple[str, list[str], str]:
     return description, criteria, source_text
 
 
+# ---------------------------------------------------------------------------
+# validation probes — the VALUES a case types into a field
+#
+# Every probe is derived from a constraint the page itself declared. Nothing is
+# invented: a field with no `type`, no length, no range and no pattern gets no
+# validation case, because there is no stated rule to violate. That is the
+# grounding gate applied to values rather than to selectors — a case asserting
+# "rejects 'abc'" on a field that never said what it accepts would be testing
+# our opinion, not the product's.
+# ---------------------------------------------------------------------------
+
+#: A value of the wrong shape for each input type, and one of the right shape.
+#: The invalid value must be wrong for THAT type specifically.
+TYPE_PROBES: dict[str, tuple[str, str, str]] = {
+    # type: (invalid value, valid value, what the type means in words)
+    "email": ("not-an-email", "traceo.check@example.com", "an email address"),
+    "url": ("not a url", "https://example.com", "a URL"),
+    "number": ("abc", "7", "a number"),
+    "tel": ("", "0500000000", "a telephone number"),
+    "date": ("not-a-date", "2026-01-01", "a date"),
+}
+
+
+def _num(value) -> float | None:
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+#: Controls that cannot hold an arbitrary typed value. A range slider clamps to
+#: its own bounds, a colour picker only holds colours, a checkbox has no text at
+#: all — so "type this and see if it is refused" is not a question they can be
+#: asked, and a case that asks it fails for a reason the product is not
+#: responsible for.
+UNTYPEABLE = frozenset({
+    "range", "color", "checkbox", "radio", "file", "hidden", "submit",
+    "button", "image", "reset",
+})
+
+
+def _filler(field: dict, length: int) -> str | None:
+    """A string of exactly `length` characters that satisfies the field's OTHER
+    declarations.
+
+    The boundary probe asks "is the longest legal value accepted?", so the value
+    has to be legal in every other respect. Padding an `type=email` field with
+    "aaa…" asks a different question and gets a deserved refusal — that was a
+    false positive, not a finding. When no such string can be constructed (an
+    arbitrary `pattern`), the probe is skipped rather than guessed.
+    """
+    if field.get("pattern"):
+        return None                      # cannot synthesise a match for a regex
+    ftype = (field.get("type") or "text").lower()
+    if ftype == "email":
+        tail = "@example.com"
+        return ("a" * (length - len(tail)) + tail) if length > len(tail) else None
+    if ftype == "url":
+        head = "https://example.com/"
+        return (head + "a" * (length - len(head))) if length > len(head) else None
+    if ftype in ("tel", "number"):
+        return "1" * length
+    if ftype in ("date", "time", "datetime-local", "month", "week"):
+        return None                      # fixed-format; length is not the rule
+    return "a" * length
+
+
+def _accepted_number(field: dict) -> str | None:
+    """A number this field's own min/max/step all allow."""
+    lo, hi, step = _num(field.get("min")), _num(field.get("max")), _num(field.get("step"))
+    if lo is not None:
+        value = lo
+    elif hi is not None:
+        value = hi
+    else:
+        value = 7.0
+    if step and step > 0:
+        base = lo if lo is not None else 0.0
+        # snap up to the first step-aligned value at or above `value`
+        steps = max(0, round((value - base) / step))
+        value = base + steps * step
+    if hi is not None and value > hi:
+        return None
+    if lo is not None and value < lo:
+        return None
+    return _fmt_num(value)
+
+
+def field_probes(field: dict) -> list[dict]:
+    """Every validation case this field's own declarations justify.
+
+    Each entry is {check, label, value, expect} where `expect` is "rejected" or
+    "accepted". The caller turns them into cases; keeping the derivation here
+    makes it testable without a browser.
+    """
+    out: list[dict] = []
+    ftype = (field.get("type") or "text").lower()
+    label = field_label(field)
+    if ftype in UNTYPEABLE:
+        return out
+
+    # --- shape of the declared input type ---------------------------------
+    probe = TYPE_PROBES.get(ftype)
+    if probe and probe[0]:
+        invalid, valid, words = probe
+        if ftype == "number":
+            valid = _accepted_number(field) or valid
+        out.append({"check": "value_rejected", "value": invalid, "expect": "rejected",
+                    "title": f"{label} rejects a value that is not {words}",
+                    "technique": "negative", "reason": f"type=\"{ftype}\""})
+        out.append({"check": "value_accepted", "value": valid, "expect": "accepted",
+                    "title": f"{label} accepts {words}",
+                    "technique": "ep", "reason": f"type=\"{ftype}\""})
+
+    # --- length ------------------------------------------------------------
+    minlength = field.get("minlength")
+    if isinstance(minlength, int) and minlength > 1:
+        short = _filler(field, minlength - 1)
+        if short is not None:
+            out.append({"check": "value_rejected", "value": short, "expect": "rejected",
+                        "title": f"{label} rejects {minlength - 1} characters "
+                                 f"(one short of its {minlength} minimum)",
+                        "technique": "bva", "reason": f"minlength={minlength}"})
+    maxlength = field.get("maxlength")
+    if isinstance(maxlength, int) and 0 < maxlength <= 400:
+        # The boundary itself must be ACCEPTED — an off-by-one that rejects the
+        # longest legal value is a real defect and the mirror of maxlength_enforced.
+        exact = _filler(field, maxlength)
+        if exact is not None:
+            out.append({"check": "value_accepted", "value": exact, "expect": "accepted",
+                        "title": f"{label} accepts exactly {maxlength} characters",
+                        "technique": "bva", "reason": f"maxlength={maxlength}"})
+
+    # --- numeric / date range ---------------------------------------------
+    lo, hi = _num(field.get("min")), _num(field.get("max"))
+    if lo is not None:
+        out.append({"check": "value_rejected", "value": _fmt_num(lo - 1), "expect": "rejected",
+                    "title": f"{label} rejects a value below its {field['min']} minimum",
+                    "technique": "bva", "reason": f"min={field['min']}"})
+        out.append({"check": "value_accepted", "value": _fmt_num(lo), "expect": "accepted",
+                    "title": f"{label} accepts its {field['min']} minimum",
+                    "technique": "bva", "reason": f"min={field['min']}"})
+    if hi is not None:
+        out.append({"check": "value_rejected", "value": _fmt_num(hi + 1), "expect": "rejected",
+                    "title": f"{label} rejects a value above its {field['max']} maximum",
+                    "technique": "bva", "reason": f"max={field['max']}"})
+
+    # --- whitespace is not a value ----------------------------------------
+    if field.get("required"):
+        out.append({"check": "whitespace_rejected", "value": "   ", "expect": "rejected",
+                    "title": f"{label} does not accept spaces as a value",
+                    "technique": "negative", "reason": "required"})
+    return out
+
+
+def _fmt_num(value: float) -> str:
+    """Integers stay integers: min=1 must probe with "0", never "0.0"."""
+    return str(int(value)) if float(value).is_integer() else str(value)
+
+
+# ---------------------------------------------------------------------------
+# Functionality cases — what the form DOES, not what one field accepts
+#
+# The validation probes above ask "is this value refused?". These ask the
+# question a person actually has: does the feature work? That means filling a
+# form correctly and watching the outcome, recovering from a rejection,
+# honouring a gate, revealing a conditional field, loading with its documented
+# defaults, and having links that go somewhere.
+#
+# Every one of them is skipped rather than guessed when the page did not give
+# enough to construct it — a form with a `pattern` field whose value cannot be
+# synthesised gets no happy path, because a "correct" submission we cannot
+# actually make correct would fail for our reason, not the product's.
+# ---------------------------------------------------------------------------
+
+#: Controls we can put a meaningful value into when filling a form correctly.
+FILLABLE = frozenset({
+    "text", "search", "email", "url", "tel", "password", "number", "date",
+    "time", "datetime-local", "month", "week", "textarea", "select", "checkbox",
+    "radio",
+})
+
+
+def valid_value_for(field: dict) -> str | None:
+    """A value that satisfies EVERY rule this field declares, or None.
+
+    None is a real answer: an arbitrary `pattern` cannot be satisfied by
+    construction, and a happy path built on a value we cannot vouch for would be
+    testing the probe rather than the product.
+    """
+    ftype = (field.get("type") or "text").lower()
+    if field.get("pattern"):
+        return None
+    if ftype == "select":
+        options = field.get("options") or []
+        real = [o for o in options if (o.get("value") or "").strip()]
+        return real[0]["value"] if real else None
+    if ftype in ("checkbox", "radio"):
+        return "on"
+    if ftype == "number":
+        return _accepted_number(field)
+    minlength = field.get("minlength") if isinstance(field.get("minlength"), int) else 0
+    maxlength = field.get("maxlength") if isinstance(field.get("maxlength"), int) else 0
+    probe = TYPE_PROBES.get(ftype)
+    if probe:
+        candidate = probe[1]
+        if maxlength and len(candidate) > maxlength:
+            candidate = _filler(field, maxlength)
+        if candidate and minlength and len(candidate) < minlength:
+            candidate = _filler(field, max(minlength, len(candidate)))
+        return candidate
+    length = max(minlength, 8)
+    if maxlength:
+        length = min(length, maxlength)
+        if minlength and length < minlength:
+            return None            # the field declares an impossible range
+    return _filler(field, length)
+
+
+def fill_plan(form: dict) -> list[dict] | None:
+    """A value for every fillable field, or None when one cannot be constructed.
+
+    All-or-nothing on purpose: a "correct" submission missing one required field
+    is not a happy path, it is the required-field case wearing a disguise.
+    """
+    plan = []
+    for field in form["fields"]:
+        ftype = (field.get("type") or "text").lower()
+        if field.get("disabled") or ftype not in FILLABLE:
+            continue
+        if field.get("visible") is False:
+            continue          # hidden on load; conditional_fields owns it
+        value = valid_value_for(field)
+        if value is None:
+            if field.get("required"):
+                return None
+            continue
+        plan.append({"selector": field["selector"], "type": ftype, "value": value})
+    required = [f for f in form["fields"] if f.get("required") and not f.get("disabled")]
+    covered = {p["selector"] for p in plan}
+    if any(f["selector"] not in covered for f in required):
+        return None
+    return plan or None
+
+
+def functional_cases(form: dict, inv: dict) -> list[dict]:
+    """Happy path, error recovery, gating, conditional fields and defaults."""
+    path = page_path(inv)
+    url = inv.get("final_url") or inv.get("url") or ""
+    label = form_label(form)
+    cases: list[dict] = []
+
+    def mk(title, ctype, technique, check, request, assertions, grounds,
+           priority="high"):
+        return {
+            "title": title[:500],
+            "description": (f"Derived from the '{label}' form ({form['selector']}) "
+                            f"rendered at {url}."),
+            "preconditions": f"The page {url} is loaded in a browser",
+            "type": ctype, "priority": priority, "technique": technique,
+            "steps": [{"order": 0, "method": "GET", "path": path,
+                       "request": {"url": url, "screen": label, "check": check,
+                                   "form": form["selector"], **request},
+                       "assertions": assertions, "extractions": []}],
+            "grounds": grounds,
+        }
+
+    form_ground = [f"selector:{form['selector']}"]
+    plan = fill_plan(form)
+
+    # --- 1. happy path -----------------------------------------------------
+    if plan:
+        cases.append(mk(
+            f"Form: '{label}' submits when every field is filled correctly",
+            "positive", "ep", "happy_path",
+            {"fill": plan, "action": form.get("action") or "", "method": form.get("method") or "GET"},
+            [{"type": "happy_path", "expected": "the form submits"}],
+            form_ground + [f"selector:{p['selector']}" for p in plan]))
+
+    # --- 2. error recovery -------------------------------------------------
+    required = [f for f in form["fields"]
+                if f.get("required") and not f.get("disabled")
+                and (f.get("type") or "text").lower() in FILLABLE
+                and (f.get("type") or "text").lower() not in ("checkbox", "radio")]
+    if plan and required:
+        target = required[0]
+        cases.append(mk(
+            f"Form: '{label}' recovers after {field_label(target)} is corrected, "
+            f"without losing the other fields",
+            "positive", "ep", "error_recovery",
+            {"fill": plan, "empty": target["selector"],
+             "action": form.get("action") or "", "method": form.get("method") or "GET"},
+            [{"type": "error_recovery", "selector": target["selector"],
+              "expected": "refused, then accepted, with the other values intact"}],
+            form_ground + [f"selector:{target['selector']}"]))
+
+    # --- 3. the submit gate -------------------------------------------------
+    for field in form["fields"]:
+        if (field.get("type") or "").lower() != "checkbox" or not field.get("required"):
+            continue
+        if not form.get("submit"):
+            continue
+        cases.append(mk(
+            f"Form: '{label}' does not submit until {field_label(field)} is ticked",
+            "negative", "negative", "submit_gated",
+            {"gate": field["selector"], "fill": plan or [],
+             "action": form.get("action") or ""},
+            [{"type": "submit_gated", "selector": field["selector"],
+              "expected": "blocked while unticked"}],
+            form_ground + [f"selector:{field['selector']}"]))
+
+    # --- 4. conditional visibility -----------------------------------------
+    for field in form["fields"]:
+        options = field.get("options") or []
+        real = [o for o in options if (o.get("value") or "").strip()]
+        if (field.get("type") or "").lower() != "select" or len(real) < 2:
+            continue
+        cases.append(mk(
+            f"Form: choosing each {field_label(field)} option shows a consistent set of fields",
+            "positive", "ep", "conditional_fields",
+            {"selector": field["selector"],
+             "options": [o["value"] for o in real][:12],
+             "watch": [f["selector"] for f in form["fields"]
+                       if f["selector"] != field["selector"]][:40]},
+            [{"type": "conditional_fields", "selector": field["selector"],
+              "expected": "the same fields for the same option"}],
+            form_ground + [f"selector:{field['selector']}"],
+            priority="medium"))
+
+    # --- 5. defaults --------------------------------------------------------
+    defaults = [
+        {"selector": f["selector"],
+         "value": f.get("value"),
+         "checked": f.get("checked"),
+         "label": field_label(f)}
+        for f in form["fields"]
+        if (f.get("value") or f.get("checked") is not None)
+    ]
+    defaults = [d for d in defaults if d["value"] or d["checked"] is not None]
+    if defaults:
+        cases.append(mk(
+            f"Form: '{label}' loads with the values it shipped with",
+            "positive", "ep", "initial_state",
+            {"defaults": defaults},
+            [{"type": "initial_state", "expected": "the recorded initial state"}],
+            form_ground + [f"selector:{d['selector']}" for d in defaults],
+            priority="medium"))
+    return cases
+
+
+def navigation_cases(inv: dict) -> list[dict]:
+    """Every discovered link must resolve. One case for the whole page: a list
+    of 40 links is one question ("do the links work"), not 40 requirements."""
+    url = inv.get("final_url") or inv.get("url") or ""
+    links = []
+    seen = set()
+    for control in inv.get("controls") or []:
+        href = (control.get("href") or "").strip()
+        if not href or not href.lower().startswith(("http://", "https://")):
+            continue
+        if href in seen:
+            continue
+        seen.add(href)
+        links.append({"href": href, "name": control.get("name") or ""})
+    if not links:
+        return []
+    return [{
+        "title": f"Navigation: every link on {url} resolves"[:500],
+        "description": f"Derived from the {len(links)} link(s) discovery found at {url}.",
+        "preconditions": f"The page {url} is reachable",
+        "type": "positive", "priority": "medium", "technique": "ep",
+        "steps": [{"order": 0, "method": "GET", "path": page_path(inv),
+                   "request": {"url": url, "check": "links_resolve",
+                               "links": links[:40]},
+                   "assertions": [{"type": "links_resolve",
+                                   "expected": "no 4xx or 5xx"}],
+                   "extractions": []}],
+        "grounds": [f"page:{url}"],
+    }]
+
+
 def form_cases(form: dict, inv: dict) -> list[dict]:
     """Deterministic functional cases for one form.
 
@@ -624,8 +1031,12 @@ def form_cases(form: dict, inv: dict) -> list[dict]:
             "grounds": grounds,
         }
 
-    if form["fields"]:
-        selectors = [f["selector"] for f in form["fields"]]
+    # Only the fields the render actually showed. A conditionally-revealed field
+    # is SUPPOSED to be hidden on load, so demanding it be visible would fail
+    # every form that has one — the conditional_fields case is what covers it.
+    visible_fields = [f for f in form["fields"] if f.get("visible") is not False]
+    if visible_fields:
+        selectors = [f["selector"] for f in visible_fields]
         cases.append(mk(
             f"Form: '{label}' renders every discovered field",
             "positive", "ep", "elements_present",
@@ -664,6 +1075,28 @@ def form_cases(form: dict, inv: dict) -> list[dict]:
                 [{"type": "pattern_enforced", "selector": field["selector"],
                   "expected": field["pattern"]}],
                 [f"selector:{form['selector']}", f"selector:{field['selector']}"]))
+
+    # --- input validation: one case per rule the field itself declares ------
+    # These carry a concrete VALUE to type, so the check is not "does the
+    # attribute exist" but "does the page act on it". Every value is derived
+    # from the declaration (see field_probes), so a field that declares nothing
+    # yields nothing rather than an invented expectation.
+    for field in form["fields"]:
+        for probe in field_probes(field):
+            rejected = probe["expect"] == "rejected"
+            cases.append(mk(
+                f"Form: {probe['title']}",
+                "negative" if rejected else "positive",
+                probe["technique"],
+                probe["check"],
+                {"selector": field["selector"], "value": probe["value"],
+                 "expect": probe["expect"], "declared": probe["reason"],
+                 "form": form["selector"]},
+                [{"type": probe["check"], "selector": field["selector"],
+                  "expected": probe["expect"], "value": probe["value"],
+                  "declared": probe["reason"]}],
+                [f"selector:{form['selector']}", f"selector:{field['selector']}"],
+                priority="high" if rejected else "medium"))
     return cases
 
 
@@ -1058,6 +1491,23 @@ def run_discovery_job(job, org_id: str, user_id: str, project_id: str, target_id
                 requirement_count += 1
                 for case in form_cases(form, inv):
                     emit(req, case, "functional", artefacts)
+                # What the form DOES, beside what its fields accept.
+                for case in functional_cases(form, inv):
+                    emit(req, case, "functional", artefacts)
+
+            # Links belong to the page, not to any one form, so they get their
+            # own requirement rather than being attached to an arbitrary form.
+            nav = navigation_cases(inv)
+            if nav:
+                nav_req, _created = upsert_requirement(
+                    db, org_id, project_id, f"WEB-{short}-NAV",
+                    f"Every link on {inv.get('final_url') or inv.get('url')} must resolve.",
+                    ["No link answers 4xx or 5xx."], "functional",
+                    {"url": inv.get("final_url")},
+                    "", priority="medium")
+                requirement_count += 1
+                for case in nav:
+                    emit(nav_req, case, "functional", artefacts)
             db.commit()
 
         # --- performance -------------------------------------------------------
