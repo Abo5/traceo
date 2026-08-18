@@ -20,9 +20,10 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import audit, get_project_scoped, require
-from ..models import (ApiSpec, Endpoint, Environment, Project, Requirement,
-                      RequirementTestCase, Run, SourceDocument, TestCase,
-                      TestResult, TestStep, User)
+from ..models import (ApiSpec, Component, Endpoint, Environment, Project,
+                      Requirement, RequirementTestCase, Run, Schedule,
+                      SourceDocument, TestCase, TestResult, TestStep, User,
+                      Webhook, WebTarget)
 from ..security import decrypt_secret, encrypt_secret, redact
 from .traceability import (GAP_NEXT_ACTIONS, derive_severity, gap_reason,
                            is_high_priority, run_display_ids)
@@ -206,6 +207,21 @@ def delete_project(project_id: str, user: User = Depends(require("manage_project
                                  Requirement.organisation_id == org_id).delete(synchronize_session=False)
     db.query(SourceDocument).filter(SourceDocument.project_id == project_id,
                                     SourceDocument.organisation_id == org_id).delete(synchronize_session=False)
+    # Everything else that points at this project. These were missing, so
+    # deleting a project that had ever been scheduled, hooked, componentised or
+    # scanned failed on a FOREIGN KEY constraint with a 500 — the delete has to
+    # name every table with a projects.id reference, and adding a table without
+    # adding it here is the whole failure mode.
+    db.query(Schedule).filter(Schedule.project_id == project_id,
+                              Schedule.organisation_id == org_id).delete(synchronize_session=False)
+    db.query(Webhook).filter(Webhook.project_id == project_id,
+                             Webhook.organisation_id == org_id).delete(synchronize_session=False)
+    db.query(Component).filter(Component.project_id == project_id,
+                               Component.organisation_id == org_id).delete(synchronize_session=False)
+    db.query(WebTarget).filter(WebTarget.project_id == project_id,
+                               WebTarget.organisation_id == org_id).delete(synchronize_session=False)
+    # Environments last of the children: a Run references one, so the runs above
+    # must already be gone.
     db.query(Environment).filter(Environment.project_id == project_id,
                                  Environment.organisation_id == org_id).delete(synchronize_session=False)
     db.delete(project)

@@ -18,6 +18,7 @@ from ..db import get_db
 from ..deps import get_project_scoped, require
 from ..models import (Environment, Project, Requirement, RequirementTestCase,
                       Run, TestCase, TestResult, User)
+from .fixprompt import build_fix_prompt, fix_prompts_for
 from .traceability import derive_severity, is_high_priority, run_display_id
 
 router = APIRouter()
@@ -293,9 +294,37 @@ def run_report(run_id: str, user: User = Depends(require("view")),
     run = _get_run(run_id, user, db)
     entries = _report_entries(db, run)
     run_payload = _run_dict(run)
-    run_payload["display_id"] = run_display_id(db, run)
+    display_id = run_display_id(db, run)
+    run_payload["display_id"] = display_id
+    # A failure the reader cannot act on is only half a report: every failed or
+    # errored case carries the repair brief for the thing it found (deterministic,
+    # built from this row's own evidence — see modules/fixprompt.py).
+    label = f"RUN-{display_id}" if display_id else ""
+    for entry in entries:
+        entry["fix_prompt"] = (
+            build_fix_prompt(entry, run_label=label)
+            if entry.get("outcome") in ("failed", "errored") else None)
     return {"run": run_payload, "counts": _counts_of(run, entries), "cases": entries,
             "perf": _perf_block(db, run)}
+
+
+@router.get("/runs/{run_id}/fix-prompts")
+def run_fix_prompts(run_id: str, user: User = Depends(require("view")),
+                    db: Session = Depends(get_db)):
+    """Just the repair briefs — what you copy after reading a run.
+
+    Separate from the report because this is the thing you paste somewhere else:
+    it is small, it is the whole payload of the "fix it" step, and a client that
+    only wants prompts should not have to download every passing case to find
+    them.
+    """
+    run = _get_run(run_id, user, db)
+    entries = _report_entries(db, run)
+    display_id = run_display_id(db, run)
+    label = f"RUN-{display_id}" if display_id else ""
+    prompts = fix_prompts_for(entries, run_label=label)
+    return {"run_id": run.id, "display_id": display_id,
+            "total": len(prompts), "prompts": prompts}
 
 
 # ---------------------------------------------------------------------------

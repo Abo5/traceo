@@ -43,6 +43,15 @@ class Settings:
     WEB_DISCOVERY_SCRIPT = os.getenv(
         "TRACEO_WEB_DISCOVERY_SCRIPT",
         str(BASE_DIR.parent / "tools" / "web-discovery" / "discover.mjs"))
+    # The companion that EXECUTES what discovery generated. It is a separate
+    # script rather than a mode of the first because the two do opposite things:
+    # one reads a page without touching it, the other types into it and submits.
+    WEB_CHECK_SCRIPT = os.getenv(
+        "TRACEO_WEB_CHECK_SCRIPT",
+        str(BASE_DIR.parent / "tools" / "web-discovery" / "check.mjs"))
+    # A page of 40+ cases, each re-rendered for isolation, legitimately takes
+    # minutes. The ceiling is a runaway guard, not a performance target.
+    WEB_CHECK_TIMEOUT_S = float(os.getenv("TRACEO_WEB_CHECK_TIMEOUT_S", "900"))
     NODE_BIN = os.getenv("TRACEO_NODE_BIN", "node")
     WEB_DISCOVERY_TIMEOUT_S = float(os.getenv("TRACEO_WEB_DISCOVERY_TIMEOUT_S", "30"))
     # Same SSRF rule the spec fetcher applies; "1" allows private/loopback hosts
