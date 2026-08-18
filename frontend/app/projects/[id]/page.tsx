@@ -8,8 +8,10 @@ import { useCan } from "@/lib/permissions";
 import {
   Badge,
   Button,
+  Callout,
   Card,
   Donut,
+  Meter,
   Mono,
   PageHeader,
   RefChip,
@@ -61,14 +63,33 @@ type Dashboard = {
 };
 
 const PIPELINE_COLORS = [
-  "var(--c-amber)",
-  "var(--c-pink)",
-  "var(--c-violet)",
-  "var(--c-blue)",
-  "var(--c-cyan)",
+  "var(--blue)",
+  "var(--violet)",
+  "var(--pink)",
+  "var(--warning)",
+  "var(--success)",
 ];
 
 const TC_STATES = ["draft", "approved", "rejected", "stale", "archived"] as const;
+
+function asList(x: any): any[] {
+  if (Array.isArray(x)) return x;
+  return x?.items ?? x?.results ?? x?.runs ?? [];
+}
+
+/** "8 min ago" / "yesterday" / a date — the design's relative run stamp. */
+function relative(iso?: string | null): string {
+  if (!iso) return "—";
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return String(iso);
+  const mins = Math.round((Date.now() - t) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  if (hours < 48) return "yesterday";
+  return new Date(t).toISOString().slice(0, 10);
+}
 
 export default function ProjectDashboardPage() {
   const { id } = useParams<{ id: string }>();
@@ -78,35 +99,31 @@ export default function ProjectDashboardPage() {
   const L = {
     title: "Overview",
     sub: "From requirement to executed test — project status now",
-    reqs: "Requirements",
-    confirmed: "Confirmed",
-    cases: "Test cases",
-    coverage: "Coverage %",
-    caseStates: "Test cases by state",
+    coverage: "Coverage",
+    approved: "Approved cases",
     latestRun: "Latest run",
-    noRuns: "No runs yet",
-    viewRun: "View report",
     openDefects: "Open defects",
-    criticalOf: "critical",
-    medianDur: "Median run duration",
+    medianDur: "Median run",
+    decisions: "Needs your decision",
+    decisionsEmpty: "Nothing is waiting on you — no regressions and no coverage gaps.",
+    recentRuns: "Recent runs",
+    allRuns: "All runs →",
     trendTitle: "Coverage trend",
+    breakdown: "Coverage breakdown",
     regTitle: "Regression watch",
-    regEmpty: "No regressions — everything that passed still passes",
     gapsTitle: "Coverage gaps",
-    gapsEmpty: "No gaps — every confirmed requirement has an approved case",
-    targetedGen: "Targeted generation",
+    caseStates: "Test cases by state",
+    quick: "Quick actions",
+    noRuns: "No runs yet",
     openReport: "Open report",
+    coverIt: "Run it →",
     gapReasons: {
       no_reachable_endpoint: "No matching endpoint",
       all_cases_disabled: "No approved cases (links exist)",
       no_approved_cases: "No approved cases",
       unmappable: "Could not map to an endpoint",
     } as Record<string, string>,
-    quick: "Quick actions",
     uploadDoc: "Upload requirements doc",
-    importSpec: "Import API spec",
-    goGenerate: "Generate cases",
-    goReview: "Review",
     goRun: "New run",
     pipeline: "Pipeline",
     steps: [
@@ -126,13 +143,14 @@ export default function ProjectDashboardPage() {
     passed: "Passed",
     failed: "Failed",
     errored: "Errored",
-    total: "Total",
+    loop: "Approve cases, run them, close the gaps — the coverage number goes up. That's the loop.",
     loadError: "Failed to load the project dashboard",
     retry: "Retry",
     loading: "Loading…",
   };
 
   const [dash, setDash] = useState<Dashboard | null>(null);
+  const [runs, setRuns] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -153,6 +171,21 @@ export default function ProjectDashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await api<any>(`/projects/${id}/runs`);
+        if (alive) setRuns(asList(res).slice(0, 5));
+      } catch {
+        /* the runs page surfaces its own error */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [id]);
+
   const base = `/projects/${id}`;
   const totalCases = dash
     ? Object.values(dash.test_case_counts ?? {}).reduce((a, b) => a + (b || 0), 0)
@@ -166,10 +199,27 @@ export default function ProjectDashboardPage() {
   const medianSec =
     dash?.median_duration_ms != null ? (dash.median_duration_ms / 1000).toFixed(1) + "s" : "—";
   const runLabel = run?.display_id ? `#${run.display_id}` : run ? run.id.slice(0, 8) : "—";
+  const approved = dash?.test_case_counts?.approved ?? 0;
+  const runTotal = Number(counts.total ?? 0);
+  const passRate = runTotal ? (Number(counts.passed ?? 0) / runTotal) * 100 : 0;
+  const decisionCount = regressions.length + gaps.length;
 
   return (
     <div className="stack" data-testid="dashboard-page-root">
-      <PageHeader title={project?.name ?? L.title} sub={L.sub} testId="dashboard-page-header" />
+      <PageHeader
+        title={project?.name ?? L.title}
+        sub={
+          run
+            ? `Run ${runLabel} ${relative(run.finished_at ?? run.started_at)} — everything below is up to date.`
+            : L.sub
+        }
+        testId="dashboard-page-header"
+        actions={
+          <span className="pill" style={{ cursor: "default" }}>
+            {new Date().toDateString().slice(0, 10)}
+          </span>
+        }
+      />
 
       {error ? (
         <Card testId="dashboard-error-card">
@@ -186,171 +236,389 @@ export default function ProjectDashboardPage() {
         <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>{L.loading}</div>
       ) : (
         <>
-          {/* KPI row — v2 */}
+          {/* ---- stat row ---- */}
           <div className="grid-stats">
             <div style={{ position: "relative" }}>
-              <StatCard value={`${dash.coverage_pct}%`} label={L.coverage} color="var(--accent)" testId="dashboard-coverage-stat" />
-              <span style={{ position: "absolute", top: 10, right: 10 }}>
+              <StatCard
+                value={`${dash.coverage_pct}%`}
+                label={L.coverage}
+                bar={dash.coverage_pct}
+                testId="dashboard-coverage-stat"
+              />
+              <span style={{ position: "absolute", top: 12, right: 12 }}>
                 <RefChip id="FR-050" />
               </span>
             </div>
             <StatCard
-              value={dash.test_case_counts?.approved ?? 0}
-              label={L.stateNames.approved}
-              color="var(--success)"
+              value={approved}
+              label={L.approved}
+              hint={`of ${totalCases} test cases`}
               testId="dashboard-approved-cases-stat"
             />
             <StatCard
-              value={run ? `${counts.passed ?? 0}/${counts.total ?? 0}` : "—"}
+              value={run ? `${counts.passed ?? 0} / ${counts.total ?? 0}` : "—"}
               label={`${L.latestRun} ${runLabel}`}
-              color="var(--c-blue)"
+              badge={
+                run ? (
+                  <Badge tone={stateTone(run.state)} state={run.state}>
+                    {run.state}
+                  </Badge>
+                ) : undefined
+              }
+              hint={run ? relative(run.finished_at ?? run.started_at) : L.noRuns}
               testId="dashboard-latest-run-stat"
             />
             <div style={{ position: "relative" }}>
               <StatCard
                 value={defects.total}
-                label={`${L.openDefects} · ${defects.critical} ${L.criticalOf}`}
-                color={defects.critical > 0 ? "var(--error)" : "var(--text)"}
+                label={L.openDefects}
+                color={defects.total > 0 ? "var(--error)" : undefined}
+                badge={
+                  defects.critical > 0 ? (
+                    <Badge tone="error">{defects.critical} critical</Badge>
+                  ) : undefined
+                }
+                hint={defects.total === 0 ? "nothing open" : `${defects.critical} critical`}
                 testId="dashboard-open-defects-stat"
               />
-              <span style={{ position: "absolute", top: 10, right: 10 }}>
+              <span style={{ position: "absolute", top: 12, right: 12 }}>
                 <RefChip id="FR-052" />
               </span>
             </div>
-            <StatCard value={medianSec} label={L.medianDur} color="var(--c-cyan)" testId="dashboard-median-duration-stat" />
+            <StatCard
+              value={medianSec}
+              label={L.medianDur}
+              hint="median duration"
+              testId="dashboard-median-duration-stat"
+            />
           </div>
 
-          {/* trend + latest run — v2 */}
-          <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 16 }}>
-            <Card
-              title={L.trendTitle}
-              action={<RefChip id="FR-054" />}
-              testId="dashboard-coverage-trend-card"
-            >
-              {trend.length > 0 ? (
-                <TrendBars data={trend} height={130} testId="dashboard-coverage-trendbars" />
-              ) : (
-                <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>{L.noRuns}</div>
-              )}
-            </Card>
-            <Card title={L.latestRun} testId="dashboard-latest-run-card">
-              {run ? (
-                <div className="row" style={{ gap: 18, alignItems: "center" }}>
-                  <Donut
-                    passed={counts.passed ?? 0}
-                    failed={counts.failed ?? 0}
-                    errored={counts.errored ?? 0}
-                    testId="dashboard-latest-run-donut"
-                  />
-                  <div className="stack" style={{ gap: 8 }}>
-                    <div className="row" style={{ gap: 8 }}>
-                      <Badge tone={stateTone(run.state)} testId="dashboard-latest-run-state-badge" state={run.state}>{run.state}</Badge>
-                      <Mono style={{ fontSize: 11, color: "var(--text-secondary)" }}>{runLabel}</Mono>
+          {/* ---- two-column body ---- */}
+          <div className="dash-cols">
+            <div className="stack" style={{ gap: 20, minWidth: 0 }}>
+              {/* needs your decision — regressions and gaps in one queue */}
+              <Card
+                title={L.decisions}
+                action={
+                  decisionCount > 0 ? (
+                    <Link href={`${base}/requirements`} className="link" style={{ fontSize: 11.5 }}>
+                      View all ({decisionCount}) →
+                    </Link>
+                  ) : undefined
+                }
+                testId="dashboard-regression-card"
+              >
+                {decisionCount === 0 ? (
+                  <div style={{ fontSize: 13, color: "var(--success-text)" }}>
+                    {L.decisionsEmpty}
+                  </div>
+                ) : (
+                  <div>
+                    {regressions.slice(0, 5).map((r, i) => (
+                      <div key={r.test_case_id}>
+                        {i > 0 && <div className="hr" />}
+                        <div
+                          className="row"
+                          data-testid="dashboard-regression-row"
+                          style={{ gap: 12, padding: "11px 0", flexWrap: "nowrap" }}
+                        >
+                          <SeverityBadge
+                            severity={r.severity}
+                            testId="dashboard-regression-severity-badge"
+                          />
+                          <span
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                              fontSize: 13,
+                              fontWeight: 500,
+                            }}
+                            title={r.title}
+                          >
+                            {r.title}
+                          </span>
+                          {(r.requirement_external_ids ?? []).slice(0, 1).map((x) => (
+                            <RefChip key={x} id={x} />
+                          ))}
+                          <Link href={`${base}/runs/${r.run_id}`}>
+                            <Badge
+                              tone={r.outcome === "failed" ? "error" : "warning"}
+                              testId="dashboard-regression-outcome-badge"
+                              state={r.outcome}
+                            >
+                              {r.outcome}
+                            </Badge>
+                          </Link>
+                        </div>
+                      </div>
+                    ))}
+                    {gaps.slice(0, 4).map((g, i) => (
+                      <div key={g.requirement_id}>
+                        {(i > 0 || regressions.length > 0) && <div className="hr" />}
+                        <div
+                          className="row"
+                          data-testid="dashboard-gap-row"
+                          style={{ gap: 12, padding: "11px 0", flexWrap: "nowrap" }}
+                        >
+                          <Badge tone="warning">GAP</Badge>
+                          <span
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              fontSize: 13,
+                              fontWeight: 500,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                            title={g.next_action ?? undefined}
+                          >
+                            {L.gapReasons[g.reason ?? ""] ?? g.reason ?? "Uncovered requirement"}
+                          </span>
+                          <RefChip id={g.external_id || g.requirement_id.slice(0, 8)} />
+                          <Link
+                            href={`${base}/runs`}
+                            className="link"
+                            style={{ fontSize: 11.5 }}
+                            data-testid="dashboard-gap-run-button"
+                          >
+                            {L.coverIt}
+                          </Link>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Card>
+
+              {/* recent runs */}
+              <Card
+                title={L.recentRuns}
+                action={
+                  <Link href={`${base}/runs`} className="link" style={{ fontSize: 11.5 }}>
+                    {L.allRuns}
+                  </Link>
+                }
+                testId="dashboard-recent-runs-card"
+              >
+                {runs.length === 0 ? (
+                  <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>{L.noRuns}</div>
+                ) : (
+                  <div>
+                    <div
+                      className="mono"
+                      style={{
+                        display: "flex",
+                        gap: 12,
+                        fontSize: 9,
+                        letterSpacing: "0.08em",
+                        color: "var(--text-secondary)",
+                        padding: "6px 0",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      <span style={{ width: 80 }}>Run</span>
+                      <span style={{ width: 110 }}>When</span>
+                      <span style={{ width: 90 }}>Checks</span>
+                      <span style={{ flex: 1 }} />
+                      <span>Status</span>
                     </div>
-                    <div style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>
-                      <span style={{ color: "var(--success)" }}>{counts.passed ?? 0} {L.passed}</span>
-                      {" · "}
-                      <span style={{ color: "var(--error)" }}>{counts.failed ?? 0} {L.failed}</span>
-                      {" · "}
-                      <span style={{ color: "var(--warning)" }}>{counts.errored ?? 0} {L.errored}</span>
+                    {runs.map((r, i) => {
+                      const c = r?.counts ?? {};
+                      return (
+                        <div key={r.id ?? i}>
+                          {i > 0 && <div className="hr" />}
+                          <Link
+                            href={`${base}/runs/${r.id}`}
+                            data-testid="dashboard-recent-run-row"
+                            style={{
+                              display: "flex",
+                              gap: 12,
+                              alignItems: "center",
+                              padding: "10px 0",
+                            }}
+                          >
+                            <Mono style={{ width: 80, fontSize: 11.5, color: "var(--text-secondary)" }}>
+                              {r.display_id ? `#${r.display_id}` : String(r.id ?? "").slice(0, 8)}
+                            </Mono>
+                            <span style={{ width: 110, fontSize: 11.5, color: "var(--text-secondary)" }}>
+                              {relative(r.finished_at ?? r.started_at)}
+                            </span>
+                            <Mono style={{ width: 90, fontSize: 11.5, color: "var(--text-secondary)" }}>
+                              {c.passed ?? 0}/{c.total ?? 0}
+                            </Mono>
+                            <span style={{ flex: 1 }} />
+                            <Badge tone={stateTone(r.state)} state={r.state}>
+                              {r.state}
+                            </Badge>
+                          </Link>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </Card>
+
+              {/* coverage trend */}
+              <Card
+                title={L.trendTitle}
+                action={<RefChip id="FR-054" />}
+                testId="dashboard-coverage-trend-card"
+              >
+                {trend.length > 0 ? (
+                  <TrendBars data={trend} height={130} testId="dashboard-coverage-trendbars" />
+                ) : (
+                  <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>{L.noRuns}</div>
+                )}
+              </Card>
+            </div>
+
+            {/* ---- right rail ---- */}
+            <div className="stack" style={{ gap: 20 }}>
+              <Card title={L.latestRun} testId="dashboard-latest-run-card">
+                {run ? (
+                  <div className="stack" style={{ gap: 14 }}>
+                    <div className="row" style={{ gap: 16, alignItems: "center" }}>
+                      <Donut
+                        passed={counts.passed ?? 0}
+                        failed={counts.failed ?? 0}
+                        errored={counts.errored ?? 0}
+                        size={84}
+                        testId="dashboard-latest-run-donut"
+                      />
+                      <div className="stack" style={{ gap: 8 }}>
+                        <div className="row" style={{ gap: 8 }}>
+                          <Badge
+                            tone={stateTone(run.state)}
+                            testId="dashboard-latest-run-state-badge"
+                            state={run.state}
+                          >
+                            {run.state}
+                          </Badge>
+                          <Mono style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+                            {runLabel}
+                          </Mono>
+                        </div>
+                        <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.8 }}>
+                          <span style={{ color: "var(--success-text)" }}>
+                            {counts.passed ?? 0} {L.passed}
+                          </span>
+                          {" · "}
+                          <span style={{ color: "var(--error-text)" }}>
+                            {counts.failed ?? 0} {L.failed}
+                          </span>
+                          {" · "}
+                          <span style={{ color: "var(--warning-text)" }}>
+                            {counts.errored ?? 0} {L.errored}
+                          </span>
+                        </div>
+                      </div>
                     </div>
                     <Link href={`${base}/runs/${run.id}`}>
-                      <Button variant="secondary" size="sm" testId="dashboard-open-report-button">{L.openReport}</Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        testId="dashboard-open-report-button"
+                      >
+                        {L.openReport}
+                      </Button>
                     </Link>
                   </div>
-                </div>
-              ) : (
-                <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>{L.noRuns}</div>
-              )}
-            </Card>
-          </div>
+                ) : (
+                  <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>{L.noRuns}</div>
+                )}
+              </Card>
 
-          {/* regression watch + coverage gaps — v2 */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>
-            <Card title={L.regTitle} action={<RefChip id="FR-062" />} testId="dashboard-regression-card">
-              {regressions.length === 0 ? (
-                <div style={{ fontSize: 13, color: "var(--success)" }}>{L.regEmpty}</div>
-              ) : (
-                <div className="stack" style={{ gap: 8 }}>
-                  {regressions.slice(0, 8).map((r) => (
-                    <div
-                      key={r.test_case_id}
-                      className="row"
-                      data-testid="dashboard-regression-row"
-                      style={{
-                        gap: 10,
-                        padding: "8px 10px",
-                        background: "var(--surface-2)",
-                        border: "1px solid var(--border)",
-                        borderRadius: 10,
-                        alignItems: "center",
-                      }}
-                    >
-                      <SeverityBadge severity={r.severity} testId="dashboard-regression-severity-badge" />
-                      <span
-                        style={{
-                          flex: 1,
-                          minWidth: 0,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                          fontSize: 12.5,
-                        }}
-                        title={r.title}
-                      >
-                        {r.title}
-                      </span>
-                      {(r.requirement_external_ids ?? []).slice(0, 2).map((x) => (
-                        <Mono key={x} style={{ fontSize: 10.5, color: "var(--accent)" }}>{x}</Mono>
-                      ))}
-                      <Link href={`${base}/runs/${r.run_id}`}>
-                        <Badge tone={r.outcome === "failed" ? "error" : "warning"} testId="dashboard-regression-outcome-badge" state={r.outcome}>{r.outcome}</Badge>
-                      </Link>
-                    </div>
-                  ))}
+              <Card title={L.breakdown} testId="dashboard-breakdown-card">
+                <div className="stack" style={{ gap: 14 }}>
+                  <Meter
+                    label="Requirements covered"
+                    value={`${dash.coverage_pct}%`}
+                    pct={dash.coverage_pct}
+                  />
+                  <Meter
+                    label="Cases approved"
+                    value={`${approved}/${totalCases}`}
+                    pct={totalCases ? (approved / totalCases) * 100 : 0}
+                  />
+                  <Meter
+                    label="Latest run passing"
+                    value={runTotal ? `${Math.round(passRate)}%` : "—"}
+                    pct={passRate}
+                  />
                 </div>
+              </Card>
+
+              {/* quick actions */}
+              {(canDo("upload_documents") || canDo("trigger_run")) && (
+                <Card title={L.quick} testId="dashboard-quick-actions-card">
+                  <div className="row" style={{ gap: 8 }}>
+                    {canDo("upload_documents") && (
+                      <Link href={`${base}/requirements`}>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          testId="dashboard-quick-upload-doc-button"
+                        >
+                          {L.uploadDoc}
+                        </Button>
+                      </Link>
+                    )}
+                    {canDo("trigger_run") && (
+                      <Link href={`${base}/runs`}>
+                        <Button variant="primary" size="sm" testId="dashboard-quick-run-button">
+                          {L.goRun}
+                        </Button>
+                      </Link>
+                    )}
+                  </div>
+                </Card>
               )}
-            </Card>
-            <Card title={L.gapsTitle} action={<RefChip id="FR-051" />} testId="dashboard-gaps-card">
-              {gaps.length === 0 ? (
-                <div style={{ fontSize: 13, color: "var(--success)" }}>{L.gapsEmpty}</div>
-              ) : (
-                <div className="stack" style={{ gap: 8 }}>
-                  {gaps.slice(0, 6).map((g) => (
-                    <div
-                      key={g.requirement_id}
-                      data-testid="dashboard-gap-row"
-                      style={{
-                        padding: "10px 12px",
-                        background: "var(--warning-subtle, rgba(255,197,61,.16))",
-                        border: "1px solid var(--border)",
-                        borderRadius: 10,
-                      }}
-                    >
-                      <div className="row" style={{ gap: 8, alignItems: "center" }}>
-                        <Mono style={{ fontSize: 11.5, color: "var(--warning)" }}>
-                          {g.external_id || g.requirement_id.slice(0, 8)}
-                        </Mono>
-                        <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                          {L.gapReasons[g.reason ?? ""] ?? g.reason}
-                        </span>
-                        <span style={{ flex: 1 }} />
-                        {canDo("generate") && (
-                          <Link href={`${base}/generate?req=${g.requirement_id}`}>
-                            <Button variant="ghost" size="sm" testId="dashboard-gap-targeted-generate-button">{L.targetedGen}</Button>
-                          </Link>
+
+              {/* coverage gaps detail — kept as its own card for the gap workflow */}
+              <Card
+                title={L.gapsTitle}
+                action={<RefChip id="FR-051" />}
+                testId="dashboard-gaps-card"
+              >
+                {gaps.length === 0 ? (
+                  <div style={{ fontSize: 13, color: "var(--success-text)" }}>
+                    No gaps — every confirmed requirement has an approved case
+                  </div>
+                ) : (
+                  <div className="stack" style={{ gap: 8 }}>
+                    {gaps.slice(0, 6).map((g) => (
+                      <div
+                        key={g.requirement_id}
+                        className="promptbox"
+                        style={{ background: "var(--warnS)" }}
+                      >
+                        <div className="row" style={{ gap: 8 }}>
+                          <RefChip id={g.external_id || g.requirement_id.slice(0, 8)} />
+                          <span style={{ fontSize: 12, color: "var(--warning-text)" }}>
+                            {L.gapReasons[g.reason ?? ""] ?? g.reason}
+                          </span>
+                        </div>
+                        {g.next_action && (
+                          <div
+                            style={{
+                              fontSize: 11.5,
+                              color: "var(--text-secondary)",
+                              marginBlockStart: 4,
+                            }}
+                          >
+                            {g.next_action}
+                          </div>
                         )}
                       </div>
-                      {g.next_action && (
-                        <div style={{ fontSize: 11.5, color: "var(--text-secondary)", marginTop: 4 }}>
-                          {g.next_action}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Card>
+                    ))}
+                  </div>
+                )}
+              </Card>
+            </div>
           </div>
 
           {/* case-state chips */}
@@ -365,8 +633,7 @@ export default function ProjectDashboardPage() {
                     display: "inline-flex",
                     alignItems: "center",
                     gap: 8,
-                    background: "var(--surface-2)",
-                    border: "1px solid var(--border)",
+                    background: "var(--chip)",
                     borderRadius: "var(--r-pill)",
                     padding: "6px 14px",
                     fontSize: 12.5,
@@ -382,62 +649,6 @@ export default function ProjectDashboardPage() {
             </div>
           </Card>
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-              gap: 16,
-            }}
-          >
-            {/* quick actions */}
-            {(canDo("upload_documents") ||
-              canDo("import_spec") ||
-              canDo("generate") ||
-              canDo("edit_test_case") ||
-              canDo("approve_reject") ||
-              canDo("trigger_run")) && (
-            <Card title={L.quick} testId="dashboard-quick-actions-card">
-              <div className="row" style={{ gap: 8 }}>
-                {canDo("upload_documents") && (
-                  <Link href={`${base}/requirements`}>
-                    <Button variant="secondary" size="sm" testId="dashboard-quick-upload-doc-button">
-                      {L.uploadDoc}
-                    </Button>
-                  </Link>
-                )}
-                {canDo("import_spec") && (
-                  <Link href={`${base}/endpoints`}>
-                    <Button variant="secondary" size="sm" testId="dashboard-quick-import-spec-button">
-                      {L.importSpec}
-                    </Button>
-                  </Link>
-                )}
-                {canDo("generate") && (
-                  <Link href={`${base}/generate`}>
-                    <Button variant="secondary" size="sm" testId="dashboard-quick-generate-button">
-                      {L.goGenerate}
-                    </Button>
-                  </Link>
-                )}
-                {(canDo("edit_test_case") || canDo("approve_reject")) && (
-                  <Link href={`${base}/review`}>
-                    <Button variant="secondary" size="sm" testId="dashboard-quick-review-button">
-                      {L.goReview}
-                    </Button>
-                  </Link>
-                )}
-                {canDo("trigger_run") && (
-                  <Link href={`${base}/runs`}>
-                    <Button variant="primary" size="sm" testId="dashboard-quick-run-button">
-                      {L.goRun}
-                    </Button>
-                  </Link>
-                )}
-              </div>
-            </Card>
-            )}
-          </div>
-
           {/* pipeline strip */}
           <div>
             <div className="eyebrow" style={{ marginBottom: 10 }}>
@@ -450,7 +661,7 @@ export default function ProjectDashboardPage() {
                     className="pipeline-num"
                     style={{
                       color: PIPELINE_COLORS[i],
-                      background: "var(--bg)",
+                      background: "var(--canvas)",
                       border: `1px solid ${PIPELINE_COLORS[i]}`,
                     }}
                   >
@@ -461,6 +672,8 @@ export default function ProjectDashboardPage() {
               ))}
             </div>
           </div>
+
+          <Callout testId="dashboard-loop-callout">{L.loop}</Callout>
         </>
       )}
     </div>

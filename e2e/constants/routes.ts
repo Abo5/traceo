@@ -8,22 +8,15 @@ export const routes = {
   login: '/login',
   register: '/register',
   projects: '/projects',
+  /** Latest report per project — workspace-scoped, see frontend/app/reports. */
+  reports: '/reports',
   settings: '/settings',
   settingsMembers: '/settings/members',
 
   project: (projectId: string) => `/projects/${projectId}`,
   requirements: (projectId: string) => `/projects/${projectId}/requirements`,
-  /** Web target — point Traceo at a URL, pick test types, read the design box. */
-  target: (projectId: string) => `/projects/${projectId}/target`,
-  endpoints: (projectId: string) => `/projects/${projectId}/endpoints`,
-  environments: (projectId: string) => `/projects/${projectId}/environments`,
-  generate: (projectId: string) => `/projects/${projectId}/generate`,
-  insights: (projectId: string) => `/projects/${projectId}/insights`,
-  review: (projectId: string) => `/projects/${projectId}/review`,
   runs: (projectId: string) => `/projects/${projectId}/runs`,
+  /** This project's reports — the workspace-level `reports` lists all projects. */
+  projectReports: (projectId: string) => `/projects/${projectId}/reports`,
   run: (projectId: string, runId: string) => `/projects/${projectId}/runs/${runId}`,
-  matrix: (projectId: string) => `/projects/${projectId}/matrix`,
-  integrations: (projectId: string) => `/projects/${projectId}/integrations`,
-  reference: (projectId: string) => `/projects/${projectId}/reference`,
-  projectSettings: (projectId: string) => `/projects/${projectId}/settings`,
 } as const;

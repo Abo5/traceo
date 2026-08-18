@@ -1,13 +1,17 @@
 /**
  * /projects/[id]/runs — frontend/app/projects/[id]/runs/page.tsx.
- * Run state badges carry data-state="queued|running|completed|cancelled|aborted"
- * (literal Run.state values). The history table is composed from the shared
- * DataTable component (§4). Locators private, no assertions (§5, §7).
  *
- * With no environment in the project the launch card renders a hint and a link
- * INSTEAD of the picker — an empty select offers nothing and explains nothing —
- * so both surfaces are exposed read-only and a spec asserts the select's
- * absence, never its emptiness.
+ * The page is the whole testing process: a wizard that takes an app URL, an
+ * optional requirements document and a set of test types, scans the app, runs
+ * what it built, and lists the failures with a fix prompt each. Below it sits
+ * the run history.
+ *
+ * The older "run approved cases against an environment" launcher is gone with
+ * the Environments and Review pages, so the environment picker, subset modal and
+ * live-run panel locators went with it. Run state badges still carry
+ * data-state="queued|running|completed|cancelled|aborted" (literal Run.state
+ * values) and the history is the shared DataTable component (§4). Locators
+ * private, no assertions (§5, §7).
  */
 import type { Locator, Page } from '@playwright/test';
 import { DataTable } from '../components/data-table.component';
@@ -16,18 +20,6 @@ import { routes } from '../constants/routes';
 export class RunsPage {
   constructor(private readonly page: Page) {}
 
-  private get envSelect(): Locator {
-    return this.page.getByTestId('runs-launch-env-select');
-  }
-  private get runButton(): Locator {
-    return this.page.getByTestId('runs-launch-run-button');
-  }
-  private get cancelButton(): Locator {
-    return this.page.getByTestId('runs-live-cancel-button');
-  }
-  private get reportButton(): Locator {
-    return this.page.getByTestId('runs-live-report-button');
-  }
   private get historyTable(): DataTable {
     return new DataTable(this.page.getByTestId('runs-table-root'));
   }
@@ -42,37 +34,43 @@ export class RunsPage {
     return this.page.getByTestId('runs-empty-state');
   }
 
-  get livePanel(): Locator {
-    return this.page.getByTestId('runs-live-panel');
+  /** The wizard card — the only way to start a run. */
+  get wizard(): Locator {
+    return this.page.getByTestId('runs-pipeline-card');
   }
 
-  /** The launch control — renders only with trigger_run (permission-visibility checks). */
-  get launchControl(): Locator {
-    return this.runButton;
+  /** Start control — renders only with trigger_run (permission-visibility checks). */
+  get pipelineStartControl(): Locator {
+    return this.page.getByTestId('runs-pipeline-start-button');
   }
 
-  /**
-   * The environment picker. Exposed read-only so a spec can assert its ABSENCE:
-   * with no environment in the project there is nothing to pick, and the page
-   * renders the hint below instead of an empty select.
-   */
-  get environmentSelect(): Locator {
-    return this.envSelect;
+  get urlField(): Locator {
+    return this.page.getByTestId('runs-pipeline-url-input');
   }
 
-  /** Shown in place of the picker when the project has no environment at all. */
-  get environmentEmptyHint(): Locator {
-    return this.page.getByTestId('runs-environment-empty-hint');
+  /** Optional BRD/TRD picker — a run without one tests the page's own claims. */
+  get documentInput(): Locator {
+    return this.page.getByTestId('runs-pipeline-doc-input');
   }
 
-  /** The link out of that hint to the project's environments page. */
-  get environmentEmptyLink(): Locator {
-    return this.page.getByTestId('runs-environment-empty-link');
+  /** One card per test type: functional | ui | api | performance | security. */
+  testType(type: string): Locator {
+    return this.page.getByTestId(`runs-pipeline-type-${type}`);
   }
 
-  /** Live run badge — data-state carries the literal Run.state. */
-  get liveRunState(): Locator {
-    return this.page.getByTestId('runs-live-state-badge');
+  /** Live progress card, shown only while the run is in flight. */
+  get progress(): Locator {
+    return this.page.getByTestId('runs-pipeline-progress');
+  }
+
+  /** The verdict card the run leaves behind. */
+  get result(): Locator {
+    return this.page.getByTestId('runs-pipeline-result-card');
+  }
+
+  /** One card per failure, each carrying its fix prompt. */
+  get failures(): Locator {
+    return this.page.getByTestId('runs-pipeline-failure-card');
   }
 
   /** History row whose text contains `text` (e.g. the run's display id). */
@@ -86,9 +84,8 @@ export class RunsPage {
   }
 
   /**
-   * The newest history row. The history reloads through the page's own live
-   * poll; in a per-test project the launched run is the only row, so "first"
-   * addresses it without knowing its display id (UI-only flows).
+   * The newest history row. In a per-test project the run just started is the
+   * only row, so "first" addresses it without knowing its display id.
    */
   get latestRow(): Locator {
     return this.historyTable.rowsByTestId('runs-row').first();
@@ -105,27 +102,17 @@ export class RunsPage {
     await this.page.goto(routes.runs(projectId));
   }
 
-  /** Pick the target environment by its option value (environment id). */
-  async selectEnvironment(environmentId: string): Promise<void> {
-    await this.envSelect.selectOption(environmentId);
+  async fillUrl(url: string): Promise<void> {
+    await this.urlField.fill(url);
   }
 
-  /** Pick the target environment by its (entity-data) name — for UI-only flows. */
-  async selectEnvironmentByName(name: string): Promise<void> {
-    await this.envSelect.selectOption({ label: name });
+  async toggleTestType(type: string): Promise<void> {
+    await this.testType(type).click();
   }
 
-  /** Launch a run of all approved cases against the selected environment. */
-  async launch(): Promise<void> {
-    await this.runButton.click();
-  }
-
-  async cancelLiveRun(): Promise<void> {
-    await this.cancelButton.click();
-  }
-
-  async openLiveReport(): Promise<void> {
-    await this.reportButton.click();
+  /** Start the run: scan the app, build cases from it, execute them. */
+  async start(): Promise<void> {
+    await this.pipelineStartControl.click();
   }
 
   async openRun(text: string): Promise<void> {
