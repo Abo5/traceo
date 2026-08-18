@@ -122,18 +122,6 @@ def get_customer(customer_id: str):
     return customer
 
 
-@secured.delete("/customers/{customer_id}", status_code=204)
-def delete_customer(customer_id: str):
-    """Present so a Traceo run can tear down the fixtures it created (FR-043).
-    A seeded customer is protected — teardown must only remove what a run added."""
-    if customer_id in ("CUST-001", "CUST-002", "CUST-003"):
-        _err(409, "seed_protected", "لا يمكن حذف عميل من بيانات العرض الأساسية")
-    if customer_id not in CUSTOMERS:
-        _err(404, "not_found", "العميل غير موجود")
-    del CUSTOMERS[customer_id]
-    return None
-
-
 @secured.get("/orders")
 def list_orders(status: str | None = None, page: int = 1):
     if status is not None and status not in ORDER_STATUSES:

@@ -16,9 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import audit, get_project_scoped, require
-from ..models import (Endpoint, Requirement, RequirementTestCase, TestCase,
-                      TestStep, User)
-from .ingestion import numbered_criteria
+from ..models import Requirement, RequirementTestCase, TestCase, TestStep, User
 
 router = APIRouter()
 
@@ -57,14 +55,8 @@ def _links_for(db: Session, case_ids: list[str]) -> dict[str, list[dict]]:
             .filter(RequirementTestCase.test_case_id.in_(case_ids))
             .all())
     for link, req in rows:
-        indexes = list(link.criterion_indexes or [])
-        statements = {c["index"]: c["statement"] for c in numbered_criteria(req)}
         out[link.test_case_id].append({
             "id": req.id, "external_id": req.external_id, "description": req.description,
-            # The other half of the governing rule: what this case verifies, not just
-            # which requirement it belongs to.
-            "criterion_indexes": indexes,
-            "criteria": [{"index": i, "statement": statements.get(i, "")} for i in indexes],
         })
     return out
 
@@ -128,45 +120,6 @@ def _clean_steps(raw_steps: list) -> list[dict]:
         cleaned.append({"order": i, "endpoint_id": s.get("endpoint_id"),
                         "method": method, "path": path, "request": request,
                         "assertions": assertions, "extractions": extractions})
-    return cleaned
-
-
-def _validated_indexes(req: Requirement, indexes: list[str] | None) -> list[str]:
-    """Keep only criterion labels this requirement actually has. A case citing an AC
-    that does not exist would be worse than one citing none: the matrix would report
-    coverage of a sentence nobody wrote."""
-    if not indexes:
-        return []
-    live = {c["index"] for c in numbered_criteria(req)}
-    unknown = [i for i in indexes if i not in live]
-    if unknown:
-        raise HTTPException(422, detail={
-            "code": "unknown_criteria",
-            "message": (f"{req.external_id or req.id[:8]} has no "
-                        f"{', '.join(unknown)} — available: "
-                        f"{', '.join(sorted(live)) or 'none'}")})
-    return list(dict.fromkeys(indexes))
-
-
-def _resolve_endpoint_ids(db: Session, project_id: str, org_id: str,
-                          cleaned: list[dict]) -> list[dict]:
-    """Bind each hand-authored step to the endpoint it targets.
-
-    A person writing a case types a method and a path, not an internal endpoint id —
-    so without this the case would never appear in the endpoint coverage map, and
-    FR-036 AC4 ("a case added by hand participates like a generated one") would be
-    false in the one place it is measurable. A step whose path is not in the
-    inventory keeps `endpoint_id = None`: manual authoring is deliberately allowed
-    to go beyond the discovered surface, it just does not count as coverage of it."""
-    needs = [s for s in cleaned if not s.get("endpoint_id")]
-    if not needs:
-        return cleaned
-    inventory = {(e.method.upper(), e.path): e.id for e in db.query(Endpoint).filter(
-        Endpoint.project_id == project_id, Endpoint.organisation_id == org_id).all()}
-    if not inventory:
-        return cleaned
-    for step in needs:
-        step["endpoint_id"] = inventory.get((step["method"].upper(), step["path"]))
     return cleaned
 
 
@@ -293,8 +246,7 @@ def update_test_case(case_id: str, body: CasePatch,
         tc.priority = str(body.priority)
         changed.append("priority")
     if body.steps is not None:
-        _replace_steps(tc, _resolve_endpoint_ids(
-            db, tc.project_id, tc.organisation_id, _clean_steps(body.steps)))
+        _replace_steps(tc, _clean_steps(body.steps))
         changed.append("steps")
 
     if changed:
@@ -388,10 +340,6 @@ class CaseCreate(BaseModel):
     type: str = "positive"
     priority: str = "medium"
     steps: list | None = None
-    # Which criteria this hand-written case verifies, per requirement:
-    # {"<requirement_id>": ["AC1", "AC3"]}. Optional — a case may be written before
-    # the criteria are, and the matrix then reports it as requirement-level coverage.
-    criterion_indexes: dict[str, list[str]] | None = None
 
 
 @router.post("/projects/{project_id}/test-cases", status_code=201)
@@ -429,15 +377,12 @@ def create_test_case(project_id: str, body: CaseCreate,
         model="", prompt_version="", technique="manual",
     )
     if body.steps is not None:
-        _replace_steps(tc, _resolve_endpoint_ids(
-            db, project_id, user.organisation_id, _clean_steps(body.steps)))
+        _replace_steps(tc, _clean_steps(body.steps))
     db.add(tc)
     db.flush()
     for rid in wanted:
         db.add(RequirementTestCase(
             requirement_id=rid, test_case_id=tc.id, link_source="manual",
-            criterion_indexes=_validated_indexes(found[rid],
-                                                 (body.criterion_indexes or {}).get(rid)),
             requirement_version_at_link=found[rid].version))
     audit(db, user.organisation_id, user.id, "test_case.created",
           "test_case", tc.id, {"manual": True, "requirement_ids": wanted})
@@ -451,7 +396,6 @@ def create_test_case(project_id: str, body: CaseCreate,
 
 class LinkBody(BaseModel):
     requirement_id: str
-    criterion_indexes: list[str] | None = None
 
 
 @router.post("/test-cases/{case_id}/links", status_code=201)
@@ -470,7 +414,6 @@ def add_link(case_id: str, body: LinkBody,
             "code": "link_exists", "message": "This requirement is already linked"})
     db.add(RequirementTestCase(requirement_id=req.id, test_case_id=tc.id,
                                link_source="manual",
-                               criterion_indexes=_validated_indexes(req, body.criterion_indexes),
                                requirement_version_at_link=req.version))
     audit(db, user.organisation_id, user.id, "test_case.link_added",
           "test_case", tc.id, {"requirement_id": req.id})
