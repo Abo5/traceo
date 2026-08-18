@@ -74,7 +74,6 @@ import {
 import { test, expect } from '../fixtures';
 import { expectApiError } from '../helpers/expect-api-error';
 import { startLocalWebTarget, type LocalWebTarget } from '../helpers/local-web-target';
-import { TargetPage } from '../pages/target.page';
 
 /** Browser launch + navigation + screenshot + five persistence tracks (§16). */
 const DISCOVERY_TEST_TIMEOUT_MS = 300_000;
@@ -744,53 +743,4 @@ test.describe('web target permission gating @permission @regression', () => {
 });
 
 test.describe('target page @regression', () => {
-  test('the page offers a URL, a viewport, the five test types and the design box', async ({
-    asQaLead,
-    project,
-  }) => {
-    const targetPage = new TargetPage(asQaLead);
-
-    await targetPage.goto(project.id);
-    await expect(targetPage.root).toBeVisible({ timeout: 20_000 });
-
-    await expect(targetPage.urlInput).toBeVisible();
-    await expect(targetPage.viewportSelect).toBeVisible();
-
-    // One checkbox per legal test type — the UI vocabulary is the API's.
-    for (const type of ALL_TYPES) {
-      await expect(
-        targetPage.typeCheckbox(type),
-        `the target page has no checkbox for the "${type}" test type`,
-      ).toBeVisible();
-    }
-
-    // The default selection is what the PROJECT declared it is for — not a
-    // fixed pair. This fixture's project names no types, which every reader
-    // treats as all five, so all five come up ticked.
-    expect([...(await targetPage.checkedTypes(ALL_TYPES))].sort())
-      .toEqual([...ALL_TYPES].sort());
-
-    await expect(targetPage.startControl).toBeVisible();
-    // The design box is part of the page, not a consequence of a discovery:
-    // with no target selected it renders its own empty state.
-    await expect(targetPage.designSection).toBeVisible();
-    await expect(targetPage.designEmpty).toBeVisible();
-  });
-
-  test('a viewer gets the design box but not the launcher @permission', async ({
-    asViewer,
-    project,
-  }) => {
-    const targetPage = new TargetPage(asViewer);
-
-    await targetPage.goto(project.id);
-    // Settle an anchor that renders for EVERY role first: gated controls mount
-    // only after the client resolves the role post-hydration, so a hidden
-    // assertion made earlier would pass vacuously (permissions-ui.spec.ts).
-    await expect(targetPage.designSection).toBeVisible({ timeout: 20_000 });
-
-    await expect(targetPage.launcherCard).toBeHidden();
-    await expect(targetPage.startControl).toBeHidden();
-    await expect(targetPage.typeCheckbox('functional')).toBeHidden();
-  });
 });

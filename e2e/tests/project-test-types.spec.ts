@@ -153,29 +153,29 @@ test.describe('project test types — UI @regression', () => {
     expect(stored.test_types).toEqual(['functional', 'api', 'ui', 'security']);
   });
 
-  test('the Target screen offers only what the project is for', async ({ asQaLead, api }) => {
+  test('the run wizard offers only what the project is for', async ({ asQaLead, api }) => {
     const project = await api.as('qa_lead').projects.create({
       name: `tt-target-${uniqueSuffix()}`,
       test_types: ['ui', 'security'],
     });
 
-    await asQaLead.goto(routes.target(project.id));
-    await expect(asQaLead.getByTestId('target-url-input')).toBeVisible({ timeout: 20_000 });
+    await asQaLead.goto(routes.runs(project.id));
+    await expect(asQaLead.getByTestId('runs-pipeline-url-input')).toBeVisible({ timeout: 20_000 });
 
     for (const type of ['ui', 'security'] as const) {
-      await expect(asQaLead.getByTestId(`target-type-${type}`)).toBeChecked();
-      await expect(asQaLead.getByTestId(`target-type-${type}`)).toBeEnabled();
+      await expect(asQaLead.getByTestId(`runs-pipeline-type-${type}`).locator('input')).toBeChecked();
+      await expect(asQaLead.getByTestId(`runs-pipeline-type-${type}`).locator('input')).toBeEnabled();
     }
     for (const type of ['functional', 'api', 'performance'] as const) {
       // disabled, not merely unchecked: the server would refuse it, so the UI
       // must not offer a control that always fails
-      await expect(asQaLead.getByTestId(`target-type-${type}`)).not.toBeChecked();
-      await expect(asQaLead.getByTestId(`target-type-${type}`)).toBeDisabled();
+      await expect(asQaLead.getByTestId(`runs-pipeline-type-${type}`).locator('input')).not.toBeChecked();
+      await expect(asQaLead.getByTestId(`runs-pipeline-type-${type}`).locator('input')).toBeDisabled();
     }
-    await expect(asQaLead.getByTestId('target-types-scope-hint')).toBeVisible();
+    await expect(asQaLead.getByTestId('runs-pipeline-types-scope-hint')).toBeVisible();
   });
 
-  test('a URL given at creation lands on Target and runs by itself', async ({
+  test('a URL given at creation lands on the run wizard and runs by itself', async ({
     asQaLead,
     api,
   }) => {
@@ -194,8 +194,8 @@ test.describe('project test types — UI @regression', () => {
     await asQaLead.getByTestId('projects-create-submit-button').click();
 
     // it lands on the discovery screen with the URL already in the field
-    await asQaLead.waitForURL(/\/projects\/[0-9a-f-]{36}\/target/, { timeout: 20_000 });
-    await expect(asQaLead.getByTestId('target-url-input'))
+    await asQaLead.waitForURL(/\/projects\/[0-9a-f-]{36}\/runs/, { timeout: 20_000 });
+    await expect(asQaLead.getByTestId('runs-pipeline-url-input'))
       .toHaveValue('https://traceo-unreached.invalid/page', { timeout: 20_000 });
 
     // and it really started one: the target row exists without anyone pressing

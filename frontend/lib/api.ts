@@ -78,21 +78,42 @@ export function setUser(u: any | null): void {
  */
 let sessionBootstrap: Promise<boolean> | null = null;
 
-export function ensureSession(): Promise<boolean> {
+/**
+ * @param force Mint a NEW session and overwrite whatever is stored.
+ *
+ * Needed because a token expires (TRACEO_TOKEN_TTL_HOURS, 12h by default) while
+ * it is still sitting in localStorage. The unforced path only mints when no
+ * token exists, so a stale one used to pin the app to "Invalid or expired token"
+ * for ever: every request carried the dead token, the 401 was surfaced, and a
+ * reload changed nothing because a token was still present. In a build with no
+ * sign-in screen there is nowhere for the user to go from there — the only
+ * escape was clearing site data by hand.
+ */
+let bootstrapInFlight = false;
+
+export function ensureSession(force = false): Promise<boolean> {
   if (typeof window === "undefined") return Promise.resolve(false);
+  // A forced re-mint discards a COMPLETED result but never interrupts one already
+  // in flight: a page load fires several requests at once, so an expired token
+  // produces several simultaneous 401s. They must share one new session rather
+  // than race to mint one each.
+  if (force && !bootstrapInFlight) sessionBootstrap = null;
   if (sessionBootstrap === null) {
+    bootstrapInFlight = true;
     sessionBootstrap = (async () => {
       try {
         const res = await fetch(`${API}/auth/dev-session`, { method: "POST" });
         if (!res.ok) return false;
         const data = await res.json();
-        if (!getToken()) {
+        if (force || !getToken()) {
           setToken(data.token);
           setUser(data.user);
         }
         return true;
       } catch {
         return false; // offline or endpoint absent
+      } finally {
+        bootstrapInFlight = false;
       }
     })();
   }

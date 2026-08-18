@@ -83,7 +83,6 @@ import {
   startAuthenticatedWebTarget,
   type AuthenticatedWebTarget,
 } from '../helpers/local-web-target';
-import { TargetPage } from '../pages/target.page';
 
 /** A sign-in, four navigations, four screenshots, then five tracks (§16). */
 const CRAWL_TEST_TIMEOUT_MS = 300_000;
@@ -1146,62 +1145,6 @@ test.describe('authenticated crawl refusals @regression', () => {
   });
 });
 
-test.describe('target page — sign in first @regression', () => {
-  test('the credential fields are collapsed until asked for, and the password never leaves the field', async ({
-    asQaLead,
-    project,
-  }) => {
-    const targetPage = new TargetPage(asQaLead);
-    const secret = 'ui-typed-password-8c31';
-
-    await targetPage.goto(project.id);
-    await expect(targetPage.root).toBeVisible({ timeout: 20_000 });
-    await expect(targetPage.authSection).toBeVisible();
-
-    // Collapsed on first paint: a credential field on a screen that does not
-    // need one invites a real password into a tool that never asked for it.
-    await expect(targetPage.authToggle).not.toBeChecked();
-    await expect(targetPage.authUsernameInput).toBeHidden();
-    await expect(targetPage.authPasswordInput).toBeHidden();
-    // The crawl width is not a credential and does not hide with them.
-    await expect(targetPage.maxPagesInput).toBeVisible();
-
-    await targetPage.fillCredentials('some-operator', secret);
-    await expect(targetPage.authPasswordInput).toHaveAttribute('type', 'password');
-    await expect(targetPage.authHint).toBeVisible();
-
-    // A secret in an address bar ends up in history, in a referrer, in a
-    // screenshot and in a server log; one in localStorage outlives the tab.
-    const state = await targetPage.clientSideState();
-    for (const [where, value] of Object.entries(state)) {
-      expect(
-        secretTraces(value, secret),
-        `the typed password reached ${where} — it may exist in the field and nowhere else`,
-      ).toEqual([]);
-    }
-
-    // Unticking the section is not decoration: it clears what was typed, so a
-    // launcher that no longer shows a password cannot still send one.
-    await targetPage.authToggle.uncheck();
-    await targetPage.authToggle.check();
-    await expect(targetPage.authPasswordInput).toHaveValue('');
-  });
-
-  test('a viewer never sees the credential fields at all @permission', async ({
-    asViewer,
-    project,
-  }) => {
-    const targetPage = new TargetPage(asViewer);
-
-    await targetPage.goto(project.id);
-    // Settle an anchor that renders for EVERY role first: gated controls mount
-    // only after the client resolves the role post-hydration, so a hidden
-    // assertion made earlier would pass vacuously (permissions-ui.spec.ts).
-    await expect(targetPage.designSection).toBeVisible({ timeout: 20_000 });
-
-    await expect(targetPage.authSection).toBeHidden();
-    await expect(targetPage.authToggle).toBeHidden();
-    await expect(targetPage.authPasswordInput).toBeHidden();
-    await expect(targetPage.maxPagesInput).toBeHidden();
-  });
-});
+// The 'target page — sign in first' block lived here. It drove
+// frontend/app/projects/[id]/target/page.tsx, which this branch removes; the
+// crawl and sign-in behaviour it covered is still asserted above, over the API.

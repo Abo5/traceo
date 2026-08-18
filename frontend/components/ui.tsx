@@ -121,20 +121,42 @@ export function StatCard({
   value,
   label,
   color,
+  badge,
+  hint,
+  bar,
   testId,
 }: {
   value: React.ReactNode;
   label: React.ReactNode;
   color?: string;
+  /** Small pill beside the number (the design's ▲ 16 / 1 high chip). */
+  badge?: React.ReactNode;
+  /** One line of context under the number. */
+  hint?: React.ReactNode;
+  /** 0–100: renders the design's meter under the number instead of a hint. */
+  bar?: number;
   /** Rendered as data-testid on the root .stat-card div. */
   testId?: string;
 }) {
+  const pct = bar === undefined ? null : Math.max(0, Math.min(100, bar));
   return (
     <div className="stat-card" data-testid={testId}>
-      <div className="stat-value mono" style={color ? { color } : undefined}>
-        {value}
+      <div className="klabel">{label}</div>
+      <div className="row" style={{ gap: 8, margin: "6px 0 4px" }}>
+        <span className="stat-value" style={color ? { color } : undefined}>
+          {value}
+        </span>
+        {badge}
       </div>
-      <div className="stat-label">{label}</div>
+      {pct !== null && (
+        <div className="bar" style={{ marginBlockStart: 4 }}>
+          <i
+            className={pct >= 90 ? "ok" : pct >= 60 ? "" : "warn"}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      )}
+      {hint !== undefined && <div className="stat-label">{hint}</div>}
     </div>
   );
 }
@@ -197,9 +219,7 @@ export function Progress({
   label?: string;
 }) {
   const clamped = Math.max(0, Math.min(100, Number.isFinite(pct) ? pct : 0));
-  const bg = tone
-    ? PROGRESS_TONES[tone] ?? tone
-    : "linear-gradient(90deg, var(--c-amber), var(--c-pink))";
+  const bg = tone ? PROGRESS_TONES[tone] ?? tone : "var(--blue)";
   return (
     <div
       className="progress"
@@ -457,7 +477,7 @@ export function DateTimeText({
 
 // ---------- RefChip ----------
 
-/** v2 FR-reference chip: mono amber id like "FR-054". */
+/** v2 FR-reference chip: mono id like "FR-054" (the design's .refc). */
 export function RefChip({
   id,
   testId,
@@ -467,24 +487,7 @@ export function RefChip({
   testId?: string;
 }) {
   return (
-    <span
-      className="mono"
-      data-testid={testId}
-      style={{
-        display: "inline-block",
-        fontSize: 10.5,
-        fontWeight: 500,
-        letterSpacing: "0.03em",
-        color: "var(--accent)",
-        background: "var(--accent-subtle)",
-        border: "1px solid transparent",
-        borderRadius: 6,
-        padding: "1px 6px",
-        whiteSpace: "nowrap",
-        lineHeight: 1.7,
-        verticalAlign: "middle",
-      }}
-    >
+    <span className="refc" data-testid={testId}>
       {id}
     </span>
   );
@@ -509,7 +512,7 @@ export function TrendBars({
       style={{
         display: "flex",
         alignItems: "flex-end",
-        gap: 6,
+        gap: 8,
         height,
         borderBottom: "1px solid var(--border)",
       }}
@@ -521,11 +524,12 @@ export function TrendBars({
             key={i}
             title={`#${d.display_id ?? i + 1} · ${Math.round(pct)}%`}
             style={{
-              width: 10,
+              flex: 1,
+              minWidth: 8,
+              maxWidth: 24,
               height: `${Math.max(pct, 3)}%`,
               borderRadius: "3px 3px 0 0",
-              background: "linear-gradient(135deg,#FF8A22,#FF5C72)",
-              flexShrink: 0,
+              background: "linear-gradient(180deg, var(--blue), var(--violet))",
             }}
           />
         );
@@ -665,4 +669,109 @@ export function PageHeader({
       {actions && <div className="page-actions">{actions}</div>}
     </div>
   );
+}
+
+// ---------- Meter ----------
+
+/** The design's labelled bar: name on the left, value on the right, bar under. */
+export function Meter({
+  label,
+  value,
+  pct,
+  testId,
+}: {
+  label: React.ReactNode;
+  value?: React.ReactNode;
+  pct: number;
+  /** Rendered as data-testid on the root div. */
+  testId?: string;
+}) {
+  const clamped = Math.max(0, Math.min(100, Number.isFinite(pct) ? pct : 0));
+  return (
+    <div data-testid={testId}>
+      <div style={{ display: "flex", fontSize: 12, marginBlockEnd: 6 }}>
+        <span style={{ fontWeight: 500, color: "var(--text-secondary)" }}>{label}</span>
+        <span className="mono" style={{ marginInlineStart: "auto", fontSize: 11 }}>
+          {value ?? `${Math.round(clamped)}%`}
+        </span>
+      </div>
+      <div
+        className="bar"
+        role="progressbar"
+        aria-label={typeof label === "string" ? label : "Coverage"}
+        aria-valuenow={Math.round(clamped)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+      >
+        <i
+          className={clamped >= 90 ? "ok" : clamped >= 60 ? "" : "warn"}
+          style={{ width: `${clamped}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ---------- Callout ----------
+
+/** The design's tinted footer note ("Paste a fix prompt… that's the loop."). */
+export function Callout({
+  tone = "info",
+  children,
+  testId,
+}: {
+  tone?: "info" | "success" | "warning" | "error";
+  children?: React.ReactNode;
+  /** Rendered as data-testid on the root div. */
+  testId?: string;
+}) {
+  const dot =
+    tone === "success" ? "d-ok" : tone === "warning" ? "d-warn" : tone === "error" ? "d-err" : "d-blue";
+  return (
+    <div
+      className={`callout ${tone === "info" ? "" : `callout-${tone}`}`}
+      data-testid={testId}
+    >
+      <span className={`dot ${dot}`} aria-hidden />
+      <span>{children}</span>
+    </div>
+  );
+}
+
+// ---------- Toggle ----------
+
+export function Toggle({
+  checked,
+  onChange,
+  label,
+  disabled,
+  testId,
+}: {
+  checked: boolean;
+  onChange?: (next: boolean) => void;
+  /** Accessible name — a switch with no name is an axe violation. */
+  label: string;
+  disabled?: boolean;
+  /** Rendered as data-testid on the <button role=switch>. */
+  testId?: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      className={`tog ${checked ? "tog-on" : ""}`}
+      onClick={() => onChange?.(!checked)}
+      data-testid={testId}
+    />
+  );
+}
+
+// ---------- Divider ----------
+
+/** Hairline between rows inside a card (the design's .hr). */
+export function Divider() {
+  return <div className="hr" />;
 }

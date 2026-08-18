@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { useParams } from "next/navigation";
 import { API, api, getToken } from "@/lib/api";
-import { Badge, Button, Card, DateTimeText, Empty, PageHeader, Pill, RefChip, Select, SeverityBadge, StatCard, StatusDot, Table, fmtDateTime, stateTone } from "@/components/ui";
+import { Badge, Button, Callout, Card, DateTimeText, Empty, Pill, RefChip, Select, SeverityBadge, StatCard, StatusDot, Table, fmtDateTime, stateTone } from "@/components/ui";
 
 type Tone = "success" | "warning" | "error" | "info" | "muted" | "accent";
 
@@ -117,6 +117,10 @@ export default function RunReportPage() {
     coverageDelta: "Coverage delta",
     unchanged: "Unchanged",
     pts: "pts",
+    fixPrompt: "Fix prompt",
+    fixPromptHint: "for Claude · also Cursor, Lovable, Codex",
+    copyPrompt: "Copy prompt",
+    copied: "Copied ✓",
   };
 
   const [report, setReport] = useState<any | null>(null);
@@ -128,6 +132,17 @@ export default function RunReportPage() {
   const [tab, setTab] = useState<"failures" | "all" | "compare">("failures");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sevF, setSevF] = useState("all");
+  const [copied, setCopied] = useState<string | null>(null);
+
+  async function copyPrompt(key: string, text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(key);
+      setTimeout(() => setCopied((c) => (c === key ? null : c)), 1800);
+    } catch {
+      /* clipboard unavailable — the prompt is on screen to select by hand */
+    }
+  }
 
   const [otherRun, setOtherRun] = useState("");
   const [compare, setCompare] = useState<any | null>(null);
@@ -232,7 +247,7 @@ export default function RunReportPage() {
     if (typeof fr === "object") {
       return (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          {fr.message && <span style={{ fontSize: 12, color: "var(--error)" }}>{fr.message}</span>}
+          {fr.message && <span style={{ fontSize: 12, color: "var(--error-text)" }}>{fr.message}</span>}
           {fr.expected !== undefined && (
             <Badge tone="success">
               {L.expected}: <M style={{ fontSize: 11 }}>{typeof fr.expected === "object" ? JSON.stringify(fr.expected) : String(fr.expected)}</M>
@@ -246,8 +261,22 @@ export default function RunReportPage() {
         </div>
       );
     }
-    return <span style={{ fontSize: 12, color: "var(--error)" }}>{String(fr)}</span>;
+    return <span style={{ fontSize: 12, color: "var(--error-text)" }}>{String(fr)}</span>;
   }
+
+  /** Verdict hero: share of finished checks that passed, and a plain headline. */
+  const verifiedTotal = Number(counts.total ?? cases.length) || 0;
+  const verifiedPct = verifiedTotal
+    ? Math.round((Number(counts.passed ?? 0) / verifiedTotal) * 100)
+    : 0;
+  const verdictTone = verifiedPct >= 95 ? "success" : verifiedPct >= 70 ? "warning" : "error";
+  const failCount = Number(counts.failed ?? 0) + Number(counts.errored ?? 0);
+  const verdictHeadline =
+    failCount === 0
+      ? "Everything you asked for works."
+      : failCount === 1
+        ? "Most of what you asked for works. One thing needs fixing."
+        : `Most of what you asked for works. ${failCount} things need fixing.`;
 
   const compareRuns = projRuns.filter((r) => r.id !== runId);
   const newlyFailing: any[] = Array.isArray(compare?.newly_failing) ? compare.newly_failing : [];
@@ -265,7 +294,7 @@ export default function RunReportPage() {
   if (error && !report) {
     return (
       <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-start" }}>
-        <div style={{ color: "var(--error)", fontSize: 13 }}>
+        <div style={{ color: "var(--error-text)", fontSize: 13 }}>
           {L.loadError} — {error}
         </div>
         <Button variant="secondary" size="sm" onClick={() => load()}>
@@ -277,46 +306,56 @@ export default function RunReportPage() {
 
   return (
     <div data-testid="runs-report-page-root" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      <PageHeader
-        testId="runs-report-page-header"
-        title={
-          <span style={{ display: "inline-flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            {L.title}{" "}
-            <M style={{ fontSize: 15, color: "var(--accent)" }}>
-              {run.display_id ? `#${run.display_id}` : shortId(String(runId))}
-            </M>
-            {run.state && (
-              <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                <StatusDot state={run.state} testId="runs-report-status-dot" />
-                <Badge tone={stateTone(run.state)} testId="runs-report-state-badge" state={run.state}>{run.state}</Badge>
-              </span>
-            )}
-          </span>
-        }
-        sub={
-          <span style={{ display: "inline-flex", gap: 14, flexWrap: "wrap" }}>
-            <span>
-              {L.env}: {envName}
+      {/* verdict hero — the design's report headline */}
+      <div
+        className="card"
+        data-testid="runs-report-page-header"
+        style={{ display: "flex", gap: 24, alignItems: "center", padding: "22px 24px", flexWrap: "wrap" }}
+      >
+        <div
+          className={`verdict-ring verdict-ring-${verdictTone}`}
+          role="img"
+          aria-label={`${verifiedPct}% of checks passed`}
+        >
+          <span style={{ fontSize: 22, fontWeight: 600 }}>{verifiedPct}%</span>
+          <span style={{ fontSize: 9, color: "var(--text-secondary)" }}>verified</span>
+        </div>
+
+        <div style={{ flex: 1, minWidth: 260 }}>
+          <b style={{ fontSize: 18, display: "block" }}>{verdictHeadline}</b>
+          <div
+            style={{
+              fontSize: 12.5,
+              color: "var(--text-secondary)",
+              margin: "6px 0 10px",
+              maxWidth: 640,
+            }}
+          >
+            {L.title} {run.display_id ? `#${run.display_id}` : shortId(String(runId))} ·{" "}
+            {L.env}: {envName} · {L.initiator}: {initiator} · {L.started}:{" "}
+            <DateTimeText value={run.started_at} /> · {L.duration}: {fmtDur(durationMs)}
+          </div>
+          <div className="row" style={{ gap: 8 }}>
+            <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+              <StatusDot state={run.state} testId="runs-report-status-dot" />
+              <Badge tone={stateTone(run.state)} testId="runs-report-state-badge" state={run.state}>
+                {run.state}
+              </Badge>
             </span>
-            <span>
-              {L.started}: <DateTimeText value={run.started_at} />
-            </span>
-            <span>
-              {L.finished}: <DateTimeText value={run.finished_at} />
-            </span>
-            <span>
-              {L.initiator}: {initiator}
-            </span>
-          </span>
-        }
-        actions={
-          <Button variant="secondary" testId="runs-report-export-button" onClick={openHtmlReport} title={L.exportHint}>
+            <Badge tone="success">{counts.passed ?? 0} passed</Badge>
+            <Badge tone="error">{counts.failed ?? 0} need fixing</Badge>
+            <Badge tone="warning">{counts.errored ?? 0} errored</Badge>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <Button variant="primary" testId="runs-report-export-button" onClick={openHtmlReport} title={L.exportHint}>
             {L.exportHtml}
           </Button>
-        }
-      />
+        </div>
+      </div>
 
-      {error && <div style={{ fontSize: 13, color: "var(--error)" }}>{error}</div>}
+      {error && <div style={{ fontSize: 13, color: "var(--error-text)" }}>{error}</div>}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
         <StatCard value={counts.total ?? cases.length} label={L.total} testId="runs-report-total-stat" />
@@ -326,16 +365,26 @@ export default function RunReportPage() {
         <StatCard value={fmtDur(durationMs)} label={L.duration} testId="runs-report-duration-stat" />
       </div>
 
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        <Pill active={tab === "failures"} testId="runs-report-tab-failures-pill" onClick={() => setTab("failures")}>
-          {L.tabFailures} ({failures.length})
-        </Pill>
-        <Pill active={tab === "all"} testId="runs-report-tab-all-pill" onClick={() => setTab("all")}>
-          {L.tabAll} ({cases.length})
-        </Pill>
-        <Pill active={tab === "compare"} testId="runs-report-tab-compare-pill" onClick={() => setTab("compare")}>
-          {L.tabCompare}
-        </Pill>
+      <div className="tabs" role="tablist">
+        {(
+          [
+            ["failures", `${L.tabFailures} · ${failures.length}`],
+            ["all", `${L.tabAll} · ${cases.length}`],
+            ["compare", L.tabCompare],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={tab === key}
+            className={`tab ${tab === key ? "tab-active" : ""}`}
+            data-testid={`runs-report-tab-${key}-pill`}
+            onClick={() => setTab(key)}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {/* Failures */}
@@ -370,7 +419,7 @@ export default function RunReportPage() {
               const res = resultByCase[cid];
               const evidenceSteps: any[] = Array.isArray(res?.evidence) ? res.evidence : Array.isArray(res?.steps) ? res.steps : [];
               const tone = OUTCOME_TONE[c.outcome] ?? "muted";
-              const toneColor = tone === "error" ? "var(--error)" : "var(--warning)";
+              const toneColor = tone === "error" ? "var(--error-text)" : "var(--warning-text)";
               const reproSteps: any[] = Array.isArray(c.test_case?.steps) ? c.test_case.steps : [];
               return (
                 <div
@@ -409,7 +458,7 @@ export default function RunReportPage() {
                     <M style={{ color: toneColor, fontWeight: 700 }}>{shortId(cid)}</M>
                     <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text)", flex: 1 }}>{caseTitle(c)}</span>
                     {caseReqChips(c).map((r: any, j: number) => (
-                      <M key={j} style={{ fontSize: 10, color: "var(--accent)" }}>
+                      <M key={j} style={{ fontSize: 10, color: "var(--accent-text)" }}>
                         {r.external_id ?? r.id}
                       </M>
                     ))}
@@ -429,6 +478,36 @@ export default function RunReportPage() {
                         background: "var(--surface-2)",
                       }}
                     >
+                      {c.fix_prompt && (
+                        <div className="promptbox" data-testid="runs-report-fix-prompt">
+                          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                            <span className="klabel" style={{ color: "var(--accent-text)" }}>
+                              {L.fixPrompt}
+                            </span>
+                            <span style={{ fontSize: 10, color: "var(--text-secondary)" }}>
+                              {L.fixPromptHint}
+                            </span>
+                            <Button
+                              size="sm"
+                              testId="runs-report-copy-prompt-button"
+                              onClick={() => copyPrompt(key, c.fix_prompt)}
+                            >
+                              {copied === key ? L.copied : L.copyPrompt}
+                            </Button>
+                          </div>
+                          <pre
+                            className="mono"
+                            style={{
+                              margin: 0, fontSize: 10.5, lineHeight: 1.7,
+                              color: "var(--text-secondary)", whiteSpace: "pre-wrap",
+                              overflowWrap: "anywhere",
+                            }}
+                          >
+                            {c.fix_prompt}
+                          </pre>
+                        </div>
+                      )}
+
                       {c.failure_reason && (
                         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                           <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-secondary)" }}>
@@ -547,7 +626,7 @@ export default function RunReportPage() {
                   <td>
                     <span style={{ display: "inline-flex", gap: 8, flexWrap: "wrap" }}>
                       {caseReqChips(c).map((r: any, j: number) => (
-                        <M key={j} style={{ fontSize: 10, color: "var(--accent)" }}>
+                        <M key={j} style={{ fontSize: 10, color: "var(--accent-text)" }}>
                           {r.external_id ?? r.id}
                         </M>
                       ))}
@@ -576,7 +655,7 @@ export default function RunReportPage() {
             </div>
 
             {compareLoading && <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>…</div>}
-            {compareError && <div style={{ color: "var(--error)", fontSize: 13 }}>{compareError}</div>}
+            {compareError && <div style={{ color: "var(--error-text)", fontSize: 13 }}>{compareError}</div>}
 
             {compare && !compareLoading && (
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
@@ -624,7 +703,7 @@ export default function RunReportPage() {
                     padding: "12px 16px",
                   }}
                 >
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--error)", marginBottom: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--error-text)", marginBottom: 8 }}>
                     {L.newlyFailing} ({newlyFailing.length})
                   </div>
                   {newlyFailing.length === 0 ? (
@@ -648,7 +727,7 @@ export default function RunReportPage() {
                     padding: "12px 16px",
                   }}
                 >
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--success)", marginBottom: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--success-text)", marginBottom: 8 }}>
                     {L.newlyPassing} ({newlyPassing.length})
                   </div>
                   {newlyPassing.length === 0 ? (
@@ -694,7 +773,7 @@ export default function RunReportPage() {
                   <M style={{ color: "var(--text-secondary)" }}>{p.p95_ms ?? "—"} ms</M>
                 </td>
                 <td>
-                  <M style={{ color: "var(--warning)" }}>{p.max_ms ?? "—"} ms</M>
+                  <M style={{ color: "var(--warning-text)" }}>{p.max_ms ?? "—"} ms</M>
                 </td>
                 <td>
                   <M style={{ color: "var(--text-secondary)" }}>{p.calls ?? "—"}</M>
@@ -704,6 +783,10 @@ export default function RunReportPage() {
           </Table>
         </Card>
       )}
+
+      <Callout testId="runs-report-loop-callout">
+        Fix what failed, run again — the verified number goes up. That&rsquo;s the loop.
+      </Callout>
     </div>
   );
 }

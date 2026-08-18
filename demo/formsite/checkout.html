@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Formery — checkout</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<header><b>Formery</b><nav>
+  <a href="/index.html">Home</a><a href="/signup.html">Sign up</a><a href="/checkout.html">Checkout</a>
+  <a href="/profile.html">Profile</a><a href="/support.html">Support</a>
+</nav></header>
+<main>
+  <h1>Checkout</h1>
+  <p class="sub">Two forms on one page — Traceo writes a requirement per form, not per page.</p>
+
+  <form id="address" action="/thanks.html" method="get">
+    <h2>Delivery address</h2>
+    <p class="hint">Correct: constraint validation is left on, so every rule holds.</p>
+    <label><span class="req">Full name</span>
+      <input id="ship-name" name="name" required minlength="2" maxlength="60"></label>
+    <div class="row">
+      <label><span class="req">City</span> <input id="ship-city" name="city" required maxlength="40"></label>
+      <label><span class="req">Postcode</span>
+        <input id="ship-zip" name="zip" required pattern="[0-9]{5}" maxlength="5"></label>
+    </div>
+    <label>Delivery notes <textarea id="ship-notes" name="notes" maxlength="200"></textarea></label>
+    <div class="inline" style="margin-bottom:18px">
+      <span>Speed:</span>
+      <label><input type="radio" name="speed" id="speed-std" value="standard" checked> Standard</label>
+      <label><input type="radio" name="speed" id="speed-exp" value="express"> Express</label>
+    </div>
+    <button type="submit" id="address-go">Save address</button>
+  </form>
+
+  <!-- PLANTED BUG: quantity says 1..10 but the page clamps nothing and turns the
+       browser off, so 0 and 99 both go through. -->
+  <form id="payment" action="/thanks.html" method="get" novalidate>
+    <h2>Payment</h2>
+    <p class="hint">PLANTED BUG on this form: quantity ignores its declared 1–10 range.</p>
+    <div class="row">
+      <label><span class="req">Card number</span>
+        <input id="card" name="card" required pattern="[0-9]{16}" maxlength="16"></label>
+      <label><span class="req">CVC</span>
+        <input id="cvc" name="cvc" required pattern="[0-9]{3}" maxlength="3"></label>
+    </div>
+    <div class="row">
+      <label>Quantity <input id="qty" name="qty" type="number" min="1" max="10" step="1" value="1"></label>
+      <label>Discount code <input id="code" name="code" maxlength="12"></label>
+    </div>
+    <button type="submit" id="pay-go">Pay now</button>
+  </form>
+</main>
+<script>
+  // The address form is honest — nothing here touches it.
+  // PLANTED BUG — quantity's bounds are removed as soon as it is typed into.
+  document.getElementById('qty').addEventListener('input', function (e) {
+    e.target.removeAttribute('min');
+    e.target.removeAttribute('max');
+  });
+  document.getElementById('payment').addEventListener('submit', function (e) {
+    var card = document.getElementById('card');
+    if (!card.value) { e.preventDefault(); card.setAttribute('aria-invalid', 'true'); }
+  });
+</script>
+</body></html>

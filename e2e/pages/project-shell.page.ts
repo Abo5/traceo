@@ -7,22 +7,12 @@
 import type { Locator, Page } from '@playwright/test';
 import { routes } from '../constants/routes';
 
-/** Sidebar sections, in sidebar order (nav-link-{section} in the layout). */
+/** Sidebar sections, in sidebar order (nav-link-{section} in the shell). */
 export const PROJECT_SECTIONS = [
   'overview',
   'requirements',
-  // Workspace group: point Traceo at a URL, pick test types, read the design box.
-  'target',
-  'endpoints',
-  'generate',
-  'insights',
-  'review',
   'runs',
-  'matrix',
-  'environments',
-  'settings',
-  'integrations',
-  'reference',
+  'reports',
 ] as const;
 
 export type ProjectSection = (typeof PROJECT_SECTIONS)[number];
@@ -31,17 +21,8 @@ export type ProjectSection = (typeof PROJECT_SECTIONS)[number];
 const ROOT_DOMAIN: Record<ProjectSection, string> = {
   overview: 'dashboard',
   requirements: 'requirements',
-  target: 'target',
-  endpoints: 'endpoints',
-  generate: 'generate',
-  insights: 'insights',
-  review: 'review',
   runs: 'runs',
-  matrix: 'matrix',
-  environments: 'environments',
-  settings: 'settings',
-  integrations: 'integrations',
-  reference: 'reference',
+  reports: 'project-reports',
 };
 
 export class ProjectShellPage {

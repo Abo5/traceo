@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Formery — sign up</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<header><b>Formery</b><nav>
+  <a href="/index.html">Home</a><a href="/signup.html">Sign up</a><a href="/checkout.html">Checkout</a>
+  <a href="/profile.html">Profile</a><a href="/support.html">Support</a>
+</nav></header>
+<main>
+  <h1>Create an account</h1>
+  <p class="sub">The widest set of declared rules on the site — and three of them are broken.</p>
+
+  <!-- novalidate: the browser will not enforce anything here; only the script
+       below does, and it is incomplete. This is the most common real-world
+       shape for a broken form. -->
+  <form id="signup" action="/thanks.html" method="get" novalidate>
+    <h2>Your details</h2>
+    <p class="hint">PLANTED BUGS: (1) age ignores its 18–120 range, (2) username accepts
+      whitespace, (3) bio ignores its maxlength, (4) password and confirmation are never
+      compared. CORRECT here: the terms gate, and the conditional "Which country?" field.</p>
+
+    <div class="row">
+      <label><span class="req">Username</span>
+        <input id="username" name="username" required minlength="3" maxlength="16"></label>
+      <label><span class="req">Email</span>
+        <input id="email" name="email" type="email" required maxlength="120"></label>
+    </div>
+
+    <div class="row">
+      <label><span class="req">Password</span>
+        <input id="password" name="password" type="password" required minlength="8" maxlength="64"></label>
+      <label><span class="req">Confirm password</span>
+        <input id="password2" name="password2" type="password" required minlength="8" maxlength="64"></label>
+    </div>
+
+    <div class="row">
+      <label>Age
+        <input id="age" name="age" type="number" min="18" max="120" step="1"></label>
+      <label>Phone
+        <input id="phone" name="phone" type="tel" pattern="05[0-9]{8}" placeholder="05XXXXXXXX"></label>
+    </div>
+
+    <div class="row">
+      <label>Date of birth <input id="dob" name="dob" type="date" min="1900-01-01"></label>
+      <label>Country
+        <select id="country" name="country" required>
+          <option value="">Choose…</option><option value="SA">Saudi Arabia</option>
+          <option value="UK">United Kingdom</option><option value="other">Other…</option>
+        </select></label>
+    </div>
+
+    <label id="other-wrap" style="display:none">Which country?
+      <input id="other-country" name="other_country" maxlength="40"></label>
+
+    <label>Short bio <textarea id="bio" name="bio" maxlength="60"></textarea></label>
+
+    <div class="inline" style="margin-bottom:18px">
+      <label><input id="terms" name="terms" type="checkbox" required> I accept the terms</label>
+      <label><input id="news" name="news" type="checkbox"> Send me updates</label>
+    </div>
+
+    <button type="submit" id="signup-go">Create account</button>
+  </form>
+</main>
+<script>
+  // PLANTED BUG 1 — age advertises 18..120 and then removes both bounds, so any
+  // number is accepted.
+  document.getElementById('age').addEventListener('input', function (e) {
+    e.target.removeAttribute('min');
+    e.target.removeAttribute('max');
+  });
+
+  // PLANTED BUG 3 — bio declares maxlength=60 and raises it on first keystroke.
+  document.getElementById('bio').addEventListener('input', function (e) {
+    e.target.setAttribute('maxlength', '4000');
+  });
+
+  // CORRECT — the conditional field appears only for "Other".
+  var countrySel = document.getElementById('country');
+  countrySel.addEventListener('change', function () {
+    document.getElementById('other-wrap').style.display =
+      countrySel.value === 'other' ? 'block' : 'none';
+  });
+
+  // CORRECT — the submit stays disabled until the terms box is ticked.
+  var terms = document.getElementById('terms');
+  var go = document.getElementById('signup-go');
+  function syncGate() { go.disabled = !terms.checked; }
+  terms.addEventListener('change', syncGate);
+  syncGate();
+
+  document.getElementById('signup').addEventListener('submit', function (e) {
+    var u = document.getElementById('username');
+    // PLANTED BUG 2 — truthiness, not content: "   " passes this check.
+    if (!u.value) { e.preventDefault(); u.setAttribute('aria-invalid', 'true'); return; }
+    var email = document.getElementById('email');
+    if (!email.checkValidity()) { e.preventDefault(); email.setAttribute('aria-invalid', 'true'); return; }
+    // PLANTED BUG 4 — password and its confirmation are never compared, and the
+    // remaining required fields are not checked at all.
+  });
+</script>
+</body></html>

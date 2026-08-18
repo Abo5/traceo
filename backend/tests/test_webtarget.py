@@ -422,16 +422,17 @@ def test_the_functional_track_makes_a_requirement_per_form(client, project, side
     assert "form.oxd-form" in login[0]["description"]
     assert "input[name=username]" in login[0]["description"]
     assert "Required: Username, Password" in login[0]["description"]
-    # One requirement per discovered form, PLUS one per page for the behaviours
-    # the model proposes about that screen (external id ...-BEH). They are
-    # counted apart on purpose: the form requirements are what the page declares,
-    # the behaviour requirement is what it is for, and conflating them would hide
-    # a track disappearing.
-    from_forms = [r for r in reqs if not (r["external_id"] or "").endswith("-BEH")]
+    # Three kinds of requirement, counted apart on purpose: the form ones are
+    # what the page DECLARES, the behaviour one (-BEH) is what the model says it
+    # is FOR, and the navigation one (-NAV) is the page's links. Conflating them
+    # would hide a whole track disappearing.
+    from_forms = [r for r in reqs if not (r["external_id"] or "").endswith(("-BEH", "-NAV"))]
     behaviours = [r for r in reqs if (r["external_id"] or "").endswith("-BEH")]
-    assert len(from_forms) == 2
+    navigation = [r for r in reqs if (r["external_id"] or "").endswith("-NAV")]
+    assert len(from_forms) == 2                      # one per discovered form
     assert len(behaviours) == 1
     assert behaviours[0]["state"] == "extracted"
+    assert len(navigation) == 1                      # the fixture has one http link
 
 
 def test_functional_cases_carry_the_form_selectors_verbatim(client, project, sidecar):
@@ -445,12 +446,15 @@ def test_functional_cases_carry_the_form_selectors_verbatim(client, project, sid
                  .filter(models.TestCase.project_id == pid).all())
         assert steps
         # The form-derived cases carry their form's selector; the model-proposed
-        # ones address the fields directly and carry none, so they are checked on
-        # their own terms rather than being exempted from checking.
+        # ones address the fields directly; the navigation case is page-scoped
+        # and cites the links. Each is checked on its own terms rather than
+        # being exempted from checking.
         for step in steps:
             form = step.request.get("form", "")
             if form:
                 assert form.startswith(("form.", "form#"))
+            elif step.request.get("check") == "links_resolve":
+                assert step.request.get("links"), "a navigation case cited no link"
             else:
                 cited = (step.request.get("fields") or []) + (step.request.get("controls") or [])
                 assert cited, "a model-proposed case cited no element of the page"
@@ -769,6 +773,251 @@ def test_endpoints_from_requests_ignores_non_api_resources(recorded_payload):
     assert not any("logo" in op["path"] for op in ops)
 
 
+# ---------------------------------------------------------------------------
+# Input validation — cases built from the constraints a field DECLARES
+# ---------------------------------------------------------------------------
+
+def _field(**over):
+    base = {"selector": "#f", "name": "f", "id": "f", "type": "text", "required": False,
+            "placeholder": "", "label": "Field", "maxlength": None, "pattern": "",
+            "minlength": None, "min": "", "max": "", "step": ""}
+    base.update(over)
+    return base
+
+
+def test_a_field_that_declares_nothing_gets_no_validation_case():
+    """The grounding gate, applied to values.
+
+    A bare text input states no rule, so there is no rule to violate. Inventing
+    one ("rejects 'abc'") would be asserting our opinion of what the product
+    should do — precisely what BO-07 forbids for selectors, and no different
+    here."""
+    assert webtarget.field_probes(_field()) == []
+
+
+def test_declared_type_yields_one_negative_and_one_positive():
+    probes = webtarget.field_probes(_field(type="email", label="Email"))
+    kinds = [(p["check"], p["expect"]) for p in probes]
+    assert ("value_rejected", "rejected") in kinds
+    assert ("value_accepted", "accepted") in kinds
+    bad = next(p for p in probes if p["expect"] == "rejected")
+    good = next(p for p in probes if p["expect"] == "accepted")
+    assert "@" not in bad["value"]      # the probe must actually violate the type
+    assert "@" in good["value"]
+    assert 'type="email"' in bad["reason"]
+
+
+def test_numeric_range_probes_sit_on_the_boundary():
+    probes = webtarget.field_probes(_field(type="number", label="Age", min="18", max="120"))
+    by_value = {p["value"]: p["expect"] for p in probes}
+    assert by_value["17"] == "rejected"   # one below the declared minimum
+    assert by_value["18"] == "accepted"   # the minimum itself must be allowed
+    assert by_value["121"] == "rejected"  # one above the declared maximum
+
+
+def test_integer_bounds_stay_integers():
+    """min="1" must probe with "0", never "0.0" — a number field would refuse
+    the float and the case would pass for the wrong reason."""
+    probes = webtarget.field_probes(_field(type="number", min="1"))
+    assert "0" in {p["value"] for p in probes}
+    assert not any("." in p["value"] for p in probes)
+
+
+def test_length_probes_use_the_declared_lengths():
+    probes = webtarget.field_probes(_field(minlength=3, maxlength=12, label="Nickname"))
+    lengths = {len(p["value"]): p["expect"] for p in probes}
+    assert lengths[2] == "rejected"    # one short of minlength
+    assert lengths[12] == "accepted"   # exactly maxlength is legal, not an error
+
+
+def test_required_fields_are_probed_with_whitespace():
+    probes = webtarget.field_probes(_field(required=True, label="User"))
+    ws = [p for p in probes if p["check"] == "whitespace_rejected"]
+    assert len(ws) == 1
+    assert ws[0]["value"].strip() == "" and ws[0]["value"] != ""
+
+
+def test_checkboxes_are_not_probed_with_whitespace():
+    """There is no whitespace to type into a checkbox."""
+    assert not [p for p in webtarget.field_probes(_field(required=True, type="checkbox"))
+                if p["check"] == "whitespace_rejected"]
+
+
+def test_validation_cases_are_grounded_and_carry_their_value():
+    form = {"selector": "form#signup", "label": "signup", "fields": [
+        _field(selector="#age", type="number", label="Age", min="18", max="120")]}
+    inv = {"url": "http://app.example.com/", "final_url": "http://app.example.com/"}
+    cases = [c for c in webtarget.form_cases(form, inv)
+             if c["steps"][0]["request"].get("check") in
+             ("value_rejected", "value_accepted")]
+    assert cases, "a field declaring min/max must produce validation cases"
+    artefacts = {"selector:form#signup", "selector:#age", "page:http://app.example.com/"}
+    for case in cases:
+        assert webtarget.grounding_violations(case, artefacts) == []
+        request = case["steps"][0]["request"]
+        # The case must carry the concrete value AND the declaration it came from,
+        # so the failure can say "17, though it declares min=18".
+        assert request["value"] != ""
+        assert request["declared"]
+        assert request["selector"] == "#age"
+
+
+def test_the_maxlength_filler_satisfies_the_field_s_other_rules():
+    """The boundary probe asks "is the longest legal value accepted?", so the
+    value must be legal in every other respect.
+
+    Padding an `type=email` field with "aaa…" asks a different question and earns
+    a deserved refusal — which was reported as a defect on a page that had none.
+    A false positive is worse than a missing check: it teaches people to ignore
+    the tool."""
+    probes = webtarget.field_probes(_field(type="email", maxlength=120, label="Email"))
+    boundary = next(p for p in probes if "exactly 120" in p["title"])
+    assert len(boundary["value"]) == 120
+    assert boundary["value"].endswith("@example.com")
+
+
+def test_no_boundary_probe_when_a_pattern_is_declared():
+    """An arbitrary regex cannot be satisfied by construction, so the probe is
+    skipped rather than guessed at."""
+    probes = webtarget.field_probes(_field(pattern="[0-9]{5}", maxlength=5, label="Postcode"))
+    assert not [p for p in probes if "exactly" in p["title"]]
+
+
+def test_the_accepted_number_respects_step_as_well_as_range():
+    """min=5 max=50 step=5 makes "7" an illegal value — asserting the field
+    accepts it tests the probe, not the product."""
+    probes = webtarget.field_probes(
+        _field(type="number", min="5", max="50", step="5", label="Per page"))
+    good = next(p for p in probes if p["title"].endswith("accepts a number"))
+    assert float(good["value"]) % 5 == 0
+    assert 5 <= float(good["value"]) <= 50
+
+
+def test_controls_that_cannot_hold_a_typed_value_are_not_probed():
+    """A range slider clamps to its own bounds, so it can never express an
+    out-of-range value; a case demanding it be refused would fail for a reason
+    the product is not responsible for."""
+    for kind in ("range", "color", "checkbox", "radio", "file"):
+        assert webtarget.field_probes(
+            _field(type=kind, min="80", max="150", required=True)) == [], kind
+
+
+# ---------------------------------------------------------------------------
+# Functionality — what the form DOES, beside what its fields accept
+# ---------------------------------------------------------------------------
+
+def _form(fields, **over):
+    base = {"index": 0, "selector": "form#f", "name": "f", "id": "f",
+            "action": "http://app.example.com/thanks", "method": "GET",
+            "novalidate": False, "submit": "#go", "submit_name": "Go",
+            "heading": "Sign up", "fields": fields}
+    base.update(over)
+    return base
+
+
+_INV = {"url": "http://app.example.com/", "final_url": "http://app.example.com/",
+        "controls": []}
+
+
+def _checks(cases):
+    return {c["steps"][0]["request"]["check"] for c in cases}
+
+
+def test_a_form_we_cannot_fill_correctly_gets_no_happy_path():
+    """A `pattern` cannot be satisfied by construction, so a "correct"
+    submission is not something we can actually make correct. Guessing a value
+    would produce a failure the product is not responsible for."""
+    fields = [_field(selector="#code", required=True, pattern="[A-Z]{2}-[0-9]{6}")]
+    assert "happy_path" not in _checks(webtarget.functional_cases(_form(fields), _INV))
+
+
+def test_a_fillable_form_gets_a_happy_path_carrying_every_value():
+    fields = [_field(selector="#user", required=True, minlength=3, maxlength=16),
+              _field(selector="#email", type="email", required=True)]
+    cases = webtarget.functional_cases(_form(fields), _INV)
+    happy = next(c for c in cases if c["steps"][0]["request"]["check"] == "happy_path")
+    fill = happy["steps"][0]["request"]["fill"]
+    assert {f["selector"] for f in fill} == {"#user", "#email"}
+    assert all(f["value"] for f in fill)
+    assert webtarget.grounding_violations(
+        happy, {"selector:form#f", "selector:#user", "selector:#email"}) == []
+
+
+def test_a_field_hidden_on_load_is_not_something_we_try_to_fill():
+    """A conditionally-revealed field is supposed to be hidden; typing into it
+    is impossible and demanding it be visible fails every form that has one."""
+    fields = [_field(selector="#user", required=True),
+              _field(selector="#other", visible=False)]
+    cases = webtarget.form_cases(_form(fields), _INV) + \
+        webtarget.functional_cases(_form(fields), _INV)
+    present = next(c for c in cases
+                   if c["steps"][0]["request"]["check"] == "elements_present")
+    assert "#other" not in present["steps"][0]["request"]["selectors"]
+    happy = next(c for c in cases if c["steps"][0]["request"]["check"] == "happy_path")
+    assert "#other" not in {f["selector"] for f in happy["steps"][0]["request"]["fill"]}
+
+
+def test_error_recovery_targets_a_required_field_and_keeps_the_rest():
+    fields = [_field(selector="#user", required=True),
+              _field(selector="#nick")]
+    cases = webtarget.functional_cases(_form(fields), _INV)
+    rec = next(c for c in cases if c["steps"][0]["request"]["check"] == "error_recovery")
+    request = rec["steps"][0]["request"]
+    assert request["empty"] == "#user"
+    assert "#nick" in {f["selector"] for f in request["fill"]}
+
+
+def test_only_a_required_checkbox_gates_the_submit():
+    optional = [_field(selector="#user", required=True),
+                _field(selector="#news", type="checkbox")]
+    assert "submit_gated" not in _checks(webtarget.functional_cases(_form(optional), _INV))
+    gated = [_field(selector="#user", required=True),
+             _field(selector="#terms", type="checkbox", required=True)]
+    assert "submit_gated" in _checks(webtarget.functional_cases(_form(gated), _INV))
+
+
+def test_a_select_needs_two_real_options_before_it_is_worth_comparing():
+    placeholder_only = [_field(selector="#c", type="select", options=[
+        {"value": "", "label": "Choose…"}, {"value": "SA", "label": "Saudi Arabia"}])]
+    assert "conditional_fields" not in _checks(
+        webtarget.functional_cases(_form(placeholder_only), _INV))
+    real = [_field(selector="#c", type="select", options=[
+        {"value": "", "label": "Choose…"}, {"value": "SA", "label": "Saudi Arabia"},
+        {"value": "UK", "label": "United Kingdom"}]),
+        _field(selector="#other")]
+    case = next(c for c in webtarget.functional_cases(_form(real), _INV)
+                if c["steps"][0]["request"]["check"] == "conditional_fields")
+    assert case["steps"][0]["request"]["options"] == ["SA", "UK"]
+    assert "#other" in case["steps"][0]["request"]["watch"]
+
+
+def test_defaults_are_only_asserted_when_discovery_recorded_them():
+    """Nothing recorded means nothing to compare against, and the only honest
+    alternative to a comparison is not to write the case."""
+    blank = [_field(selector="#a", value=None, checked=None)]
+    assert "initial_state" not in _checks(webtarget.functional_cases(_form(blank), _INV))
+    recorded = [_field(selector="#lang", type="select", value="en",
+                       options=[{"value": "en", "label": "English"}]),
+                _field(selector="#news", type="checkbox", checked=True)]
+    case = next(c for c in webtarget.functional_cases(_form(recorded), _INV)
+                if c["steps"][0]["request"]["check"] == "initial_state")
+    got = {d["selector"]: d for d in case["steps"][0]["request"]["defaults"]}
+    assert got["#lang"]["value"] == "en"
+    assert got["#news"]["checked"] is True
+
+
+def test_navigation_takes_each_http_link_once_and_nothing_else():
+    inv = dict(_INV, controls=[
+        {"selector": "a#1", "href": "http://app.example.com/a", "name": "A"},
+        {"selector": "a#2", "href": "http://app.example.com/a", "name": "A again"},
+        {"selector": "a#3", "href": "mailto:someone@example.com", "name": "Mail"},
+        {"selector": "b#4", "href": "", "name": "Button"},
+    ])
+    cases = webtarget.navigation_cases(inv)
+    assert len(cases) == 1, "the links are one question, not one per link"
+    links = cases[0]["steps"][0]["request"]["links"]
+    assert [x["href"] for x in links] == ["http://app.example.com/a"]
+    assert webtarget.navigation_cases(dict(_INV, controls=[])) == []
 def test_a_third_partys_calls_never_become_this_projects_endpoints(recorded_payload):
     """A page that embeds a third party makes that party's calls from the same
     browser. Recording them would put somebody else's API into this project —

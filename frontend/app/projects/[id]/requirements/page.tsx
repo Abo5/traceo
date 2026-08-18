@@ -346,7 +346,7 @@ export default function RequirementsPage() {
           </>
         )}
         {uploadError && (
-          <div style={{ marginTop: 12, fontSize: 13, color: "var(--error)" }}>{uploadError}</div>
+          <div style={{ marginTop: 12, fontSize: 13, color: "var(--error-text)" }}>{uploadError}</div>
         )}
       </div>
       )}
@@ -433,7 +433,7 @@ export default function RequirementsPage() {
           <div style={{ padding: 24, color: "var(--text-secondary)", fontSize: 13 }}>…</div>
         ) : error ? (
           <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-start" }}>
-            <div style={{ color: "var(--error)", fontSize: 13 }}>
+            <div style={{ color: "var(--error-text)", fontSize: 13 }}>
               {L.loadError} — {error}
             </div>
             <Button
@@ -473,7 +473,7 @@ export default function RequirementsPage() {
                     opacity: r.state === "removed" ? 0.55 : 1,
                   }}
                 >
-                  <M style={{ color: "var(--accent)", fontWeight: 500, minWidth: 90, paddingTop: 2 }}>
+                  <M style={{ color: "var(--accent-text)", fontWeight: 500, minWidth: 90, paddingTop: 2 }}>
                     {r.external_id ?? "—"}
                   </M>
                   <div style={{ flex: 1, minWidth: 0 }}>

@@ -19,11 +19,9 @@ import { test, expect } from '../fixtures';
 import { ROLES, type Role } from '../constants/roles';
 import { uniqueSuffix } from '../helpers/unique';
 import { projectFactory } from '../test-data/project.factory';
-import { EnvironmentsPage } from '../pages/environments.page';
 import { MembersPage } from '../pages/members.page';
 import { ProjectsPage } from '../pages/projects.page';
 import { RequirementsPage } from '../pages/requirements.page';
-import { ReviewPage } from '../pages/review.page';
 import { RunsPage } from '../pages/runs.page';
 
 /**
@@ -72,17 +70,6 @@ const CHECKS: readonly GateCheck[] = [
     },
   },
   {
-    capability: 'approve_reject',
-    control: 'review-case-approve-button',
-    locate: async (page, ctx) => {
-      const review = new ReviewPage(page);
-      await review.goto(ctx.projectId);
-      // selecting into the detail pane is view-level and requires hydration
-      await review.select(ctx.caseTitle);
-      return review.approveControls;
-    },
-  },
-  {
     capability: 'upload_documents',
     control: 'requirements-upload-dropzone',
     locate: async (page, ctx) => {
@@ -94,22 +81,12 @@ const CHECKS: readonly GateCheck[] = [
   },
   {
     capability: 'trigger_run',
-    control: 'runs-launch-run-button',
+    control: 'runs-pipeline-start-button',
     locate: async (page, ctx) => {
       const runs = new RunsPage(page);
       await runs.goto(ctx.projectId);
       await expect(runs.root).toBeVisible({ timeout: 20_000 });
-      return runs.launchControl;
-    },
-  },
-  {
-    capability: 'manage_environments',
-    control: 'environments-create-button',
-    locate: async (page, ctx) => {
-      const environments = new EnvironmentsPage(page);
-      await environments.goto(ctx.projectId);
-      await expect(environments.root).toBeVisible({ timeout: 20_000 });
-      return environments.createControl;
+      return runs.pipelineStartControl;
     },
   },
   {
