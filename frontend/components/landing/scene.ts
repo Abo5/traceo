@@ -43,20 +43,24 @@ export type SceneOptions = {
  * the design's blue/violet/pink spectrum over a deep slate ground.
  * ------------------------------------------------------------------------- */
 const C = {
-  frame: 0x121a2e,
-  bar: 0x1a2340,
-  block: 0x223056,
-  line: 0x2c3c68,
-  field: 0x18213c,
-  button: 0x3d6bf5,
-  edge: 0x4c6ef5,
-  edgeSoft: 0x2e3f6b,
-  blue: 0x3d6bf5,
-  violet: 0x7a5ae6,
-  pink: 0xd9479e,
-  ok: 0x22c55e,
-  err: 0xf43f5e,
-  scan: 0x7f9cff,
+  frame: 0x111a2e,
+  bar: 0x18223a,
+  block: 0x1f2c4c,
+  line: 0x2a3b5e,
+  field: 0x16203a,
+  button: 0x2f55e0,
+  edge: 0x4c7bff,
+  edgeSoft: 0x22304f,
+  azure: 0x2f55e0,
+  azureLift: 0x4c7bff,
+  /* The second accent is a champagne gold rather than a second blue: it marks
+     the few things that are assertions about the page (the crawl-wide captions,
+     the frame's hairline) without competing with the azure that marks the
+     product's own controls. Two blues would read as one colour badly printed. */
+  gold: 0xc9a961,
+  ok: 0x3fa37a,
+  err: 0xc6425a,
+  scan: 0x9fb6e8,
 };
 
 /* ---------------------------------------------------------------------------
@@ -193,7 +197,7 @@ const UNGROUNDED = [
 type Frame = { z: number; focus: [number, number]; bias: number; scale: number };
 
 const FRAMES: Record<Stage, Frame> = {
-  0: { z: 10.4, focus: [0, 0], bias: 0.375, scale: 0.8 },
+  0: { z: 10.4, focus: [0, 0], bias: 0.42, scale: 0.78 },
   1: { z: 6.6, focus: [1.75, 0.25], bias: 0.42, scale: 0.85 },
   2: { z: 11.5, focus: [-0.9, 0.1], bias: -0.355, scale: 0.68 },
   3: { z: 9.4, focus: [0.3, 0], bias: 0.371, scale: 0.8 },
@@ -250,9 +254,9 @@ function glowTexture(): THREE.CanvasTexture {
   cv.width = cv.height = size;
   const ctx = cv.getContext("2d")!;
   const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  g.addColorStop(0, "rgba(150,180,255,0.95)");
-  g.addColorStop(0.35, "rgba(90,130,255,0.35)");
-  g.addColorStop(1, "rgba(60,100,255,0)");
+  g.addColorStop(0, "rgba(196,214,246,0.72)");
+  g.addColorStop(0.34, "rgba(120,150,200,0.24)");
+  g.addColorStop(1, "rgba(90,120,170,0)");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, size, size);
   const tex = new THREE.CanvasTexture(cv);
@@ -353,7 +357,7 @@ export class TraceoScene {
     this.renderer.setSize(w, h);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.15;
+    this.renderer.toneMappingExposure = 1.05;
     const canvas = this.renderer.domElement;
     canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:pan-y";
     this.host.appendChild(canvas);
@@ -365,7 +369,7 @@ export class TraceoScene {
     this.camera = new THREE.PerspectiveCamera(42, w / h, 0.1, 100);
     this.camera.position.copy(this.camPos);
     this.scene.add(this.world);
-    this.scene.fog = new THREE.Fog(0x080c18, 12, 26);
+    this.scene.fog = new THREE.Fog(0x070b14, 12, 26);
 
     this.buildLights();
     this.buildPage();
@@ -380,16 +384,19 @@ export class TraceoScene {
   }
 
   private buildLights() {
-    this.scene.add(new THREE.HemisphereLight(0x8fa8ff, 0x0a0f1e, 1.05));
-    const key = new THREE.DirectionalLight(0xdce6ff, 1.5);
+    this.scene.add(new THREE.HemisphereLight(0x93a9d4, 0x080c16, 0.92));
+    const key = new THREE.DirectionalLight(0xf0ece3, 1.35);
     key.position.set(3.5, 5, 7);
     this.scene.add(key);
-    const rimV = new THREE.PointLight(C.violet, 55, 26);
-    rimV.position.set(-6.5, 2.5, 3.5);
-    this.scene.add(rimV);
-    const rimP = new THREE.PointLight(C.pink, 26, 22);
-    rimP.position.set(6.5, -3, 2.5);
-    this.scene.add(rimP);
+    // A cool key from the left and a low, warm one from the right: enough
+    // modelling to read as an object in a room, none of the neon rim that made
+    // the first pass look like a games console menu.
+    const rimSteel = new THREE.PointLight(0x5f7fb8, 34, 26);
+    rimSteel.position.set(-6.5, 2.5, 3.5);
+    this.scene.add(rimSteel);
+    const rimGold = new THREE.PointLight(C.gold, 14, 20);
+    rimGold.position.set(6.5, -3, 2.5);
+    this.scene.add(rimGold);
   }
 
   private buildPage() {
@@ -411,10 +418,10 @@ export class TraceoScene {
       const isAccent = def.kind === "button";
       const mat = new THREE.MeshStandardMaterial({
         color: def.color ?? C.block,
-        roughness: isAccent ? 0.3 : 0.62,
-        metalness: isAccent ? 0.15 : 0.08,
+        roughness: isAccent ? 0.42 : 0.6,
+        metalness: isAccent ? 0.1 : 0.08,
         emissive: new THREE.Color(isAccent ? C.button : C.edgeSoft),
-        emissiveIntensity: isAccent ? 0.5 : 0.12,
+        emissiveIntensity: isAccent ? 0.18 : 0.13,
       });
 
       const mesh = new THREE.Mesh(geom, mat);
@@ -428,9 +435,9 @@ export class TraceoScene {
       const pts = shape.getPoints(28).map((p) => new THREE.Vector3(p.x, p.y, depth / 2 + 0.004));
       const lineGeom = new THREE.BufferGeometry().setFromPoints(pts);
       const lineMat = new THREE.LineBasicMaterial({
-        color: isAccent ? 0xa9c0ff : C.edge,
+        color: isAccent ? 0xb9ccff : def.kind === "frame" ? C.gold : C.edge,
         transparent: true,
-        opacity: isAccent ? 0.7 : 0.34,
+        opacity: isAccent ? 0.72 : def.kind === "frame" ? 0.4 : 0.26,
       });
       mesh.add(new THREE.LineLoop(lineGeom, lineMat));
 
@@ -453,12 +460,12 @@ export class TraceoScene {
       "transform:translate(-50%,-50%)",
       "padding:4px 9px",
       "border-radius:7px",
-      "font:500 11px/1.35 'JetBrains Mono',ui-monospace,monospace",
-      "letter-spacing:0.01em",
-      "color:#dbe6ff",
-      "background:rgba(12,18,36,0.86)",
-      "border:1px solid rgba(108,142,255,0.45)",
-      "box-shadow:0 6px 22px rgba(0,0,0,0.45)",
+      "font:400 10.5px/1.4 'JetBrains Mono',ui-monospace,monospace",
+      "letter-spacing:0.02em",
+      "color:#dfe6f2",
+      "background:rgba(10,15,28,0.9)",
+      "border:1px solid rgba(201,169,97,0.34)",
+      "box-shadow:0 8px 26px rgba(0,0,0,0.5)",
       "white-space:nowrap",
       "opacity:0",
       "will-change:transform,opacity",
@@ -468,12 +475,12 @@ export class TraceoScene {
   }
 
   private buildParticles() {
-    const N = 1400;
+    const N = 900;
     const pos = new Float32Array(N * 3);
     const col = new Float32Array(N * 3);
     const seed = new Float32Array(N);
-    const c1 = new THREE.Color(C.blue);
-    const c2 = new THREE.Color(C.violet);
+    const c1 = new THREE.Color(0x6e88b8);
+    const c2 = new THREE.Color(C.gold);
     for (let i = 0; i < N; i++) {
       const r = 5.5 + Math.random() * 7;
       const a = Math.random() * Math.PI * 2;
@@ -492,10 +499,10 @@ export class TraceoScene {
     g.userData.seed = seed;
     g.userData.base = pos.slice();
     const m = new THREE.PointsMaterial({
-      size: 0.045,
+      size: 0.038,
       vertexColors: true,
       transparent: true,
-      opacity: 0.75,
+      opacity: 0.42,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       sizeAttenuation: true,
@@ -512,14 +519,14 @@ export class TraceoScene {
       transparent: true,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
-      opacity: 0.9,
+      opacity: 0.8,
     });
     this.scanGlow = new THREE.Sprite(mat);
-    this.scanGlow.scale.setScalar(2.6);
+    this.scanGlow.scale.setScalar(2.3);
     this.scanGlow.position.set(0, 0, 0.5);
     this.world.add(this.scanGlow);
 
-    this.scanLight = new THREE.PointLight(C.scan, 12, 4.5, 1.8);
+    this.scanLight = new THREE.PointLight(C.scan, 8.5, 4.2, 1.9);
     this.scanLight.position.set(0, 0, 1.1);
     this.world.add(this.scanLight);
   }
@@ -587,7 +594,7 @@ export class TraceoScene {
 
     grounded.forEach((def, i) => {
       const from = new THREE.Vector3(def.x, def.y, 0.3);
-      make(C.blue, from.clone(), from.clone(), true, i * 0.13);
+      make(C.azureLift, from.clone(), from.clone(), true, i * 0.13);
     });
     // Held back deliberately: the discard only means something once the
     // visitor has watched the grounded ones land.
@@ -597,8 +604,8 @@ export class TraceoScene {
       make(C.err, from, from.clone(), false, 1.5 + i * 0.42);
     });
 
-    this.makeLabel("7 grounded — each cites what it saw", new THREE.Vector3(stackX + 0.15, 2.3, 0.4), 2);
-    this.makeLabel("3 discarded — nothing to cite", new THREE.Vector3(stackX + 1.5, -1.15, 0.4), 2);
+    this.makeLabel("7 retained · each cites observed evidence", new THREE.Vector3(stackX + 0.15, 2.3, 0.4), 2);
+    this.makeLabel("3 discarded · nothing to cite", new THREE.Vector3(stackX + 1.5, -1.15, 0.4), 2);
   }
 
   /* --- verdicts ------------------------------------------------------------ */
@@ -819,8 +826,8 @@ export class TraceoScene {
 
     // World rotation: the drag the visitor applied, plus an idle sway.
     if (!reduce) {
-      const idleY = Math.sin(t * 0.24) * 0.075;
-      const idleX = Math.cos(t * 0.19) * 0.035;
+      const idleY = Math.sin(t * 0.17) * 0.055;
+      const idleX = Math.cos(t * 0.13) * 0.024;
       this.spin.y = damp(this.spin.y, this.spinTarget.y + idleY, 3, dt);
       this.spin.x = damp(this.spin.x, this.spinTarget.x + idleX, 3, dt);
     } else {
@@ -889,8 +896,8 @@ export class TraceoScene {
     }
     this.scanGlow.position.set(this.scanPoint.x, this.scanPoint.y, 0.55);
     this.scanLight.position.set(this.scanPoint.x, this.scanPoint.y, 1.15);
-    const pulse = reduce ? 1 : 1 + Math.sin(t * 3.4) * 0.06;
-    this.scanGlow.scale.setScalar(2.5 * pulse);
+    const pulse = reduce ? 1 : 1 + Math.sin(t * 2.2) * 0.04;
+    this.scanGlow.scale.setScalar(2.3 * pulse);
 
     // Panels brighten as the scanner passes: discovery made visible.
     for (const [, mesh] of this.meshes) {
@@ -898,7 +905,7 @@ export class TraceoScene {
       const d = mesh.position.distanceTo(this.scanPoint);
       const near = THREE.MathUtils.clamp(1 - d / 1.9, 0, 1);
       const base = mesh.userData.baseEmissive as number;
-      mat.emissiveIntensity = damp(mat.emissiveIntensity, base + near * 0.85, 9, dt);
+      mat.emissiveIntensity = damp(mat.emissiveIntensity, base + near * 0.62, 9, dt);
     }
   }
 
@@ -1044,10 +1051,10 @@ export class TraceoScene {
       const cur = m.group.scale.x;
       m.group.scale.setScalar(damp(cur, target, 9, dt));
       m.hover = damp(m.hover, 0, 6, dt);
-      const pulse = 1 + Math.sin(t * 4.2) * 0.12;
+      const pulse = 1 + Math.sin(t * 2.6) * 0.09;
       m.ring.scale.setScalar(pulse);
-      m.ring.rotation.z += dt * 1.1;
-      (m.core.material as THREE.MeshStandardMaterial).emissiveIntensity = 1.1 + Math.sin(t * 4.2) * 0.5;
+      m.ring.rotation.z += dt * 0.55;
+      (m.core.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.95 + Math.sin(t * 2.6) * 0.35;
       m.group.quaternion.copy(faceCam);
     }
   }

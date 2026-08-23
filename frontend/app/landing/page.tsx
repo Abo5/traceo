@@ -22,61 +22,72 @@ import s from "./landing.module.css";
  * backend/app/modules/fixprompt.py, not invented marketing copy.
  */
 
-const ACTS: { id: Stage; kicker: string; title: string; body: string; note?: string }[] = [
+const ACTS: {
+  id: Stage;
+  num: string;
+  kicker: string;
+  title: string;
+  body: string;
+  note?: string;
+}[] = [
   {
     id: 1,
-    kicker: "01 — Look",
-    title: "It reads your page like a tester who actually clicks things",
+    num: "01",
+    kicker: "Discovery",
+    title: "What the application declares about itself",
     body:
-      "No sitemap to write, no config to fill in. Traceo opens your URL in a real browser and reads what is there: every input and its type, whether it is required, how long it may be, the pattern it must match, where each link goes.",
-    note: "Move your cursor across the app — that is roughly what it sees.",
+      "No sitemap to author, no configuration to maintain. Traceo renders the page as a browser does and records what is present: every field and its type, whether it is required, the length it permits, the pattern it must match, and the destination of every link.",
+    note: "Move the cursor across the interface — this is what discovery reads.",
   },
   {
     id: 2,
-    kicker: "02 — Generate",
-    title: "It refuses to test things you never claimed",
+    num: "02",
+    kicker: "Derivation",
+    title: "Cases bound to observed evidence",
     body:
-      "Here is the unglamorous part that matters most. A case has to cite something discovery actually found, or it is thrown away — and counted, so you can see how many. Watch the red ones fall out: a password-strength rule your form never declared, a 2FA timeout that does not exist.",
-    note: "A suite that tests imaginary behaviour is worse than no suite at all.",
+      "A candidate case must cite something discovery observed, or it is discarded — and counted, so the number is on the record. The three falling out here cite rules this form never declared: a password-strength policy, a two-factor timeout. A suite that asserts behaviour the application never claimed is worse than no suite at all.",
+    note: "Seven retained. Three discarded, and reported as discarded.",
   },
   {
     id: 3,
-    kicker: "03 — Run",
-    title: "Then it actually runs them",
+    num: "03",
+    kicker: "Execution",
+    title: "Performed, not predicted",
     body:
-      "In a browser, against your real page. It types, it tabs, it submits, it waits for what comes back. Nothing here is a prediction of what your app would probably do — every green is something that was observed happening.",
-    note: "Submissions are dry-run by default. Traceo asks before it writes to your database.",
+      "Each case is executed in a browser against the running page: fields are filled, forms are submitted, responses are awaited. Every result recorded here was observed happening — none of it is an estimate of how the application would probably behave.",
+    note: "Submissions are dry-run by default; writing to your data requires explicit consent.",
   },
   {
     id: 4,
-    kicker: "04 — Fix",
-    title: "And every red comes with instructions",
+    num: "04",
+    kicker: "Remediation",
+    title: "Every failure, with instructions attached",
     body:
-      "Each failure carries a paste-ready fix prompt built from the case, the requirement it violated, and the evidence recorded the moment it broke. Paste it into Claude or Cursor, apply it, re-run — the case that produced the prompt is the case that closes it.",
-    note: "Click a red marker on the app to try it — or fix them all at once.",
+      "Each failure carries a remediation brief assembled from the case, the requirement it violates, and the evidence recorded at the moment it broke. It is deterministic and produced offline, so the same failure yields the same brief on every machine — and the case that produced it is the case that closes it.",
+    note: "Select a marked defect to review its brief, or resolve all three at once.",
   },
 ];
 
 const FEATURES = [
   {
     k: "Grounded",
-    t: "It cites its sources",
-    d: "Every generated case points at the element, endpoint or requirement it came from. Anything that cannot is discarded before it reaches your suite.",
+    t: "Every case cites its source",
+    d: "Each generated case names the element, endpoint or requirement it was derived from. A case that cannot cite one does not reach your suite.",
   },
   {
-    k: "Offline",
-    t: "Fix prompts call no model",
-    d: "They are assembled from rows you already have, so the same failure produces the same prompt on every machine — and you can paste one into a bug report.",
+    k: "Deterministic",
+    t: "Remediation briefs call no model",
+    d: "They are assembled from records you already hold, so the same failure produces an identical brief on every machine — and a brief can be quoted in a defect report.",
   },
   {
     k: "Traceable",
-    t: "Requirement to result, both ways",
-    d: "Open a requirement and see which cases cover it and how they last ran. Open a failure and see which requirement it breaks.",
+    t: "Requirement to result, in both directions",
+    d: "Open a requirement to see which cases cover it and how they last executed. Open a failure to see which requirement it breaches.",
   },
   {
-    k: "Five kinds",
-    t: "Functionality, UI, API, performance, security",
-    d: "Pick what a project is for and Traceo only offers those. Scope it once; nothing irrelevant shows up again.",
+    k: "Scoped",
+    t: "Functionality, interface, API, performance, security",
+    d: "Declare what a project is for and Traceo offers only those disciplines. Scope it once; nothing outside that scope is proposed again.",
   },
 ];
 
@@ -155,27 +166,27 @@ export default function LandingPage() {
           <div className={s.heroInner}>
             <span className={s.eyebrow}>Traceo · TADQEEQ</span>
             <h1 className={s.h1}>
-              Point it at your app.
+              From requirement
               <br />
-              <em>It clicks everything.</em>
+              to <em>executed test.</em>
             </h1>
             <p className={s.lede}>
-              Traceo opens your site in a real browser, finds every field, rule and link, writes
-              tests grounded in what it actually found, runs them, and hands you a fix prompt for
-              each failure.
+              Traceo renders your application in a real browser, derives test cases from what it
+              observes, executes them against the running page, and returns a remediation brief for
+              every failure.
             </p>
             <div className={s.ctaRow}>
               <Link href="/projects" className={s.ctaPrimary} data-testid="landing-cta-app">
-                Open the app
+                Open the application
               </Link>
               <a href="#act-1" className={s.ctaGhost} data-testid="landing-cta-scroll">
-                See how it works
+                View the method
                 <span aria-hidden="true"> ↓</span>
               </a>
             </div>
             <p className={s.hint} data-testid="landing-hint">
-              <span className={s.kbd}>drag</span> to spin it ·{" "}
-              <span className={s.kbd}>move</span> your cursor to scan
+              <span className={s.kbd}>Drag</span> to rotate ·{" "}
+              <span className={s.kbd}>move</span> the cursor to inspect
             </p>
           </div>
           <span className={s.scrollCue} aria-hidden="true" />
@@ -192,19 +203,24 @@ export default function LandingPage() {
             data-testid={`landing-act-${act.id}`}
           >
             <div className={`${s.actCard} ${act.id % 2 === 0 ? s.actRight : ""}`}>
-              <span className={s.kicker}>{act.kicker}</span>
+              <span className={s.kicker}>
+                <span className={s.kickerNum}>{act.num}</span>
+                {act.kicker}
+              </span>
               <h2 className={s.h2}>{act.title}</h2>
               <p className={s.body}>{act.body}</p>
               {act.note && <p className={s.note}>{act.note}</p>}
 
               {act.id === 4 && (
                 <div className={s.bugBar} data-testid="landing-bug-bar">
-                  <span className={s.bugCount}>
+                  <span className={s.bugCount} data-clear={bugs.remaining === 0 ? "1" : "0"}>
                     {bugs.remaining === 0 ? (
-                      <>All clear — {bugs.total} fixed</>
+                      <>
+                        <b>{bugs.total} of {bugs.total}</b> resolved
+                      </>
                     ) : (
                       <>
-                        <b>{bugs.remaining}</b> defect{bugs.remaining === 1 ? "" : "s"} left on the app
+                        <b>{bugs.remaining}</b> defect{bugs.remaining === 1 ? "" : "s"} outstanding
                       </>
                     )}
                   </span>
@@ -215,7 +231,7 @@ export default function LandingPage() {
                     disabled={bugs.remaining === 0}
                     data-testid="landing-fix-all"
                   >
-                    Fix them all
+                    Resolve all
                   </button>
                 </div>
               )}
@@ -223,9 +239,9 @@ export default function LandingPage() {
               {act.id === 4 && prompt && (
                 <div className={s.prompt} data-testid="landing-fix-prompt">
                   <header className={s.promptHead}>
-                    <span className={s.promptTag}>fix prompt</span>
+                    <span className={s.promptTag}>remediation brief</span>
                     <span className={s.promptHint}>
-                      {prompt.remaining === 0 ? "that was the last one" : `${prompt.remaining} to go`}
+                      {prompt.remaining === 0 ? "final defect" : `${prompt.remaining} remaining`}
                     </span>
                     <button
                       type="button"
@@ -238,7 +254,7 @@ export default function LandingPage() {
                   </header>
                   <pre className={s.promptBody}>{promptText}</pre>
                   <button type="button" className={s.smallBtn} onClick={copy} data-testid="landing-copy-prompt">
-                    {copied ? "Copied" : "Copy prompt"}
+                    {copied ? "Copied" : "Copy brief"}
                   </button>
                 </div>
               )}
@@ -250,10 +266,10 @@ export default function LandingPage() {
       {/* --- the light half ------------------------------------------------- */}
       <section className={s.features} data-testid="landing-features">
         <div className={s.featuresInner}>
-          <h2 className={s.h2Light}>What you get, and what you can trust</h2>
+          <h2 className={s.h2Light}>What a passing result is permitted to mean</h2>
           <p className={s.subLight}>
-            A testing tool is only worth as much as its greens are. These are the four things Traceo
-            does to make sure a green means something.
+            A testing tool is worth exactly what its passing results are worth. These are the four
+            properties Traceo holds to so that a pass carries evidence behind it.
           </p>
           <div className={s.grid}>
             {FEATURES.map((f) => (
@@ -269,13 +285,13 @@ export default function LandingPage() {
 
       <section className={s.closer} data-testid="landing-closer">
         <div className={s.closerInner}>
-          <h2 className={s.h2Light}>Give it a URL and watch.</h2>
+          <h2 className={s.h2Light}>Point Traceo at an environment.</h2>
           <p className={s.subLight}>
-            A scan of a form-heavy page takes a couple of minutes and comes back with cases you did
-            not write, run against a page you did not have to describe.
+            Discovery of a form-heavy page completes in a few minutes and returns executed cases you
+            did not author, against an interface you did not have to describe.
           </p>
           <Link href="/projects" className={s.ctaPrimary} data-testid="landing-cta-final">
-            Start a run
+            Begin a run
           </Link>
         </div>
       </section>
