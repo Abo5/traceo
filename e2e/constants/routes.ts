@@ -8,6 +8,8 @@ export const routes = {
   login: '/login',
   register: '/register',
   projects: '/projects',
+  /** The public marketing page — the one route that renders without the shell. */
+  landing: '/landing',
   /** Latest report per project — workspace-scoped, see frontend/app/reports. */
   reports: '/reports',
   settings: '/settings',
