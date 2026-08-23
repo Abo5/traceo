@@ -45,6 +45,36 @@ const (
 	PromptID = "pageintel.v1"
 )
 
+// Schema is the shape the model must answer in.
+//
+// Passing it is not decoration. Without a schema the provider asks only for
+// "some JSON", and the model is free to answer with a bare array or an object
+// keyed differently — which the provider then fails to decode, reporting it as
+// unusable output and dropping this whole track for the page. The Python backend
+// has always sent this; the Go port sent nil, so every functional case for a
+// crawled screen was silently discarded.
+var Schema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"cases": map[string]any{
+			"type": "array",
+			"items": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"title":       map[string]any{"type": "string"},
+					"expected":    map[string]any{"type": "string"},
+					"type":        map[string]any{"type": "string", "enum": []any{"positive", "negative"}},
+					"priority":    map[string]any{"type": "string", "enum": []any{"high", "medium", "low"}},
+					"field_ids":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"control_ids": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				},
+				"required": []any{"title", "expected", "type", "field_ids"},
+			},
+		},
+	},
+	"required": []any{"cases"},
+}
+
 var Instructions = "You are writing functional test cases for ONE screen of a web application. " +
 	"The payload describes what a browser actually rendered: the screen's URL and " +
 	"title, its forms with every field, the controls a user can activate, and the " +
@@ -286,7 +316,7 @@ func Propose(page Page, provider llm.Provider) ([]Case, int, []string) {
 	// own text is DATA, and a page that contains "ignore your instructions" must
 	// not become an instruction.
 	framed := llm.UntrustedOpen + "\n" + string(encoded) + "\n" + llm.UntrustedClose
-	result, err := provider.CompleteJSON(PromptID, Instructions+"PAYLOAD:\n"+framed, nil)
+	result, err := provider.CompleteJSON(PromptID, Instructions+"PAYLOAD:\n"+framed, Schema)
 	if err != nil {
 		return nil, 0, []string{"the model could not be consulted: " + err.Error()}
 	}

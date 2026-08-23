@@ -160,15 +160,105 @@ class _AuthSetupError(Exception):
     """Auth could not be established: run is aborted with a single diagnostic."""
 
 
-def _build_auth(auth_type: str, cfg: dict, tls_strict: bool):
-    """Returns (headers, query_params, httpx_auth, oauth_token)."""
+# Credentials the security and insight builders reference by name. Two of them
+# are DETERMINISTIC — a token past its expiry and a token with its signature
+# stripped are constructed, not obtained — so the engine supplies them and the
+# cases that need them can actually run. The third is a real second account and
+# only a human can provide it.
+def _synthetic_credentials() -> dict:
+    """A structurally valid JWT that expired in 2020, and one with no signature."""
+    import base64
+
+    def b64(payload: dict) -> str:
+        raw = json.dumps(payload, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+    header = b64({"alg": "HS256", "typ": "JWT"})
+    expired = b64({"sub": "traceo-probe", "iat": 1577836800, "exp": 1577923200})
+    return {
+        # exp = 2020-01-02. Any implementation that checks it must refuse this.
+        "expired_token": f"{header}.{expired}.c2lnbmF0dXJl",
+        # the signature segment removed entirely — the classic alg=none shape
+        "unsigned_token": f"{header}.{b64({'sub': 'traceo-probe'})}.",
+    }
+
+
+def _login_flow(cfg: dict, base_url: str, tls_strict: bool) -> tuple[dict, dict]:
+    """Sign in the way the application itself does, and keep what comes back.
+
+    Every other auth_type here assumes the caller already HAS a credential. Most
+    products do not work that way: the credential is minted by a sign-in call,
+    and without this the engine could only ever test unauthenticated behaviour —
+    which is why an entire test track used to collapse into 401s (TR-004).
+
+    Config shape:
+        {"method": "POST", "path": "/api/auth/login",
+         "body": {"email": "...", "password": "..."},
+         "extract": {"token": "$.token"},
+         "inject": {"header": "Authorization", "template": "Bearer {{token}}"}}
+
+    Returns (headers_to_send, extracted_variables). The extracted values also
+    reach every case as context, so a step written against `{{token}}` resolves.
+    """
+    path = cfg.get("path") or cfg.get("url")
+    if not path:
+        raise _AuthSetupError("login auth is configured without a path")
+    method = (cfg.get("method") or "POST").upper()
+    extract = cfg.get("extract") or {"token": "token"}
+
+    url = path if path.startswith(("http://", "https://")) \
+        else base_url.rstrip("/") + "/" + path.lstrip("/")
+    kwargs: dict = {"timeout": settings.REQUEST_TIMEOUT_S, "verify": tls_strict}
+    if cfg.get("body") is not None:
+        kwargs["json"] = cfg["body"]
+    if cfg.get("form") is not None:
+        kwargs["data"] = cfg["form"]
+    if cfg.get("headers"):
+        kwargs["headers"] = cfg["headers"]
+    if cfg.get("params"):
+        kwargs["params"] = cfg["params"]
+
+    try:
+        resp = httpx.request(method, url, **kwargs)
+    except Exception as e:  # noqa: BLE001 — diagnostic must never carry the password
+        raise _AuthSetupError(f"sign-in request failed: {type(e).__name__}") from e
+    if resp.status_code >= 400:
+        raise _AuthSetupError(
+            f"sign-in endpoint answered HTTP {resp.status_code} — check the "
+            "credentials and the path on this environment")
+    try:
+        payload = resp.json()
+    except Exception:  # noqa: BLE001
+        raise _AuthSetupError("sign-in response was not JSON, so no token could be read")
+
+    variables: dict = {}
+    for name, jpath in extract.items():
+        try:
+            variables[name] = _resolve_path(payload, str(jpath).lstrip("$."))
+        except KeyError:
+            raise _AuthSetupError(
+                f"sign-in succeeded but '{jpath}' is not in the response, so "
+                f"'{name}' could not be read") from None
+    if not variables:
+        raise _AuthSetupError("sign-in extracted nothing to authenticate with")
+
+    inject = cfg.get("inject") or {"header": "Authorization",
+                                   "template": "Bearer {{%s}}" % next(iter(variables))}
+    header_name = inject.get("header") or "Authorization"
+    template = inject.get("template") or "Bearer {{%s}}" % next(iter(variables))
+    return {header_name: str(_interpolate(template, variables))}, variables
+
+
+def _build_auth(auth_type: str, cfg: dict, tls_strict: bool, base_url: str = ""):
+    """Returns (headers, query_params, httpx_auth, oauth_token, variables)."""
     headers: dict[str, str] = {}
     params: dict[str, str] = {}
     auth = None
     token = None
+    variables: dict = {}
     auth_type = auth_type or "none"
     if auth_type == "none":
-        return headers, params, auth, token
+        return headers, params, auth, token, variables
     if not cfg:
         raise _AuthSetupError(
             f"auth configuration for type '{auth_type}' is missing or could not be decrypted")
@@ -213,9 +303,13 @@ def _build_auth(auth_type: str, cfg: dict, tls_strict: bool):
         if not token:
             raise _AuthSetupError("oauth2 token response did not contain access_token")
         headers["Authorization"] = f"Bearer {token}"
+    elif auth_type == "login":
+        login_headers, variables = _login_flow(cfg, base_url, tls_strict)
+        headers.update(login_headers)
+        token = next((str(v) for v in variables.values() if v), None)
     else:
         raise _AuthSetupError(f"unsupported auth_type '{auth_type}'")
-    return headers, params, auth, token
+    return headers, params, auth, token, variables
 
 
 # ---------------------------------------------------------------------------
@@ -238,16 +332,61 @@ def _eq(actual, expected) -> bool:
     return str(actual) == str(expected)
 
 
-def _eval_assertion(a: dict, resp, resp_json, elapsed_ms: int, endpoint_schemas: dict | None):
-    """Returns (ok, actual, skipped)."""
+def _eval_assertion(a: dict, resp, resp_json, elapsed_ms: int, endpoint_schemas: dict | None,
+                    resp_text: str = "", probe: dict | None = None):
+    """Returns (ok, actual, skipped, reason).
+
+    `reason` is non-empty only when skipped, and says WHY — "nothing ran" must
+    never be indistinguishable from "ran and passed" (H1). The caller turns a
+    case whose every assertion was skipped into `inconclusive`, never `passed`.
+    """
     kind = a.get("type")
+
+    # --- S1 security assertions (TR-002) -----------------------------------
+    # These three were emitted by the security builders and understood by
+    # nobody, so every case carrying them reported `passed` without testing
+    # anything. They are cheap; the reason they were missing was oversight.
+
+    if kind == "no_5xx":
+        # A malformed request is a client error. Answering 5xx means the input
+        # reached something that could not cope with it.
+        return resp.status_code < 500, resp.status_code, False, ""
+
+    if kind == "body_not_matches":
+        patterns = a.get("patterns") or []
+        if not patterns:
+            return True, None, True, "the assertion carries no patterns"
+        hay = resp_text or ""
+        hit = next((p for p in patterns if p and p in hay), None)
+        if hit is None:
+            return True, "no signature found", False, ""
+        # Report WHAT leaked and its surroundings — a bare "failed" would send
+        # the reader back to the raw body to find out why.
+        at = hay.find(hit)
+        window = hay[max(0, at - 40):at + len(hit) + 80].replace("\n", "\\n")
+        return False, f"leaked {hit!r} in: …{window}…", False, ""
+
+    if kind == "rate_limited_within":
+        # ACTIVE probe: it deliberately floods an endpoint, so it runs only with
+        # explicit authorisation (S1). Unauthorised it is INCONCLUSIVE, never a
+        # pass — the whole point of this class of bug.
+        if probe is None:
+            return True, None, True, ("active probe not authorised — set "
+                                      "TRACEO_ACTIVE_SECURITY_PROBES=1 to run it")
+        if probe.get("error"):
+            return True, None, True, f"probe could not run: {probe['error']}"
+        statuses = probe.get("statuses") or []
+        want = int(a.get("expected_status", 429))
+        ok = want in statuses
+        return ok, {"sent": len(statuses), "statuses": statuses,
+                    "expected": want}, False, ""
 
     if kind == "status_code":
         actual = resp.status_code
         allowed = a.get("expected_any")
         if allowed is not None:
-            return actual in allowed, actual, False
-        return _eq(actual, a.get("expected")), actual, False
+            return actual in allowed, actual, False, ""
+        return _eq(actual, a.get("expected")), actual, False, ""
 
     if kind == "json_field":
         op = a.get("op", "eq")
@@ -257,43 +396,43 @@ def _eval_assertion(a: dict, resp, resp_json, elapsed_ms: int, endpoint_schemas:
         except (KeyError, TypeError):
             actual, found = None, False
         if op == "exists":
-            return found, (actual if found else "<missing>"), False
+            return found, (actual if found else "<missing>"), False, ""
         if op == "absent":
-            return not found, (actual if found else "<missing>"), False
+            return not found, (actual if found else "<missing>"), False, ""
         if not found:
-            return False, "<missing>", False
+            return False, "<missing>", False, ""
         expected = a.get("expected")
         allowed = a.get("expected_any")
         if op == "eq":
             if allowed is not None:
-                return any(_eq(actual, e) for e in allowed), actual, False
-            return _eq(actual, expected), actual, False
+                return any(_eq(actual, e) for e in allowed), actual, False, ""
+            return _eq(actual, expected), actual, False, ""
         if op == "ne":
-            return not _eq(actual, expected), actual, False
+            return not _eq(actual, expected), actual, False, ""
         if op in ("gt", "lt"):
             av, ev = _num(actual), _num(expected)
             if av is None or ev is None:
-                return False, actual, False
-            return (av > ev) if op == "gt" else (av < ev), actual, False
+                return False, actual, False, ""
+            return (av > ev) if op == "gt" else (av < ev), actual, False, ""
         if op == "contains":
             try:
                 if isinstance(actual, str):
-                    return str(expected) in actual, actual, False
-                return expected in actual, actual, False
+                    return str(expected) in actual, actual, False, ""
+                return expected in actual, actual, False, ""
             except TypeError:
-                return False, actual, False
+                return False, actual, False, ""
         if op == "regex":
             try:
-                return bool(re.search(str(expected), str(actual))), actual, False
+                return bool(re.search(str(expected), str(actual))), actual, False, ""
             except re.error:
-                return False, actual, False
-        return False, actual, False
+                return False, actual, False, ""
+        return False, actual, False, ""
 
     if kind == "response_time_ms":
         limit = a.get("max", a.get("expected"))
         if limit is None:
-            return True, elapsed_ms, True
-        return elapsed_ms <= float(limit), elapsed_ms, False
+            return True, elapsed_ms, True, "the case records no time budget"
+        return elapsed_ms <= float(limit), elapsed_ms, False, ""
 
     if kind == "header":
         actual = resp.headers.get(a.get("name", ""))
@@ -301,17 +440,27 @@ def _eval_assertion(a: dict, resp, resp_json, elapsed_ms: int, endpoint_schemas:
         expected = a.get("expected")
         allowed = a.get("expected_any")
         if actual is None:
-            return False, None, False
+            return False, None, False, ""
         if op == "contains":
-            return str(expected) in actual, actual, False
+            return str(expected) in actual, actual, False, ""
         if allowed is not None:
-            return any(_eq(actual, e) for e in allowed), actual, False
-        return _eq(actual, expected), actual, False
+            return any(_eq(actual, e) for e in allowed), actual, False, ""
+        return _eq(actual, expected), actual, False, ""
+
+    if kind in ("header_present", "header_absent"):
+        # Emitted by the security-headers builder alongside `header`, and — like
+        # the three above — understood by nobody, so "carries HSTS" and "does not
+        # advertise its framework" were never actually checked (TR-002).
+        name = a.get("name", "")
+        actual = resp.headers.get(name)
+        if kind == "header_present":
+            return actual is not None, actual, False, ""
+        return actual is None, actual, False, ""
 
     if kind == "json_schema":
         # Validate against the step endpoint's 2xx response schema; skip gracefully.
         if jsonschema is None or not endpoint_schemas:
-            return True, "skipped (no schema/validator)", True
+            return True, None, True, "no response schema on the endpoint, or jsonschema is not installed"
         schema = endpoint_schemas.get(str(resp.status_code))
         if schema is None:
             for k, v in endpoint_schemas.items():
@@ -321,18 +470,18 @@ def _eval_assertion(a: dict, resp, resp_json, elapsed_ms: int, endpoint_schemas:
         if schema is None:
             schema = endpoint_schemas.get("default")
         if not schema:
-            return True, "skipped (no schema)", True
+            return True, None, True, "the endpoint declares no schema for this status"
         if resp_json is None:
-            return False, "response body is not JSON", False
+            return False, "response body is not JSON", False, ""
         try:
             jsonschema.validate(resp_json, schema)
-            return True, "valid", False
+            return True, "valid", False, ""
         except jsonschema.ValidationError as e:
-            return False, e.message, False
+            return False, e.message, False, ""
         except Exception:  # noqa: BLE001 — malformed schema: skip, don't fail the case
-            return True, "skipped (invalid schema)", True
+            return True, None, True, "the endpoint schema is malformed"
 
-    return True, None, True  # unknown assertion types are skipped, never failed
+    return True, None, True, f"no evaluator implements assertion type {kind!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +490,83 @@ def _eval_assertion(a: dict, resp, resp_json, elapsed_ms: int, endpoint_schemas:
 
 class _RunTimeout(Exception):
     pass
+
+
+class _UnresolvedVariable(Exception):
+    """A {{placeholder}} survived interpolation (TR-003).
+
+    Sending it literally is the worst of the three options: the request goes out
+    with `Authorization: Bearer {{token}}`, the target answers 401, and the case
+    reports a security finding that is really a configuration mistake. Failing
+    loudly names the variable instead.
+    """
+
+
+def _assert_resolved(where: str, value, seen: set[str]) -> None:
+    """Collect any {{name}} left in `value` after interpolation."""
+    if isinstance(value, str):
+        for m in _VAR_RE.finditer(value):
+            seen.add(f"{m.group(1)} (in {where})")
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            _assert_resolved(f"{where}.{k}", v, seen)
+    elif isinstance(value, list):
+        for i, v in enumerate(value):
+            _assert_resolved(f"{where}[{i}]", v, seen)
+
+
+def _rate_limit_probe(client, method: str, path: str, send_kwargs: dict,
+                      assertion: dict, first_status: int, deadline: float) -> dict:
+    """Repeat the request until the rate limit answers, or the budget runs out.
+
+    Bounded on purpose (R2 in the development plan): at most `requests` attempts
+    including the one already sent, and it stops the moment the expected status
+    appears so an endpoint that IS limited is not hammered past the proof.
+    """
+    want = int(assertion.get("expected_status", 429))
+    total = max(1, min(int(assertion.get("requests", 20)), settings.ACTIVE_PROBE_MAX_REQUESTS))
+    statuses = [first_status]
+    if first_status == want:
+        return {"statuses": statuses}
+    probe_kwargs = dict(send_kwargs)
+    for _ in range(total - 1):
+        if time.monotonic() >= deadline:
+            return {"statuses": statuses, "error": "run budget exhausted"}
+        probe_kwargs["timeout"] = max(0.001, min(settings.REQUEST_TIMEOUT_S,
+                                                 deadline - time.monotonic()))
+        try:
+            r = client.request(method, path, **probe_kwargs)
+        except (httpx.TimeoutException, httpx.TransportError) as e:
+            return {"statuses": statuses, "error": f"{type(e).__name__}: {e}"}
+        statuses.append(r.status_code)
+        if r.status_code == want:
+            break
+    return {"statuses": statuses}
+
+
+def decide_outcome(outcome: str, failure_reason: dict | None,
+                   evaluated: int, skipped: int,
+                   evidence: list[dict]) -> tuple[str, dict | None]:
+    """The terminal state of a case, given what was actually checked (H1/TR-001).
+
+    A case that reached the end without a failure has NOT passed unless something
+    was evaluated. Reporting "passed" for a case whose every assertion was
+    skipped is the single most damaging thing this engine used to do: it
+    manufactured confidence out of an unimplemented check, 125 times in one
+    measured run. Kept as a pure function so the rule can be tested on its own.
+    """
+    if outcome != "passed" or evaluated > 0:
+        return outcome, failure_reason
+    reasons = sorted({r.get("reason") for step in evidence
+                      for r in (step.get("assertions") or [])
+                      if r.get("outcome") in ("skipped", "unsupported") and r.get("reason")})
+    return "inconclusive", {
+        "code": "not_evaluated",
+        "message": ("Nothing was checked: every assertion on this case was skipped."
+                    if skipped else "This case carries no assertion to check."),
+        "skipped": skipped,
+        "reasons": reasons,
+    }
 
 
 def _case_worker(run_id: str, case: dict, client: httpx.Client,
@@ -356,6 +582,11 @@ def _case_worker(run_id: str, case: dict, client: httpx.Client,
     outcome = "passed"
     failure_reason: dict | None = None
     step_index = -1
+    # H1 (TR-001): a case is only allowed to be `passed` if something was
+    # actually checked. These two counters are what make that decidable, and
+    # they are carried on the result so a reader can see it too.
+    evaluated_assertions = 0
+    skipped_assertions = 0
 
     try:
         for step_index, step in enumerate(case["steps"]):
@@ -392,6 +623,23 @@ def _case_worker(run_id: str, case: dict, client: httpx.Client,
             path = _bind_path_params(path, params, context)
 
             body_kwargs: dict = {}
+            # TR-003 / H3. Checked AFTER path binding so an OpenAPI {id} that the
+            # binder consumed is not mistaken for a missing variable, and BEFORE
+            # anything is sent, so an unconfigured environment can never be
+            # reported as a finding about the target.
+            unresolved: set[str] = set()
+            _assert_resolved("path", path, unresolved)
+            _assert_resolved("headers", headers, unresolved)
+            _assert_resolved("params", params, unresolved)
+            body_source = req.get("raw_body") if req.get("raw_body") is not None else req.get("body")
+            if body_source is not None and not (
+                    isinstance(body_source, str) and "{{malformed}}" in body_source):
+                # {{malformed}} is a deliberate marker for the broken-JSON
+                # negative below, not a variable anyone forgot to set.
+                _assert_resolved("body", _interpolate(body_source, context), unresolved)
+            if unresolved:
+                raise _UnresolvedVariable(", ".join(sorted(unresolved)))
+
             body_repr: str | None = None
             raw_body = req.get("raw_body")
             if isinstance(raw_body, str) and "{{malformed}}" in raw_body:
@@ -452,15 +700,35 @@ def _case_worker(run_id: str, case: dict, client: httpx.Client,
                 resp_json = None
 
             schemas = endpoint_schemas.get(step.get("endpoint_id")) if step.get("endpoint_id") else None
+            step_assertions = step.get("assertions") or []
+
+            # An ACTIVE rate-limit probe needs more than the one response above,
+            # so it is fired here rather than inside the evaluator. It is bounded
+            # and stops the moment the expected status appears.
+            probe = None
+            rate_a = next((a for a in step_assertions
+                           if a.get("type") == "rate_limited_within"), None)
+            if rate_a is not None and settings.ACTIVE_SECURITY_PROBES:
+                probe = _rate_limit_probe(client, method, path, send_kwargs, rate_a,
+                                          resp.status_code, deadline)
+
             assertion_records = []
             failed_assertion = None
-            for a in step.get("assertions") or []:
-                ok, actual, skipped = _eval_assertion(a, resp, resp_json, elapsed_ms, schemas)
-                assertion_records.append({
+            for a in step_assertions:
+                ok, actual, skipped, why = _eval_assertion(
+                    a, resp, resp_json, elapsed_ms, schemas, resp_text, probe)
+                record = {
                     "assertion": a,
                     "outcome": "skipped" if skipped else ("passed" if ok else "failed"),
                     "actual": actual,
-                })
+                }
+                if skipped:
+                    # H1: a skip must say why. "Nothing ran" is a result, not silence.
+                    record["reason"] = why
+                    skipped_assertions += 1
+                else:
+                    evaluated_assertions += 1
+                assertion_records.append(record)
                 if not ok and not skipped:
                     failed_assertion = (a, actual)
                     break  # halt at first failed assertion (FR-EXE-11)
@@ -496,6 +764,25 @@ def _case_worker(run_id: str, case: dict, client: httpx.Client,
                 except Exception:  # noqa: BLE001 — leave placeholder unresolved
                     pass
 
+    except _UnresolvedVariable as e:
+        # Not a finding about the target — a finding about this project's
+        # configuration. A case that needs a second, lower-privileged account
+        # cannot run without one, and that is `inconclusive`: reporting it as a
+        # failure would blame the target for a gap in the setup, and reporting it
+        # as a pass would be the old lie (TR-003, H1).
+        missing = str(e)
+        needs_actor = any(name in missing for name in
+                          ("low_privilege_token", "foreign_object_id"))
+        outcome = "inconclusive" if needs_actor else "errored"
+        failure_reason = {
+            "code": "actor_not_configured" if needs_actor else "unresolved_variable",
+            "error": (f"This case needs {missing}, which no one has supplied. "
+                      "Add a second, lower-privileged account to the environment "
+                      "to run it." if needs_actor else
+                      f"Unresolved variable(s): {missing}. "
+                      "Set them on the environment, or configure its sign-in flow."),
+            "step_index": max(step_index, 0),
+        }
     except _RunTimeout:
         outcome = "errored"
         failure_reason = {"error": "run timeout", "step_index": max(step_index, 0)}
@@ -506,6 +793,9 @@ def _case_worker(run_id: str, case: dict, client: httpx.Client,
 
     duration_ms = int((time.monotonic() - started) * 1000)
 
+    outcome, failure_reason = decide_outcome(
+        outcome, failure_reason, evaluated_assertions, skipped_assertions, evidence)
+
     # Immutable result, committed as the case finishes (partial visibility)
     with _db_write_lock:
         db = SessionLocal()
@@ -513,7 +803,9 @@ def _case_worker(run_id: str, case: dict, client: httpx.Client,
             db.add(TestResult(run_id=run_id, test_case_id=case["id"],
                               test_case_version=case["version"], outcome=outcome,
                               duration_ms=duration_ms, failure_reason=failure_reason,
-                              evidence=evidence))
+                              evidence=evidence,
+                              assertions_evaluated=evaluated_assertions,
+                              assertions_skipped=skipped_assertions))
             db.commit()
         finally:
             db.close()
@@ -538,14 +830,15 @@ def _execute_run(job, run_id: str, case_ids: list[str]):
         cfg = decrypt_secret(env.auth_config_encrypted)
         secrets = _collect_secrets(cfg)
         try:
-            auth_headers, auth_params, auth_obj, token = _build_auth(
-                env.auth_type, cfg, env.tls_strict)
+            auth_headers, auth_params, auth_obj, token, auth_vars = _build_auth(
+                env.auth_type, cfg, env.tls_strict, env.base_url)
         except _AuthSetupError as e:
             # FR-EXE-04: single diagnostic, NO per-case failures
             run.state = "aborted"
             run.abort_reason = redact(str(e), secrets)
             run.finished_at = _utcnow()
-            run.counts = {"total": 0, "passed": 0, "failed": 0, "errored": 0}
+            run.counts = {"total": 0, "passed": 0, "failed": 0, "errored": 0,
+                          "inconclusive": 0}
             db.commit()
             _cancel_flags.pop(run_id, None)
             return {"run_id": run_id, "state": "aborted", "reason": run.abort_reason}
@@ -560,6 +853,7 @@ def _execute_run(job, run_id: str, case_ids: list[str]):
                 continue
             cases.append({
                 "id": tc.id, "version": tc.version,
+                "mutates": bool(tc.mutates),
                 "steps": [{"order": s.order, "endpoint_id": s.endpoint_id,
                            "method": s.method, "path": s.path,
                            "request": s.request or {},
@@ -568,13 +862,25 @@ def _execute_run(job, run_id: str, case_ids: list[str]):
                           for s in sorted(tc.steps, key=lambda s: s.order)],
             })
 
+        # TR-015: read-only cases first, mutating ones after. A case that posts a
+        # 4000-character name used to run in the middle of the fan-out and make
+        # three unrelated LISTING cases fail schema validation on a record they
+        # never created — a failure the reader has no way to attribute correctly.
+        cases.sort(key=lambda c: (c["mutates"], c["id"]))
+
         ep_ids = {s["endpoint_id"] for c in cases for s in c["steps"] if s["endpoint_id"]}
         endpoint_schemas = {}
         if ep_ids:
             for ep in db.query(Endpoint).filter(Endpoint.id.in_(ep_ids)).all():
                 endpoint_schemas[ep.id] = ep.response_schemas or {}
 
-        env_vars = dict(env.variables or {})
+        # Order matters: the engine's synthetic credentials are defaults, and an
+        # environment that names its own always wins.
+        env_vars = dict(_synthetic_credentials())
+        env_vars.update(env.variables or {})
+        # Whatever sign-in returned is a variable like any other, so a step
+        # written against {{token}} resolves instead of being sent literally.
+        env_vars.update(auth_vars)
         base_url = env.base_url
         tls_strict = env.tls_strict
         total = len(cases)
@@ -597,9 +903,18 @@ def _execute_run(job, run_id: str, case_ids: list[str]):
 
         db.expire_all()
         results = db.query(TestResult).filter(TestResult.run_id == run_id).all()
-        counts = {"total": len(results), "passed": 0, "failed": 0, "errored": 0}
+        # `inconclusive` is a first-class outcome, not a footnote: a reader who
+        # sees only passed/failed/errored would read "nothing was checked" as
+        # "nothing was wrong" (H1, H8).
+        counts = {"total": len(results), "passed": 0, "failed": 0, "errored": 0,
+                  "inconclusive": 0}
+        assertions_evaluated = assertions_skipped = 0
         for r in results:
             counts[r.outcome] = counts.get(r.outcome, 0) + 1
+            assertions_evaluated += r.assertions_evaluated or 0
+            assertions_skipped += r.assertions_skipped or 0
+        counts["assertions_evaluated"] = assertions_evaluated
+        counts["assertions_skipped"] = assertions_skipped
         run = db.get(Run, run_id)
         run.counts = counts
         run.state = "cancelled" if cancelled else "completed"

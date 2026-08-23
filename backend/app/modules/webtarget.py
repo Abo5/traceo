@@ -1840,7 +1840,8 @@ def case_preconditions(case: dict) -> str:
 
 
 def persist_case(db: Session, org_id: str, project_id: str, req: Requirement,
-                 case: dict, model_name: str = MODEL_NAME) -> TestCase:
+                 case: dict, model_name: str = MODEL_NAME,
+                 test_type: str | None = None) -> TestCase:
     """One grounded case as a draft, plus its requirement link. Mirrors
     generation._persist_case; steps here carry a DOM/design payload instead of
     an endpoint id, which is why it does not reuse it."""
@@ -1849,7 +1850,9 @@ def persist_case(db: Session, org_id: str, project_id: str, req: Requirement,
         title=case["title"][:500], description=case["description"],
         preconditions=case_preconditions(case), type=case["type"],
         priority=case["priority"], state="draft", generated=True, model=model_name,
-        prompt_version=settings.PROMPT_VERSION, technique=case["technique"])
+        prompt_version=settings.PROMPT_VERSION, technique=case["technique"],
+        test_type=generation.case_test_type(case, test_type),
+        mutates=generation.case_mutates(case))
     db.add(tc)
     db.flush()
     for i, step in enumerate(case["steps"]):
@@ -1998,7 +2001,7 @@ def run_discovery_job(job, org_id: str, user_id: str, project_id: str, target_id
             if key in existing_keys:
                 duplicates += 1
                 return
-            persist_case(db, org_id, project_id, req, case, model_name)
+            persist_case(db, org_id, project_id, req, case, model_name, test_type=kind)
             existing_keys.add(key)
             cases_by_type[kind] += 1
 
@@ -2115,7 +2118,10 @@ def run_discovery_job(job, org_id: str, user_id: str, project_id: str, target_id
                      f"{inv.get('final_url')} must answer as they were observed to."),
                     [f"{e.method.upper()} {e.path} responds within its observed "
                      f"status class" for e in dom_endpoints],
-                    "interface",
+                    # Endpoints, not a screen: this requirement is verified by HTTP
+                    # calls and its evidence is requests and responses, so it is
+                    # typed for what actually checks it.
+                    "api",
                     {"url": inv.get("final_url")},
                     json.dumps(sorted(f"{e.method.upper()} {e.path}"
                                       for e in dom_endpoints)),

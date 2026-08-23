@@ -99,7 +99,7 @@ def _fake_scan(org_id, project_id, target_id, *, forms=1, endpoints=0):
 
 
 def _fake_check(outcome="failed"):
-    def _run(plan, timeout_s=None):
+    def _run(plan, timeout_s=None, artifacts_dir=None):
         return {
             "ok": True, "url": URL, "final_url": URL, "load_ms": 12, "elapsed_ms": 300,
             "results": [{

@@ -1,0 +1,83 @@
+# Traceo — the air-gapped image (plan Decision B, NFR-D1).
+#
+# The slim image at backend-go/Dockerfile ships the API and nothing else, which
+# is right for a deployment that only serves the REST surface. It cannot run the
+# product's browser half: the Go backend drives tools/web-discovery/*.mjs as a
+# subprocess, and that needs Node, Playwright and a real Chromium. In the slim
+# image every scan fails with browser_discovery_unavailable.
+#
+# This image carries all three, BAKED IN AT BUILD TIME. That is the whole point:
+# an on-premises install must not download a browser on first run, because the
+# host it runs on is not allowed to reach the internet at all.
+#
+# The build context is the REPOSITORY ROOT, not backend-go/, because the sidecar
+# scripts live outside the Go module:
+#     docker build -f Dockerfile.airgapped -t traceo/airgapped:local .
+
+# --- stage 1: the Go binary -------------------------------------------------
+FROM golang:1.26-bookworm AS build
+WORKDIR /src
+
+# Dependencies first: cached until go.mod/go.sum actually change.
+COPY backend-go/go.mod backend-go/go.sum ./
+RUN go mod download
+
+COPY backend-go/ ./
+# CGO off: the sqlite driver (glebarez/sqlite) is pure Go, so the binary has no
+# libc dependency and runs on whatever base the browser image happens to use.
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/traceo ./cmd/server
+
+# --- stage 2: the runtime ---------------------------------------------------
+# The Playwright image is pinned to the version the sidecar scripts were verified
+# against, and already contains Node, the browsers and every system library
+# Chromium needs. Pulling those from a distro base instead is how an "air-gapped"
+# image ends up phoning home for a missing .so on first run.
+FROM mcr.microsoft.com/playwright:v1.62.1-noble
+
+WORKDIR /app
+
+# The sidecar: its own package.json so `npm ci` here installs ONLY playwright,
+# not the whole e2e test framework.
+COPY tools/web-discovery/ /app/tools/web-discovery/
+COPY package.airgapped.json /app/tools/web-discovery/package.json
+
+# --omit=dev and no lockfile-only install: this is the one place the image is
+# allowed to reach the network, and it happens at BUILD time. At run time the
+# container needs nothing from npm.
+RUN cd /app/tools/web-discovery \
+    && npm install --omit=dev --no-audit --no-fund \
+    && npx playwright install chromium \
+    && npm cache clean --force
+
+COPY --from=build /out/traceo /usr/local/bin/traceo
+
+# Writable state; mount a volume so data survives an image upgrade.
+RUN mkdir -p /data/storage && chown -R pwuser:pwuser /data /app
+USER pwuser
+
+# The sidecar paths are absolute so the binary's own location cannot change what
+# it finds — the failure mode that produced browser_discovery_unavailable when
+# the binary was run from outside the repository.
+ENV TRACEO_DATABASE_URL=/data/traceo.db \
+    TRACEO_STORAGE_DIR=/data/storage \
+    TRACEO_PORT=8000 \
+    TRACEO_NODE_BIN=node \
+    TRACEO_WEB_DISCOVERY_SCRIPT=/app/tools/web-discovery/discover.mjs \
+    TRACEO_WEB_CHECK_SCRIPT=/app/tools/web-discovery/check.mjs \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    # mock is the only provider that makes no outbound call. An air-gapped
+    # deployment that wants a real model sets TRACEO_LOCAL_LLM_BASE_URL to a
+    # model server INSIDE the perimeter; it must never fall through to a cloud
+    # provider by accident, so the default here is the offline one.
+    TRACEO_LLM_PROVIDER=mock
+
+EXPOSE 8000
+
+# Deliberately NOT setting TRACEO_ENV=production: production also requires a
+# unique TRACEO_SECRET_KEY and TRACEO_SEED_DEMO=0, and the backend refuses to
+# start without them. Setting it here would turn a deploy-time mistake into a
+# build-time surprise.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
+    CMD node -e "require('http').get('http://127.0.0.1:8000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+
+ENTRYPOINT ["traceo"]

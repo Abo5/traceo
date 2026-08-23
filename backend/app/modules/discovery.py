@@ -557,7 +557,13 @@ async def import_api_spec(project_id: str, request: Request,
     # is matched back to a method+path above or discarded. A failure here costs
     # annotations, never the import.
     enriched = enrichment_discarded = 0
-    if fmt in COLLECTION_FORMATS and project.automation == "auto":
+    # Every imported format, not only the collection ones. The README promises
+    # enrichment for "a successful import" and the table lists OpenAPI first, but
+    # the condition read `fmt in COLLECTION_FORMATS`, so an OpenAPI import always
+    # reported `enriched: 0` (TR-018). Enrichment is annotation-only in either
+    # case — it may not create, rename or delete an endpoint — so the format it
+    # came from never mattered.
+    if project.automation == "auto":
         annotations, enrichment_discarded = enrich(
             [op for k, op in new_by_key.items() if k in writable])
         for key, annotation in annotations.items():

@@ -25,9 +25,24 @@ class Settings:
     STORAGE_DIR = Path(os.getenv("TRACEO_STORAGE_DIR", str(BASE_DIR / "storage")))
     MAX_UPLOAD_MB = int(os.getenv("TRACEO_MAX_UPLOAD_MB", "50"))  # FR-REQ-01
 
-    # LLM abstraction layer (CON-02): "mock" runs fully offline, "anthropic" needs ANTHROPIC_API_KEY
-    LLM_PROVIDER = os.getenv("TRACEO_LLM_PROVIDER", "auto")  # auto | mock | anthropic
+    # LLM abstraction layer (CON-02): "mock" runs fully offline, "anthropic" needs
+    # ANTHROPIC_API_KEY, "gemini" needs GEMINI_API_KEY (or GOOGLE_API_KEY).
+    LLM_PROVIDER = os.getenv("TRACEO_LLM_PROVIDER", "auto")  # auto | mock | anthropic | gemini
     LLM_MODEL = os.getenv("TRACEO_LLM_MODEL", "claude-opus-5")
+    # Its own setting rather than a shared one: TRACEO_LLM_MODEL carries a Claude
+    # model id, and a deployment that sets both providers must not have one
+    # provider's model name handed to the other.
+    GEMINI_MODEL = os.getenv("TRACEO_GEMINI_MODEL", "gemini-3.5-flash")
+    # GOOGLE_API_KEY is accepted as an alias because that is what the Google SDKs
+    # and Cloud Shell already export.
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or ""
+    # A model call is not a SUT call: REQUEST_TIMEOUT_S (30s) is sized for the
+    # system under test, and a reasoning model answering a long document
+    # legitimately takes longer than that.
+    LLM_TIMEOUT_S = float(os.getenv("TRACEO_LLM_TIMEOUT_S", "120"))
+    # Thinking models spend this budget on reasoning before the answer, so it has
+    # to clear the answer by a wide margin or every call truncates.
+    LLM_MAX_TOKENS = int(os.getenv("TRACEO_LLM_MAX_TOKENS", "8192"))
     PROMPT_VERSION = "v1.0"
 
     # Execution engine
@@ -35,6 +50,13 @@ class Settings:
     RUN_TIMEOUT_S = float(os.getenv("TRACEO_RUN_TIMEOUT_S", "600"))
     RUN_CONCURRENCY = int(os.getenv("TRACEO_RUN_CONCURRENCY", "8"))
     EVIDENCE_MAX_BYTES = int(os.getenv("TRACEO_EVIDENCE_MAX_BYTES", "16384"))
+
+    # ACTIVE security probes (S1) deliberately hammer an endpoint to prove a
+    # rate limit exists. Off by default because that is an attack shape against
+    # anything but your own staging. When off, the cases that need it report
+    # `inconclusive` with the reason — never `passed` (H1).
+    ACTIVE_SECURITY_PROBES = os.getenv("TRACEO_ACTIVE_SECURITY_PROBES", "0") == "1"
+    ACTIVE_PROBE_MAX_REQUESTS = int(os.getenv("TRACEO_ACTIVE_PROBE_MAX_REQUESTS", "30"))
 
     # --- Web target discovery (browser sidecar) --------------------------------
     # The target page is rendered by a Node/Playwright sidecar shared by both
@@ -52,6 +74,12 @@ class Settings:
     # A page of 40+ cases, each re-rendered for isolation, legitimately takes
     # minutes. The ceiling is a runaway guard, not a performance target.
     WEB_CHECK_TIMEOUT_S = float(os.getenv("TRACEO_WEB_CHECK_TIMEOUT_S", "900"))
+    # Per-step response budget handed to the browser runner, and the wider budget
+    # it retries a non-passing case at. A case that fails at BOTH is reported as a
+    # failure — the second attempt exists to tell a slow application apart from a
+    # broken one, not to keep retrying until something passes.
+    WEB_STEP_WAIT_MS = int(os.getenv("TRACEO_WEB_STEP_WAIT_MS", "3000"))
+    WEB_STEP_WAIT_RETRY_MS = int(os.getenv("TRACEO_WEB_STEP_WAIT_RETRY_MS", "6000"))
     NODE_BIN = os.getenv("TRACEO_NODE_BIN", "node")
     WEB_DISCOVERY_TIMEOUT_S = float(os.getenv("TRACEO_WEB_DISCOVERY_TIMEOUT_S", "30"))
     # Same SSRF rule the spec fetcher applies; "1" allows private/loopback hosts

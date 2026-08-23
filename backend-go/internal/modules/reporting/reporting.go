@@ -42,6 +42,12 @@ const (
 func Register(r *gin.RouterGroup) {
 	r.GET("/projects/:project_id/exports/matrix.xlsx",
 		httpx.Auth(), httpx.Require("export"), exportMatrix)
+	// The unified coverage file (see coverage.go) in both the shape a machine
+	// reads and the one a reviewer does.
+	r.GET("/projects/:project_id/exports/coverage.json",
+		httpx.Auth(), httpx.Require("export"), exportCoverageJSON)
+	r.GET("/projects/:project_id/exports/coverage.md",
+		httpx.Auth(), httpx.Require("export"), exportCoverageMarkdown)
 	r.GET("/runs/:id/report", httpx.Auth(), httpx.Require("view"), runReport)
 	r.GET("/runs/:id/report.html", httpx.Auth(), httpx.Require("view"), runReportHTML)
 	r.GET("/runs/:id/compare/:other_id", httpx.Auth(), httpx.Require("view"), compareRuns)

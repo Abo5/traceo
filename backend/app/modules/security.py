@@ -483,9 +483,13 @@ def _build_input_validation(req, ep, w, params, headers, body):
     step = generation._step(ep, p2, headers, b2, [
         generation._error_assertion(ep), _no_5xx(),
     ])
+    # TR-022: the title states the codes the assertion actually accepts, so the
+    # matrix and the JSON cannot disagree.
+    accepted = step["assertions"][0].get("expected_any") or [step["assertions"][0]["expected"]]
+    wanted = " or ".join(str(c) for c in accepted)
     return [_mk(req, ep, w,
                 f"Security: constraint violation on '{inp['name']}' ({inp['constraint']}) "
-                f"is refused without a 5xx — {_suffix(ep)}",
+                f"is refused with {wanted} and no 5xx — {_suffix(ep)}",
                 "negative", step,
                 "The request violates one declared constraint and nothing else.")]
 

@@ -12,14 +12,17 @@ class AnthropicProvider:
 
     def __init__(self, model: str = "claude-opus-5"):
         self.model = model
-        self.client = Anthropic()  # ANTHROPIC_API_KEY / ant auth profile from env
+        # G8: the budget and the timeout are settings the README documents. They
+        # used to be ignored here — a thinking model spends the output budget on
+        # reasoning before the answer, so a hardcoded 4096 truncates silently.
+        self.client = Anthropic(timeout=settings.LLM_TIMEOUT_S)
 
     def complete_json(self, prompt_id: str, prompt: str, schema: dict) -> LLMResult:
         last_err = None
         for _ in range(2):  # exactly one retry
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=4096,
+                max_tokens=settings.LLM_MAX_TOKENS,
                 output_config={"format": {"type": "json_schema", "schema": schema}},
                 messages=[{"role": "user", "content": prompt}],
             )

@@ -115,12 +115,37 @@ Full details (architecture, tags, flakiness quarantine policy) in [docs/TEST_AUT
 
 | Variable | Default | Description |
 |---|---|---|
-| `TRACEO_LLM_PROVIDER` | `auto` | `mock` (deterministic, offline) \| `anthropic` \| `auto` (anthropic when a key is present, otherwise mock) |
+| `TRACEO_LLM_PROVIDER` | `auto` | `mock` (deterministic, offline) \| `anthropic` \| `gemini` \| `auto` (anthropic when its key is present, else gemini when a Google key is, otherwise mock) |
 | `ANTHROPIC_API_KEY` | — | Claude API key, used by the `anthropic` provider |
+| `GEMINI_API_KEY` | — | Google AI Studio key, used by the `gemini` provider (`GOOGLE_API_KEY` is accepted as an alias) |
+| `TRACEO_LOCAL_LLM_BASE_URL` | — | An OpenAI-compatible model server inside the perimeter (Ollama, llama.cpp, vLLM, TGI). Setting it selects the `local` provider under `auto`, ahead of every cloud one |
+| `TRACEO_LOCAL_LLM_MODEL` | `qwen2.5-coder:7b` | Model name for the `local` provider |
+| `TRACEO_GEMINI_MODEL` | `gemini-3.5-flash` | Model id for the `gemini` provider |
+| `TRACEO_LLM_TIMEOUT_S` | `120` | Per-call timeout for model calls — separate from the system-under-test timeout |
+| `TRACEO_LLM_MAX_TOKENS` | `8192` | Output budget per call; thinking models spend it on reasoning before the answer |
 | `TRACEO_DATABASE_URL` | `sqlite:///backend/traceo.db` | Database URL (PostgreSQL in production) |
 | `TRACEO_SEED_DEMO` | `1` | Seed the demo organisation on startup; must be `0` in production (startup refuses otherwise) |
 
 Every setting lives in `backend/app/config.py` and is configurable through environment variables (NFR-POR-03).
+
+### Air-gapped deployment
+
+`Dockerfile.airgapped` builds one image containing the Go API **and** Node, Playwright and Chromium, all baked in at build time — the slim `backend-go/Dockerfile` has none of them, so every browser scan in it fails with `browser_discovery_unavailable`.
+
+```bash
+docker compose --profile airgapped up -d --build
+```
+
+Inside it, `TRACEO_LLM_PROVIDER=mock` is the default so the container makes no outbound call at all. For a real model without leaving the perimeter, run one alongside it and set `TRACEO_LOCAL_LLM_BASE_URL`.
+
+> Provider parity: `mock`, `anthropic` and `gemini` exist in **both** backends. The `local` (self-hosted) provider is **Go only** — it was added for the air-gapped image, which runs the Go binary; a Python deployment pointed at `TRACEO_LLM_PROVIDER=local` falls back to the mock provider.
+
+Nothing in the repo reads a `.env` file at runtime — it is consumed by `docker compose` for `${VAR}` substitution. Running the backend directly means exporting the variables:
+
+```bash
+cd backend
+GEMINI_API_KEY=... TRACEO_LLM_PROVIDER=gemini .venv/bin/python -m uvicorn app.main:app --port 8000
+```
 
 ## Repository layout
 

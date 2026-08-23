@@ -1,5 +1,8 @@
-// Package llm: provider abstraction (TRD §4.9, CON-02) — Mock (deterministic, default)
-// or Anthropic via plain HTTP when ANTHROPIC_API_KEY is set. Callers never see
+// Package llm: provider abstraction (TRD §4.9, CON-02) — Mock (deterministic,
+// default), Anthropic when ANTHROPIC_API_KEY is set, Gemini when GEMINI_API_KEY
+// is (gemini.go), or a self-hosted OpenAI-compatible model when
+// TRACEO_LOCAL_LLM_BASE_URL is (local.go), which is what an air-gapped
+// deployment runs. Callers never see
 // provider-specific types; every response is schema-shaped structured data.
 package llm
 
@@ -59,15 +62,30 @@ func Get() Provider {
 	}
 	choice := config.C.LLMProvider
 	if choice == "auto" {
-		if os.Getenv("ANTHROPIC_API_KEY") != "" {
+		// Order is precedence, not preference: a deployment that sets both keys
+		// gets the one it configured a model for, and never a silent swap.
+		switch {
+		// A self-hosted endpoint wins: an operator who stood one up inside the
+		// perimeter did so BECAUSE the deployment must not call out, and a stray
+		// cloud key in the environment must not quietly undo that.
+		case config.C.LocalLLMBaseURL != "":
+			choice = "local"
+		case os.Getenv("ANTHROPIC_API_KEY") != "":
 			choice = "anthropic"
-		} else {
+		case config.C.GeminiKey != "":
+			choice = "gemini"
+		default:
 			choice = "mock"
 		}
 	}
-	if choice == "anthropic" {
+	switch choice {
+	case "anthropic":
 		current = &anthropicProvider{model: config.C.LLMModel}
-	} else {
+	case "gemini":
+		current = &geminiProvider{model: config.C.GeminiModel}
+	case "local":
+		current = &localProvider{model: config.C.LocalLLMModel}
+	default:
 		current = &mockProvider{}
 	}
 	return current

@@ -650,10 +650,19 @@ def ui_cases(facts: list[Fact], *, screen: str = "screen",
         passes = f.value.get("passes_aa")
         if passes is False and not include_failing_contrast:
             continue
+        # TR-022: the title has to say what the case CHECKS, not assert its own
+        # conclusion. "meets WCAG AA" on a pair already measured at 1.33:1 read
+        # as a passing check in the matrix while the assertion beneath it was a
+        # negative — and the reader reads the title, not the JSON.
+        pair = f.subject.replace("_on_", " on ")
+        ratio = f.value["ratio"]
+        title = (f"Accessibility: {pair} meets WCAG AA ({ratio:.2f}:1)" if passes
+                 else f"Accessibility: {pair} is below WCAG AA "
+                      f"({ratio:.2f}:1, needs 4.5:1)")
         cases.append(mk(
-            f"Accessibility: {f.subject.replace('_on_', ' on ')} meets WCAG AA",
+            title,
             "contrast_aa", "a11y", "positive" if passes else "negative", f,
-            {"min_ratio": 4.5, "measured_in_design": f.value["ratio"]},
+            {"min_ratio": 4.5, "measured_in_design": ratio},
             priority="high" if passes is False else "medium"))
 
     for f in (f for f in facts if f.kind == "alignment"):

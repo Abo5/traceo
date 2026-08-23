@@ -1508,3 +1508,248 @@ input[type="checkbox"] {
   color: var(--rail);
   text-decoration: underline;
 }
+
+/* ---------- pipeline progress animation ----------
+   A run spends most of its time in one stage — writing the test cases can take
+   a while — and a bar that only moves at stage boundaries reads as a hang. The
+   stage list below says which stage is live and never stops moving while it is.
+   Every rule here is decoration: the stage name and the percentage are already
+   in the DOM as text, so with motion off nothing is lost. */
+
+@keyframes traceo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes traceo-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+}
+
+/* Travels across the filled part of the bar, so the bar keeps moving even while
+   the percentage sits still inside a long stage. */
+@keyframes traceo-sheen {
+  from {
+    transform: translateX(-60%);
+  }
+  to {
+    transform: translateX(260%);
+  }
+}
+
+@keyframes traceo-ellipsis {
+  0% {
+    content: "";
+  }
+  25% {
+    content: ".";
+  }
+  50% {
+    content: "..";
+  }
+  75%,
+  100% {
+    content: "...";
+  }
+}
+
+.stage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stage-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  transition: color var(--t-med);
+}
+
+.stage-row.is-done {
+  color: var(--text-secondary);
+}
+
+.stage-row.is-active {
+  color: var(--blueD);
+  font-weight: 700;
+}
+
+/* The icon slot is a fixed square so the labels stay aligned as the icon in it
+   changes between pending, active and done. */
+.stage-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.stage-icon > .pending {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #d3d8e2;
+}
+
+.stage-icon > .done {
+  color: var(--success);
+  font-weight: 700;
+}
+
+/* The open arc is what reads as motion; a full ring would look static spinning. */
+.stage-icon > .spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(61, 107, 245, 0.22);
+  border-top-color: var(--blue);
+  animation: traceo-spin 720ms linear infinite;
+}
+
+.stage-row.is-active .stage-label::after {
+  content: "...";
+  animation: traceo-ellipsis 1.4s steps(1, end) infinite;
+}
+
+.bar > i.animated {
+  position: relative;
+  overflow: hidden;
+}
+
+.bar > i.animated::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+  animation: traceo-sheen 1.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-icon > .spinner {
+    animation: none;
+    border-top-color: rgba(61, 107, 245, 0.22);
+  }
+  .stage-row.is-active .stage-label::after {
+    content: "...";
+    animation: none;
+  }
+  .bar > i.animated::after {
+    animation: none;
+    display: none;
+  }
+}
+
+/* ------------------------------------------------------------------
+   Sign-in / sign-up screen.
+   Rendered INSTEAD of the shell when there is no session, so it owns
+   the whole viewport and cannot inherit any shell layout. Built on the
+   design tokens above rather than on literal colours, so it follows the
+   palette instead of drifting from it — an earlier pass hard-coded a
+   dark card and it landed unreadable on this light canvas.
+   ------------------------------------------------------------------ */
+
+.auth-wrap {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--canvas);
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 28px;
+  border-radius: 14px;
+  background: var(--card);
+  border: 1px solid var(--bor);
+  box-shadow: 0 10px 34px rgba(27, 31, 43, 0.10);
+}
+
+.auth-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 2px; }
+.auth-brand h1 { font-size: 19px; font-weight: 700; margin: 0; color: var(--tx); }
+.auth-brand p { margin: 2px 0 0; font-size: 12.5px; color: var(--tx2); }
+
+.auth-mark {
+  width: 38px; height: 38px; flex: none;
+  display: grid; place-items: center;
+  border-radius: 10px;
+  background: var(--blue);
+  color: #fff; font-weight: 700; font-size: 17px;
+}
+
+.auth-tabs {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+  padding: 4px; border-radius: 10px;
+  background: var(--chip);
+  border: 1px solid var(--bor);
+}
+.auth-tabs button {
+  padding: 8px 6px; border: 0; border-radius: 7px; cursor: pointer;
+  background: transparent; color: var(--tx2);
+  font: inherit; font-size: 12.5px; font-weight: 600;
+}
+.auth-tabs button.on {
+  background: var(--card); color: var(--tx);
+  box-shadow: 0 1px 2px rgba(27, 31, 43, 0.10);
+}
+
+.auth-field { display: flex; flex-direction: column; gap: 6px; }
+.auth-field > span { font-size: 12px; font-weight: 600; color: var(--tx2); }
+.auth-field > em { font-size: 11.5px; font-style: normal; color: var(--text-muted, var(--tx2)); }
+.auth-field input {
+  padding: 10px 12px; border-radius: 9px;
+  border: 1px solid var(--bor);
+  background: var(--card);
+  color: var(--tx);
+  font: inherit; font-size: 14px;
+}
+.auth-field input:focus {
+  outline: none;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px var(--blueS);
+}
+
+.auth-error {
+  margin: 0; padding: 9px 11px; border-radius: 9px;
+  background: var(--errS);
+  border: 1px solid var(--err);
+  color: var(--err); font-size: 12.5px;
+}
+
+.auth-submit {
+  margin-top: 4px; padding: 11px 14px;
+  border: 0; border-radius: 9px; cursor: pointer;
+  background: var(--blue); color: #fff;
+  font: inherit; font-size: 14px; font-weight: 600;
+}
+.auth-submit:hover:not(:disabled) { background: var(--blueD); }
+.auth-submit:disabled { opacity: 0.6; cursor: default; }
+
+.auth-note {
+  margin: 2px 0 0; font-size: 11.5px; line-height: 1.5;
+  color: var(--text-muted, var(--tx2));
+}
+
+/* The avatar became a button when sign-out landed on it; it must not pick up
+   the browser's default button chrome. */
+.avatar-btn { border: 0; padding: 0; cursor: pointer; font: inherit; }

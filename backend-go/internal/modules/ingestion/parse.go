@@ -29,11 +29,11 @@ const (
 
 var requirementTypes = map[string]bool{
 	"functional": true, "business_rule": true, "data": true,
-	"interface": true, "non_functional": true,
+	"interface": true, "api": true, "non_functional": true,
 }
 
 // sortedTypesRepr mirrors Python's f"{sorted(REQUIREMENT_TYPES)}" in error messages.
-const sortedTypesRepr = "['business_rule', 'data', 'functional', 'interface', 'non_functional']"
+const sortedTypesRepr = "['api', 'business_rule', 'data', 'functional', 'interface', 'non_functional']"
 
 // extractPrompt/extractPromptSuffix frame the uploaded document segment as
 // untrusted DATA (prompt-injection hardening): the segment text is sandwiched
@@ -53,7 +53,7 @@ var extractSchema = map[string]any{
 		"external_id":         map[string]any{"type": "string"},
 		"description":         map[string]any{"type": "string"},
 		"acceptance_criteria": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-		"type":                map[string]any{"enum": []any{"business_rule", "data", "functional", "interface", "non_functional"}},
+		"type":                map[string]any{"enum": []any{"api", "business_rule", "data", "functional", "interface", "non_functional"}},
 		"priority":            map[string]any{"type": "string"},
 		"confidence":          map[string]any{"type": "number"},
 	},
