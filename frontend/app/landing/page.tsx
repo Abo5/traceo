@@ -36,8 +36,8 @@ const ACTS: {
     kicker: "Discovery",
     title: "What the application declares about itself",
     body:
-      "No sitemap to author, no configuration to maintain. Traceo renders the page as a browser does and records what is present: every field and its type, whether it is required, the length it permits, the pattern it must match, and the destination of every link.",
-    note: "Move the cursor across the interface — this is what discovery reads.",
+      "No sitemap to author, no configuration to maintain. Traceo renders the page as a browser does and records what is present: every field and its type, whether it is required, the length it permits, the pattern it must match, and the destination of every link. Each requirement on the left carries the observation it came from.",
+    note: "Touch any node and its chain lights in both directions — that is the product, not a flourish.",
   },
   {
     id: 2,
@@ -45,8 +45,8 @@ const ACTS: {
     kicker: "Derivation",
     title: "Cases bound to observed evidence",
     body:
-      "A candidate case must cite something discovery observed, or it is discarded — and counted, so the number is on the record. The three falling out here cite rules this form never declared: a password-strength policy, a two-factor timeout. A suite that asserts behaviour the application never claimed is worse than no suite at all.",
-    note: "Seven retained. Three discarded, and reported as discarded.",
+      "Cases are derived from the requirements beside them, and a thread back to observed evidence is the condition of admission. Watch the three candidates that arrive with no thread at all — a password-strength policy, a two-factor timeout, a referral rule. Nothing holds them up, so they are cut and counted. A suite that asserts behaviour the application never claimed is worse than no suite at all.",
+    note: "Nine retained. Three discarded, and reported as discarded.",
   },
   {
     id: 3,
@@ -54,7 +54,7 @@ const ACTS: {
     kicker: "Execution",
     title: "Performed, not predicted",
     body:
-      "Each case is executed in a browser against the running page: fields are filled, forms are submitted, responses are awaited. Every result recorded here was observed happening — none of it is an estimate of how the application would probably behave.",
+      "Each case is executed in a browser against the running page: fields are filled, forms are submitted, responses are awaited. Every verdict on the right was observed happening — none of it is an estimate of how the application would probably behave.",
     note: "Submissions are dry-run by default; writing to your data requires explicit consent.",
   },
   {
@@ -64,7 +64,7 @@ const ACTS: {
     title: "Every failure, with instructions attached",
     body:
       "Each failure carries a remediation brief assembled from the case, the requirement it violates, and the evidence recorded at the moment it broke. It is deterministic and produced offline, so the same failure yields the same brief on every machine — and the case that produced it is the case that closes it.",
-    note: "Select a marked defect to review its brief, or resolve all three at once.",
+    note: "Select a failed result to review its brief, or resolve all three at once.",
   },
 ];
 
@@ -185,8 +185,8 @@ export default function LandingPage() {
               </a>
             </div>
             <p className={s.hint} data-testid="landing-hint">
-              <span className={s.kbd}>Drag</span> to rotate ·{" "}
-              <span className={s.kbd}>move</span> the cursor to inspect
+              <span className={s.kbd}>Hover</span> a node to trace its chain ·{" "}
+              <span className={s.kbd}>drag</span> to rotate
             </p>
           </div>
           <span className={s.scrollCue} aria-hidden="true" />
