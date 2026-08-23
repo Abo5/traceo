@@ -93,6 +93,7 @@ func Register(r *gin.RouterGroup) {
 	g.GET("/projects/:project_id/web-targets", httpx.Require("view"), listWebTargets)
 	g.GET("/web-targets/:target_id", httpx.Require("view"), getWebTarget)
 	g.GET("/web-targets/:target_id/screenshot", httpx.Require("view"), getScreenshot)
+	registerVerify(g)
 }
 
 func errWith(c *gin.Context, status int, code, message string, errs []string) {
@@ -145,6 +146,12 @@ func viewportHeight(viewport string) int {
 // applies. The sidecar enforces it too — it is the process that actually opens
 // the socket — but a guard that only lives in the child would be bypassed by
 // every other caller of this package.
+// ValidateTargetURL is the exported form the pipeline uses: it must apply the
+// SAME SSRF rule as the single-target route, not a second copy of it.
+func ValidateTargetURL(raw string) (string, string, string) {
+	return validateTargetURL(raw)
+}
+
 func validateTargetURL(raw string) (string, string, string) {
 	target := strings.TrimSpace(raw)
 	parsed, err := url.Parse(target)
@@ -1025,7 +1032,9 @@ func RunDiscovery(job *jobs.Job, orgID, userID, projectID, targetID, target, vie
 			apiReq, _ := upsertRequirement(orgID, projectID, "WEB-"+short+"-API",
 				fmt.Sprintf("The %d backend endpoints called by %s must answer as they "+
 					"were observed to.", len(domEndpoints), inv.FinalURL),
-				criteria, "interface", map[string]any{"url": inv.FinalURL},
+				// Endpoints, not a screen — typed for what actually verifies it.
+				// Mirrors webtarget.py; the two backends are route-for-route identical.
+				criteria, "api", map[string]any{"url": inv.FinalURL},
 				jsonString(criteria), "high")
 			requirementCount++
 			for i := range domEndpoints {

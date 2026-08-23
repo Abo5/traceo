@@ -1,0 +1,9 @@
+{
+  "name": "traceo-web-discovery",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sidecar-only dependencies for the air-gapped image: Playwright and nothing else.",
+  "dependencies": {
+    "playwright": "1.62.1"
+  }
+}

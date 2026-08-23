@@ -68,6 +68,15 @@
  *                     [--username U] [--password P] [--login-url <url>]
  *                     [--username-selector S] [--password-selector S] [--submit-selector S]
  *                     [--max-pages 1] [--max-depth 2]
+ *                     [--session <file>] [--save-session <file>]
+ *
+ * SESSION REUSE
+ *   --save-session writes the browser context (cookies + localStorage) after a
+ *   successful sign-in; --session loads one back, so a later crawl starts already
+ *   authenticated and submits no login form at all. That file IS the session:
+ *   anyone holding it is signed in as that user until it expires, so it is
+ *   written 0600 and belongs wherever the deployment keeps its secrets, never in
+ *   the --out directory that ships beside the report.
  *
  * EXIT CODES
  *   0  success            stdout = the discovery document ({"ok": true, ...})
@@ -925,7 +934,7 @@ async function main() {
       'usage: node discover.mjs --url <url> --out <dir> [--viewport 1280x800] [--timeout 30000] ' +
       '[--username U] [--password P | $TRACEO_CRAWL_PASSWORD] [--login-url <url>] ' +
       '[--username-selector S] [--password-selector S] [--submit-selector S] ' +
-      '[--max-pages 1] [--max-depth 2]',
+      '[--max-pages 1] [--max-depth 2] [--session <file>] [--save-session <file>]',
       undefined, 2);
   }
   if (!args.url) return fail('invalid_arguments', '--url is required.', undefined, 2);
@@ -982,6 +991,19 @@ async function main() {
       undefined, 2);
   }
 
+  // Session reuse. Deliberately resolved OUTSIDE outDir: outDir is the artefact
+  // bundle that travels with the report, and a live session cookie must not
+  // travel with anything.
+  const sessionIn = args.session ? path.resolve(String(args.session)) : null;
+  const sessionOut = args.save_session ? path.resolve(String(args.save_session)) : null;
+  let sessionLoaded = null;   // {path, cookies} once a session file has been read
+  let sessionSaved = null;    // {path, cookies} once one has been written
+  if (sessionOut && path.resolve(sessionOut).startsWith(outDir + path.sep)) {
+    return fail('invalid_arguments',
+      `--save-session must not write inside --out ('${outDir}'): that directory is the ` +
+      'shareable evidence bundle, and a session file is a live credential.', undefined, 2);
+  }
+
   let target;
   try { target = await assertAllowedUrl(String(args.url)); }
   catch (err) {
@@ -1022,11 +1044,29 @@ async function main() {
         undefined, 3);
     }
 
+    // A session file, when one was given, replaces the sign-in entirely: the
+    // context starts with the cookies and localStorage the earlier crawl ended
+    // with. A file that is missing or corrupt is reported, never silently
+    // ignored — "it crawled the public surface again" and "it reused your
+    // session" are different results and must not look alike.
+    let storageState;
+    if (sessionIn) {
+      try {
+        storageState = JSON.parse(fs.readFileSync(sessionIn, 'utf8'));
+        sessionLoaded = { path: sessionIn, cookies: (storageState.cookies || []).length };
+      } catch (err) {
+        return fail('invalid_arguments',
+          `--session '${sessionIn}' could not be read as a Playwright storage state: ${err.message}`,
+          undefined, 2);
+      }
+    }
+
     const context = await browser.newContext({
       viewport,
       deviceScaleFactor: 1,
       ignoreHTTPSErrors: false,
       reducedMotion: 'reduce',
+      ...(storageState ? { storageState } : {}),
       // A plain desktop Chrome UA: some SPAs serve a degraded shell to unknown
       // agents, and a degraded shell has fewer fields, which would silently
       // under-report the surface.
@@ -1367,6 +1407,33 @@ async function main() {
     let credentials = wantLogin ? { username, password, source: 'user' } : null;
     let credentialEvidence = [];
     let login = null;
+
+    /**
+     * Write the browser context to --save-session.
+     *
+     * Called the moment a sign-in succeeds rather than at the end of the run: a
+     * crawl that dies on page nine should still leave behind the session it paid
+     * for, so the retry does not have to sign in again.
+     *
+     * The file is a bearer credential — whoever holds it is signed in as that
+     * user. It is created 0600 and chmod'ed again afterwards, because the mode
+     * argument only applies when the file does not already exist.
+     */
+    const persistSession = async () => {
+      if (!sessionOut) return;
+      try {
+        const state = await context.storageState();
+        fs.mkdirSync(path.dirname(sessionOut), { recursive: true });
+        fs.writeFileSync(sessionOut, JSON.stringify(state), { mode: 0o600 });
+        try { fs.chmodSync(sessionOut, 0o600); } catch { /* best effort on odd filesystems */ }
+        sessionSaved = { path: sessionOut, cookies: (state.cookies || []).length };
+      } catch (err) {
+        // Not fatal: the crawl's findings are still valid without a saved
+        // session. Reported so it cannot be mistaken for a session that saved.
+        sessionSaved = { path: sessionOut, cookies: 0, error: cleanMessage(String(err.message || err)) };
+      }
+    };
+
     let loginPage = null;      // pathKey of the login page, once one has been seen
     let submissions = 0;       // login-form submissions; no other form is ever submitted
     let reauths = 0;
@@ -1535,7 +1602,7 @@ async function main() {
       };
     };
 
-    const markSignedIn = (out) => {
+    const markSignedIn = async (out) => {
       loginPage = pathKey(out.login_url);
       login = {
         attempted: true,
@@ -1560,6 +1627,8 @@ async function main() {
           ? 'Signed in using the credentials this page publishes.'
           : 'Signed in using the credentials supplied.',
       };
+      await persistSession();
+      login.session_saved = sessionSaved;
     };
 
     /** A sign-in is needed and none can be had. Not a failure — a finding. */
@@ -1595,7 +1664,7 @@ async function main() {
         });
       }
       const out = await signIn(landed.record);
-      if (out.ok) markSignedIn(out);
+      if (out.ok) await markSignedIn(out);
       else if (out.reason === 'no_credentials') markLoginRequired(landed.record, out.message);
       else return loginFailed(out.reason, out.message, page.url());
     }
@@ -1719,7 +1788,7 @@ async function main() {
         const requestMark = res.record.requests.length;
         const out = await signIn(res.record);
         if (out.ok) {
-          markSignedIn(out);
+          await markSignedIn(out);
           // The login page IS a crawled page. It is the URL the user named, so
           // dropping it would leave the one address he typed absent from his own
           // result: no screenshot of the logged-out surface, and no requirement
@@ -1768,7 +1837,7 @@ async function main() {
         reauths++;
         const out = await signIn(res.record);
         if (!out.ok) return loginFailed(out.reason, out.message, page.url());
-        markSignedIn(out);
+        await markSignedIn(out);
         const again = await visitPage(item.url, { depth: item.depth, index, screenshotName: shotName });
         if (!again.ok || pathKey(again.record.final_url) === loginPage) {
           addSkip(item.url, 'session_lost');
@@ -1819,6 +1888,12 @@ async function main() {
           : 'Signed in using the credentials supplied'}, then crawled ${tally}.`
         : 'This target requires a sign-in and no credentials were available, so only its public '
           + `surface was crawled: ${tally}.`;
+    // Cookies rotate while a crawl runs. A session that was LOADED is written back
+    // at the end so the file the next crawl reads is the state this crawl ended
+    // with, not the one it started from — otherwise a long-lived session file
+    // decays into a stale one that silently sends the next crawl to the login page.
+    if (sessionOut && sessionLoaded && !sessionSaved) await persistSession();
+
     const doc = {
       ok: true,
       schema_version: SCHEMA_VERSION,
@@ -1850,6 +1925,11 @@ async function main() {
       counts: first.counts,
       page: first.page,
       login,
+      // Reported at the top level, not only under `login`, because the whole
+      // point of a reused session is that no sign-in happens at all — a crawl
+      // that authenticated purely from the file has nothing to say under `login`
+      // and must still be distinguishable from an anonymous crawl.
+      session: (sessionLoaded || sessionSaved) ? { loaded: sessionLoaded, saved: sessionSaved } : null,
       pages,
       crawl: {
         requested_max_pages: maxPages,

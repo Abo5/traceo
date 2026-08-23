@@ -9,7 +9,7 @@ import React, {
 } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { api, getUser } from "@/lib/api";
+import { api, getUser, logout } from "@/lib/api";
 
 /* ============================================================
    App shell — 64px icon rail · 232px sidebar · 56px topbar
@@ -427,9 +427,20 @@ function Topbar({
         </Link>
       )}
 
-      <span className="avatar" aria-hidden>
+      <button
+        type="button"
+        className="avatar avatar-btn"
+        onClick={() => {
+          // Confirmed because the only way back in is a password, and on a
+          // dev-session backend there may not even be one to type.
+          if (window.confirm("Sign out of Traceo?")) logout();
+        }}
+        title="Sign out"
+        aria-label="Sign out"
+        data-testid="nav-signout"
+      >
         {initials}
-      </span>
+      </button>
     </header>
   );
 }

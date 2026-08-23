@@ -23,6 +23,11 @@ GAP_NEXT_ACTIONS = {
     "no_reachable_endpoint": "Import a spec that covers this requirement, or link it manually",
     "all_cases_disabled": "Approve one of the linked cases in review",
     "no_approved_cases": "Generate test cases for this requirement",
+    # A case ran and checked nothing. It is a gap, not coverage — and naming it
+    # separately is what tells the reader the difference between "we have not
+    # tested this yet" and "we tried and learned nothing" (H1/H6).
+    "not_verified": ("The linked case ran but evaluated no assertion. Read its "
+                     "result for the reason, then implement or replace the check"),
 }
 
 RUN_DISPLAY_BASE = 1000  # first run of a project renders as #1001
@@ -115,7 +120,12 @@ def _latest_outcomes(db: Session, case_ids: list[str]) -> dict[str, str]:
 
 
 def _requirement_status(cases: list[dict]) -> str:
-    """FR-TRC-02 status ladder. Only APPROVED cases count as coverage."""
+    """FR-TRC-02 status ladder. Only APPROVED cases count as coverage.
+
+    `inconclusive` sits between "ran and passed" and "never ran", and it must not
+    be folded into either: a requirement whose only case checked nothing is NOT
+    passing, and saying so is the whole point (H1/H6/H8).
+    """
     approved = [c for c in cases if c["state"] == "approved"]
     if not approved:
         return "not_covered"
@@ -126,6 +136,8 @@ def _requirement_status(cases: list[dict]) -> str:
         return "failing"
     if any(o == "errored" for o in outcomes):
         return "errored"
+    if all(o == "inconclusive" for o in outcomes):
+        return "not_verified"
     return "passing"
 
 
@@ -168,8 +180,16 @@ def traceability_matrix(project_id: str, user: User = Depends(require("view")),
 
         if req.state == "confirmed":
             confirmed_total += 1
-            if has_approved:
+            # H6: an approved case that checked nothing is not coverage. Counting
+            # it inflated the headline number with exactly the results that
+            # verified least — the reverse of what the number is for.
+            verified = has_approved and status != "not_verified"
+            if verified:
                 confirmed_covered += 1
+            elif has_approved:
+                gaps.append({"requirement_id": req.id, "external_id": req.external_id,
+                             "reason": "not_verified",
+                             "next_action": GAP_NEXT_ACTIONS["not_verified"]})
             else:
                 reason = gap_reason([c["state"] for c in cases])
                 gaps.append({"requirement_id": req.id, "external_id": req.external_id,

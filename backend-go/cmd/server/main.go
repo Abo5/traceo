@@ -20,6 +20,7 @@ import (
 	"traceo/internal/modules/ingestion"
 	"traceo/internal/modules/insight"
 	"traceo/internal/modules/integrations"
+	"traceo/internal/modules/pipeline"
 	"traceo/internal/modules/projects"
 	"traceo/internal/modules/reference"
 	"traceo/internal/modules/reporting"
@@ -61,6 +62,7 @@ func buildEngine() *gin.Engine {
 		generation.Register, review.Register, execution.Register, traceability.Register,
 		reporting.Register, integrations.Register, reference.Register, insight.Register,
 		secmod.Register, components.Register, webtarget.Register,
+		pipeline.Register,
 	} {
 		reg(v1)
 	}

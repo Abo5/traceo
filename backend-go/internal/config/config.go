@@ -25,23 +25,45 @@ type Settings struct {
 	TokenTTLH   int
 	StorageDir  string
 	MaxUploadMB int64
-	LLMProvider string // auto | mock | anthropic
+	LLMProvider string // auto | mock | anthropic | gemini
 	LLMModel    string
-	PromptVer   string
-	ReqTimeoutS float64
-	RunTimeoutS float64
-	RunConc     int
-	EvidenceMax int
-	CORSOrigins []string
-	SeedDemo    bool
+	// Its own field rather than a shared one: LLMModel carries a Claude model id,
+	// and a deployment that configures both providers must never hand one
+	// provider's model name to the other.
+	GeminiModel string
+	GeminiKey   string
+	// --- self-hosted model (air-gapped deployments, NFR-D1) ----------------
+	// Any server speaking the OpenAI chat-completions shape: Ollama, llama.cpp,
+	// vLLM, TGI. A base URL is what makes the provider available at all — there
+	// is no default endpoint, because guessing localhost would turn "no model
+	// configured" into a connection error nobody asked for.
+	LocalLLMBaseURL string
+	LocalLLMModel   string
+	LocalLLMKey     string
+	LLMTimeoutS     int
+	LLMMaxTokens    int
+	PromptVer       string
+	ReqTimeoutS     float64
+	RunTimeoutS     float64
+	RunConc         int
+	EvidenceMax     int
+	CORSOrigins     []string
+	SeedDemo        bool
 
 	// --- Web target discovery (browser sidecar) ---------------------------
 	// The target page is rendered by a Node/Playwright sidecar shared with the
 	// Python backend; a plain HTTP GET of a SPA returns a shell with zero forms,
 	// so server-side HTML parsing would discover nothing at all.
-	WebDiscoveryScript  string
+	WebDiscoveryScript string
+	// WebCheckScript is the companion that EXECUTES what discovery generated. A
+	// separate script rather than a mode of the first because the two do opposite
+	// things: one reads a page without touching it, the other types into it.
+	WebCheckScript      string
 	NodeBin             string
 	WebDiscoveryTimeout float64
+	// A page of 40+ cases, each re-rendered for isolation, legitimately takes
+	// minutes. The ceiling is a runaway guard, not a performance target.
+	WebCheckTimeout float64
 	// AllowPrivateTargets relaxes the SSRF rule so the stack can be pointed at a
 	// local application under test.
 	AllowPrivateTargets bool
@@ -101,21 +123,39 @@ func Load() {
 		MaxUploadMB: int64(envInt("TRACEO_MAX_UPLOAD_MB", 50)),
 		LLMProvider: env("TRACEO_LLM_PROVIDER", "auto"),
 		LLMModel:    env("TRACEO_LLM_MODEL", "claude-opus-5"),
-		PromptVer:   "v1.0",
-		ReqTimeoutS: envF("TRACEO_REQUEST_TIMEOUT_S", 30),
-		RunTimeoutS: envF("TRACEO_RUN_TIMEOUT_S", 600),
-		RunConc:     envInt("TRACEO_RUN_CONCURRENCY", 8),
-		EvidenceMax: envInt("TRACEO_EVIDENCE_MAX_BYTES", 16384),
-		CORSOrigins: []string{"http://localhost:3000", "http://127.0.0.1:3000"},
-		SeedDemo:    env("TRACEO_SEED_DEMO", "1") == "1",
+		GeminiModel: env("TRACEO_GEMINI_MODEL", "gemini-3.5-flash"),
+		// GOOGLE_API_KEY is accepted as an alias: it is what the Google SDKs and
+		// Cloud Shell already export.
+		GeminiKey: env("GEMINI_API_KEY", os.Getenv("GOOGLE_API_KEY")),
+		// Trailing slashes are stripped so both forms of the setting work:
+		// "http://ollama:11434/v1" and "http://ollama:11434/v1/".
+		LocalLLMBaseURL: strings.TrimRight(env("TRACEO_LOCAL_LLM_BASE_URL", ""), "/"),
+		LocalLLMModel:   env("TRACEO_LOCAL_LLM_MODEL", "qwen2.5-coder:7b"),
+		LocalLLMKey:     env("TRACEO_LOCAL_LLM_API_KEY", ""),
+		// A model call is not a call to the system under test: a reasoning model
+		// answering a long document legitimately outlives the SUT timeout.
+		LLMTimeoutS: envInt("TRACEO_LLM_TIMEOUT_S", 120),
+		// Thinking models spend this budget on reasoning before the answer, so it
+		// must clear the answer by a wide margin or every call truncates.
+		LLMMaxTokens: envInt("TRACEO_LLM_MAX_TOKENS", 8192),
+		PromptVer:    "v1.0",
+		ReqTimeoutS:  envF("TRACEO_REQUEST_TIMEOUT_S", 30),
+		RunTimeoutS:  envF("TRACEO_RUN_TIMEOUT_S", 600),
+		RunConc:      envInt("TRACEO_RUN_CONCURRENCY", 8),
+		EvidenceMax:  envInt("TRACEO_EVIDENCE_MAX_BYTES", 16384),
+		CORSOrigins:  []string{"http://localhost:3000", "http://127.0.0.1:3000"},
+		SeedDemo:     env("TRACEO_SEED_DEMO", "1") == "1",
 
 		DevAutologin:      os.Getenv("TRACEO_DEV_AUTOLOGIN") == "1",
 		DevAutologinEmail: env("TRACEO_DEV_AUTOLOGIN_EMAIL", "demo@traceo.sa"),
 
 		WebDiscoveryScript: env("TRACEO_WEB_DISCOVERY_SCRIPT",
 			filepath.Join(filepath.Dir(base), "tools", "web-discovery", "discover.mjs")),
+		WebCheckScript: env("TRACEO_WEB_CHECK_SCRIPT",
+			filepath.Join(filepath.Dir(base), "tools", "web-discovery", "check.mjs")),
 		NodeBin:             env("TRACEO_NODE_BIN", "node"),
 		WebDiscoveryTimeout: envF("TRACEO_WEB_DISCOVERY_TIMEOUT_S", 30),
+		WebCheckTimeout:     envF("TRACEO_WEB_CHECK_TIMEOUT_S", 900),
 		AllowPrivateTargets: os.Getenv("TRACEO_ALLOW_PRIVATE_TARGETS") == "1",
 		PageLoadBudgetMS:    envInt("TRACEO_PAGE_LOAD_BUDGET_MS", 3000),
 		DesignMaxPixels:     envInt("TRACEO_DESIGN_MAX_PIXELS", 1200000),

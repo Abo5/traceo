@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import json
 
-from ..config import settings
 from ..llm import UNTRUSTED_NOTE, frame_untrusted, get_provider
 
 # Enough of a page to reason about, small enough that a 25-page crawl does not
@@ -273,5 +272,11 @@ MODEL_NAME_FALLBACK = "mock-deterministic"
 
 
 def model_name(provider=None) -> str:
+    """The model that actually produced the output, for the case's provenance.
+
+    Never falls back to settings.LLM_MODEL: that is the model id configured for
+    the *anthropic* provider, so on any other provider it would stamp a model
+    that was never called onto evidence a customer is expected to rely on.
+    """
     provider = provider or get_provider()
-    return getattr(provider, "model", None) or settings.LLM_MODEL or MODEL_NAME_FALLBACK
+    return getattr(provider, "model", None) or MODEL_NAME_FALLBACK

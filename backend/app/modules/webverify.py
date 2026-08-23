@@ -29,13 +29,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -64,7 +65,24 @@ BROWSER_CHECKS = frozenset({
     # functionality: what the form DOES once it is filled in correctly
     "happy_path", "error_recovery", "submit_gated", "conditional_fields",
     "initial_state", "links_resolve",
+    # design and accessibility, measured on the live DOM (TR-008/TR-010/TR-011).
+    # These were generated in bulk and run by nobody: 68% of the cases on a real
+    # target were of these types, and the one that had MEASURED a failing 1.33:1
+    # contrast was never executed.
+    "contrast_aa", "element_present", "element_box", "surface_present",
+    "palette_closed", "a11y_audit",
 })
+
+# Checks the browser runner can never answer, each with the reason. They are
+# DECLARED here rather than skipped in silence: the runner reports them
+# `unsupported`, and the coverage numbers exclude them (H1/H6/H9).
+UNSUPPORTED_CHECKS = {
+    "surface_share": ("share is measured by counting screenshot pixels; the DOM "
+                      "can only estimate it, and an estimate reported as a pass "
+                      "or a fail would be a guess"),
+    "alignment": "derived from a raster projection profile, not from element boxes",
+    "spacing": "derived from a raster projection profile, not from element boxes",
+}
 
 
 def _now() -> datetime:
@@ -75,12 +93,28 @@ def _now() -> datetime:
 # sidecar
 # ---------------------------------------------------------------------------
 
-def check_command(plan_path: str, timeout_ms: int) -> list[str]:
-    return [settings.NODE_BIN, str(settings.WEB_CHECK_SCRIPT),
-            "--plan", plan_path, "--timeout", str(timeout_ms)]
+# Artefacts live under one directory per run, so a run's evidence is deleted by
+# deleting one directory and a stale run can never serve another run's frames.
+RUN_ARTIFACT_DIR = "runs"
 
 
-def run_check_sidecar(plan: dict, timeout_s: float | None = None) -> dict:
+def run_artifacts_dir(run_id: str) -> Path:
+    return settings.STORAGE_DIR / RUN_ARTIFACT_DIR / run_id
+
+
+def check_command(plan_path: str, timeout_ms: int,
+                  artifacts_dir: str | None = None) -> list[str]:
+    cmd = [settings.NODE_BIN, str(settings.WEB_CHECK_SCRIPT),
+           "--plan", plan_path, "--timeout", str(timeout_ms),
+           "--step-wait", str(settings.WEB_STEP_WAIT_MS),
+           "--step-wait-retry", str(settings.WEB_STEP_WAIT_RETRY_MS)]
+    if artifacts_dir:
+        cmd += ["--artifacts", artifacts_dir]
+    return cmd
+
+
+def run_check_sidecar(plan: dict, timeout_s: float | None = None,
+                      artifacts_dir: str | None = None) -> dict:
     """Drive the browser over `plan` and return the sidecar's JSON document.
 
     Mirrors `webtarget.run_sidecar`, including its one non-negotiable: a missing
@@ -100,7 +134,7 @@ def run_check_sidecar(plan: dict, timeout_s: float | None = None) -> dict:
     try:
         json.dump(plan, tmp)
         tmp.close()
-        cmd = check_command(tmp.name, int(min(timeout_s, 120) * 1000))
+        cmd = check_command(tmp.name, int(min(timeout_s, 120) * 1000), artifacts_dir)
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True,
                                   timeout=timeout_s + 30.0, env=env, cwd=str(script.parent))
@@ -163,7 +197,15 @@ def collect_browser_cases(db: Session, org_id: str, project_id: str,
     on "everything in the project") is what keeps two targets in one project from
     verifying each other's pages.
     """
+    # Every page the crawl actually visited, not just the URL it started from.
+    # Matching on the entry URL alone silently dropped every case written from a
+    # page behind the login — which is most of what a deep crawl is for (TR-009).
     urls = {u for u in (target.url, target.final_url) if u}
+    for page in ((target.inventory or {}).get("pages") or []):
+        for key in ("url", "final_url"):
+            value = page.get(key)
+            if value:
+                urls.add(value)
     cases = db.scalars(select(TestCase).where(
         TestCase.project_id == project_id,
         TestCase.organisation_id == org_id,
@@ -239,6 +281,9 @@ def _evidence_for(result: dict, url: str) -> list[dict]:
         "response": {"status": None, "headers": {},
                      "body": f"{len(result.get('assertions') or [])} browser assertion(s)"},
         "elapsed_ms": int(result.get("duration_ms") or 0),
+        # Only present for browser results; the report renders it when it is there
+        # and is unchanged for every other engine.
+        **({"timing": result["timing"]} if result.get("timing") else {}),
         "assertions": [{
             "assertion": {"type": a.get("type"), "expected": a.get("expected"),
                           **({"selector": a["selector"]} if a.get("selector") else {})},
@@ -283,8 +328,16 @@ def run_verify_job(job, org_id: str, user_id: str, project_id: str,
             "cases": [_plan_case(c, s) for c, s in selected],
         }
 
+        artefacts = run_artifacts_dir(run.id)
         try:
-            doc = run_check_sidecar(plan)
+            artefacts.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # Evidence is valuable but never a precondition: a run that cannot
+            # write artefacts still produces its verdicts.
+            artefacts = None
+
+        try:
+            doc = run_check_sidecar(plan, artifacts_dir=str(artefacts) if artefacts else None)
         except JobError:
             run.state = "aborted"
             run.finished_at = _now()
@@ -309,6 +362,21 @@ def run_verify_job(job, org_id: str, user_id: str, project_id: str,
                 duration = int(result.get("duration_ms") or 0)
                 failure = result.get("failure")
                 assertions = result.get("assertions") or []
+                # How much patience this verdict was given. A failure that stood
+                # after the wider retry budget is a finding about the application;
+                # one that passed only on the retry was a finding about the clock.
+                # Recording which is which is the difference between a report that
+                # can be acted on and a number that has to be taken on trust.
+                timing = {"step_wait_ms": result.get("step_wait_ms"),
+                          "retried": bool(result.get("retried")),
+                          "retried_after": result.get("retried_after")}
+                # Recorded as a plain flag, not a path: the route derives the
+                # location from run id + case id, so a stored path can never drift
+                # from where the file actually is, nor be used to read elsewhere.
+                if result.get("screenshot"):
+                    timing["screenshot"] = True
+                if result.get("screenshot_error"):
+                    timing["screenshot_error"] = result["screenshot_error"]
 
             counts["total"] += 1
             counts[outcome] = counts.get(outcome, 0) + 1
@@ -317,7 +385,8 @@ def run_verify_job(job, org_id: str, user_id: str, project_id: str,
                 # A skipped case is not a passed case: the DB stores what happened.
                 outcome=outcome, duration_ms=duration,
                 failure_reason=failure if outcome in ("failed", "errored") else None,
-                evidence=_evidence_for({"assertions": assertions, "duration_ms": duration}, url),
+                evidence=_evidence_for({"assertions": assertions, "duration_ms": duration,
+                                        "timing": timing}, url),
             ))
 
         run.state = "completed"
@@ -327,7 +396,9 @@ def run_verify_job(job, org_id: str, user_id: str, project_id: str,
               {"target_id": target_id, "url": url, **counts})
         db.commit()
         return {"run_id": run.id, "counts": counts, "url": url,
-                "load_ms": doc.get("load_ms")}
+                "load_ms": doc.get("load_ms"),
+                "video": bool(doc.get("video")),
+                "video_error": doc.get("video_error")}
     finally:
         db.close()
 
@@ -376,3 +447,54 @@ def verify_web_target(target_id: str,
         project_id=project_id)
     return {"job_id": job.id, "run_id": run_id, "cases": len(selected),
             "environment_id": env.id}
+
+
+# ---------------------------------------------------------------------------
+# run artefacts — the recording of a run and the frame behind each verdict
+# ---------------------------------------------------------------------------
+
+def _run_scoped(run_id: str, user: User, db: Session) -> Run:
+    """A run is readable only from the organisation that owns it (FR-USR-04).
+
+    Artefacts are page contents — forms, records, whatever the target rendered —
+    so they carry the same isolation as every other run read. Answering 404 for
+    another tenant's run rather than 403 keeps the route from confirming that the
+    id exists at all.
+    """
+    run = db.get(Run, run_id)
+    if not run or run.organisation_id != user.organisation_id:
+        raise HTTPException(404, detail={"code": "not_found", "message": "Run not found"})
+    return run
+
+
+@router.get("/runs/{run_id}/video")
+def get_run_video(run_id: str, user: User = Depends(require("view")),
+                  db: Session = Depends(get_db)):
+    """The whole run as one recording, first case to last."""
+    _run_scoped(run_id, user, db)
+    path = run_artifacts_dir(run_id) / "video" / "run.webm"
+    if not path.is_file():
+        raise HTTPException(404, detail={
+            "code": "no_video",
+            "message": "This run has no recording. Only browser runs are recorded, "
+                       "and only when the runner was given an artefacts directory."})
+    return Response(content=path.read_bytes(), media_type="video/webm",
+                    headers={"Cache-Control": "no-store"})
+
+
+@router.get("/runs/{run_id}/results/{case_id}/screenshot")
+def get_run_result_screenshot(run_id: str, case_id: str,
+                              user: User = Depends(require("view")),
+                              db: Session = Depends(get_db)):
+    """The page as it stood when this case was judged."""
+    _run_scoped(run_id, user, db)
+    # The id is rewritten exactly as the runner rewrote it when naming the file,
+    # so the lookup cannot be steered out of the run's own directory.
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", case_id)[:120] or "case"
+    path = run_artifacts_dir(run_id) / "shots" / f"{safe}.png"
+    if not path.is_file():
+        raise HTTPException(404, detail={
+            "code": "no_screenshot",
+            "message": "No screenshot for this case. Passing cases are not captured."})
+    return Response(content=path.read_bytes(), media_type="image/png",
+                    headers={"Cache-Control": "no-store"})

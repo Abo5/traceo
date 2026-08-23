@@ -14,6 +14,9 @@
  *
  * Contract
  *   node check.mjs --plan <file.json> [--timeout 30000] [--out <dir>]
+ *                  [--step-wait 3000] [--step-wait-retry 6000]
+ *                  [--artifacts <dir>]   record a video of the whole run and a
+ *                                        screenshot of every non-passing case
  *
  *   plan  = {url, viewport, timeout_ms?, cases: [{id, checks: [step, ...]}]}
  *           where `step` is a stored TestStep: {request: {check, ...}, assertions: [...]}
@@ -51,9 +54,70 @@ const DEFAULTS = {
   hydrate: 5000,
   perCase: 10000,      // ceiling for one case's interactions
   maxCases: 500,
+  // Per-step response budget. Every step waits for the page to answer what the
+  // previous action did before it asserts, because asserting on a page that has
+  // not finished responding reports the application as broken when it is merely
+  // slow — the single largest source of false failures in a browser suite.
+  // It is a CEILING, not a sleep: a page that settles in 80ms costs 80ms.
+  stepWait: 3000,
+  // Second chance for a case that failed or errored at the base budget. A slow
+  // page and a broken one look identical in one attempt; they stop looking alike
+  // when the slow one is given twice the time and then passes. A case that fails
+  // at BOTH budgets is reported as it stands — that is a real defect, and
+  // retrying it further would only bury it.
+  stepWaitRetry: 6000,
 };
 
+// The live per-step budget. Module-level because every checker below applies it
+// to its own element operations: a budget the step waits on but the click inside
+// it ignores would be a budget in name only.
+let STEP_WAIT = DEFAULTS.stepWait;
+
+/**
+ * Give the page up to `budget` ms to finish responding, and return the moment it
+ * has — the budget is a ceiling, never a sleep.
+ *
+ * Stability is measured on the DOM rather than on the network. `networkidle`
+ * looks like the obvious signal and is the wrong one here: a page holding any
+ * long-lived connection — a dev server's HMR socket, a chat channel, an
+ * analytics beacon, a poll — never reaches it, so every step would burn the
+ * entire budget and a fast page would be billed as a slow one. Measured against
+ * the real suite that mistake cost 2.08x wall-clock for no extra certainty.
+ *
+ * Two consecutive identical readings of the document's size mean the page has
+ * stopped changing, which is what the next assertion actually depends on. A page
+ * still rendering keeps changing and keeps its remaining budget; one that never
+ * settles hits the ceiling and proceeds, because the budget bounds the wait and
+ * the assertion decides the verdict.
+ */
+async function settle(page, budget = STEP_WAIT) {
+  const deadline = Date.now() + budget;
+  await page.waitForLoadState('domcontentloaded', { timeout: budget }).catch(() => {});
+  let previous = -1;
+  while (Date.now() < deadline) {
+    const size = await page
+      .evaluate(() => (document.body ? document.body.innerHTML.length : 0))
+      .catch(() => -1);
+    // -1 means the page is mid-navigation and cannot be read; that is a change,
+    // not a stable state, so it must not be allowed to match a previous -1.
+    if (size >= 0 && size === previous) return;
+    previous = size;
+    const left = deadline - Date.now();
+    if (left <= 0) return;
+    await page.waitForTimeout(Math.min(120, left));
+  }
+}
+
 // --------------------------------------------------------------------------- output
+
+/**
+ * A case id is chosen by the backend and reaches us as data, so it is never
+ * spliced into a filesystem path unsanitised: '../' in an id would otherwise
+ * write the screenshot outside the artefacts directory.
+ */
+function safeName(value) {
+  return String(value).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120) || 'case';
+}
 
 function emit(doc, exitCode) {
   process.stdout.write(JSON.stringify(doc, null, 2) + '\n');
@@ -183,9 +247,9 @@ async function locate(page, selector) {
  * bypasses maxlength on some engines, which would make the check meaningless.
  */
 async function typeInto(loc, value) {
-  await loc.click({ timeout: 2000 }).catch(() => {});
+  await loc.click({ timeout: STEP_WAIT }).catch(() => {});
   await loc.fill('').catch(() => {});
-  await loc.type(String(value), { delay: 0, timeout: 4000 });
+  await loc.type(String(value), { delay: 0, timeout: STEP_WAIT });
 }
 
 /** A plausible value for a field, from its type — never invented beyond that. */
@@ -272,14 +336,14 @@ async function checkRequiredField(page, step) {
   if (formSel) {
     const submit = page.locator(`${formSel} [type=submit], ${formSel} button:not([type=button])`).first();
     if (await submit.count().then((c) => c > 0).catch(() => false)) {
-      await submit.click({ timeout: 3000 }).catch(() => {});
+      await submit.click({ timeout: STEP_WAIT }).catch(() => {});
       submitted = true;
     }
   }
   if (!submitted) {
-    await page.locator(emptySel).first().press('Enter', { timeout: 3000 }).catch(() => {});
+    await page.locator(emptySel).first().press('Enter', { timeout: STEP_WAIT }).catch(() => {});
   }
-  await page.waitForTimeout(700);
+  await settle(page);
 
   const navigated = page.url() !== urlBefore;
 
@@ -493,12 +557,12 @@ async function checkValue(page, step, kind, opts) {
   if (req.form) {
     const submit = page.locator(`${req.form} [type=submit], ${req.form} button:not([type=button])`).first();
     if (await submit.count().then((c) => c > 0).catch(() => false)) {
-      await submit.click({ timeout: 3000 }).catch(() => {});
+      await submit.click({ timeout: STEP_WAIT }).catch(() => {});
       submitted = true;
     }
   }
-  if (!submitted) await loc.press('Enter', { timeout: 3000 }).catch(() => {});
-  await page.waitForTimeout(600);
+  if (!submitted) await loc.press('Enter', { timeout: STEP_WAIT }).catch(() => {});
+  await settle(page);
   const navigated = page.url() !== urlBefore;
 
   if (navigated) {
@@ -604,17 +668,17 @@ async function fillAll(page, fill) {
 async function submitForm(page, formSel) {
   const submit = page.locator(`${formSel} [type=submit], ${formSel} button:not([type=button])`).first();
   if (await submit.count().then((c) => c > 0).catch(() => false)) {
-    await submit.click({ timeout: 4000 }).catch(() => {});
+    await submit.click({ timeout: STEP_WAIT }).catch(() => {});
     return true;
   }
   await page.locator(`${formSel} input, ${formSel} textarea`).first()
-    .press('Enter', { timeout: 3000 }).catch(() => {});
+    .press('Enter', { timeout: STEP_WAIT }).catch(() => {});
   return false;
 }
 
 /** Did the form go through? Navigation, an intercepted request, or the form gone. */
 async function submissionOutcome(page, formSel, trap, urlBefore) {
-  await page.waitForTimeout(450);
+  await settle(page);
   const navigated = page.url() !== urlBefore;
   const intercepted = trap.seen.length > 0;
   const formGone = (await page.locator(formSel).count().catch(() => 1)) === 0;
@@ -792,10 +856,28 @@ async function checkConditionalFields(page, step) {
 }
 
 /** 5. DEFAULTS — the page loads as discovery recorded it. */
+/**
+ * Field names whose value is SUPPOSED to change on every load.
+ *
+ * A CSRF token that came back identical would be the defect. Flagging its change
+ * as "the page no longer loads as it did" was the runner's loudest false
+ * positive on a real target — one of only two findings it produced on OrangeHRM,
+ * and both were wrong (TR-014).
+ */
+const VOLATILE_FIELD = /(^|[_\-\[])(csrf|xsrf|_token|authenticity_token|nonce|state|timestamp|ts|request_id|session)([_\-\]]|$)/i;
+
+function isVolatile(selector) {
+  return VOLATILE_FIELD.test(String(selector || ''));
+}
+
 async function checkInitialState(page, step) {
-  const defaults = (step.request || {}).defaults || [];
+  const all = (step.request || {}).defaults || [];
+  const defaults = all.filter((d) => !isVolatile(d.selector));
+  const ignored = all.length - defaults.length;
   if (!defaults.length) {
-    return record('initial_state', 'skipped', null, null, 'no initial state recorded');
+    return record('initial_state', 'skipped', null, null,
+      ignored ? `only ${ignored} volatile field(s) recorded — nothing stable to compare`
+        : 'no initial state recorded');
   }
   const drifted = [];
   for (const d of defaults) {
@@ -817,28 +899,72 @@ async function checkInitialState(page, step) {
     'initial_state',
     drifted.length ? 'failed' : 'passed',
     'the recorded initial state',
-    drifted.length ? drifted.join('; ') : `${defaults.length} control(s) unchanged`,
+    drifted.length ? drifted.join('; ')
+      : `${defaults.length} control(s) unchanged`
+        + (ignored ? ` (${ignored} volatile field(s) excluded)` : ''),
     drifted.length ? `The page no longer loads as it did: ${drifted.join('; ')}.` : null);
 }
 
 /** 6. NAVIGATION — every discovered link resolves. */
+/**
+ * Statuses that mean "you are a bot", not "this link is broken".
+ *
+ * LinkedIn answers 999 to any automated request and Facebook answers 400; both
+ * were reported as defects in the product under test, which they are not. A
+ * finding that names someone else's anti-bot policy costs the reader more than
+ * it gives them (TR-014, NF-03).
+ */
+const BOT_WALL = new Set([401, 403, 405, 406, 429, 451, 503, 999]);
+
 async function checkLinksResolve(page, step) {
   const links = (step.request || {}).links || [];
   if (!links.length) return record('links_resolve', 'skipped', null, null, 'no links recorded');
+
+  // Off-origin links belong to somebody else's uptime. They are checked only
+  // when the case asks for it, and never counted as a defect in this product.
+  let origin = '';
+  try { origin = new URL(page.url()).origin; } catch { /* keep the empty origin */ }
+  const sameOrigin = (href) => {
+    try { return new URL(href, page.url()).origin === origin; } catch { return false; }
+  };
+  const includeExternal = (step.request || {}).include_external === true;
+
   const broken = [];
+  const blocked = [];
+  const skippedExternal = [];
   for (const link of links) {
+    if (!sameOrigin(link.href)) {
+      if (!includeExternal) { skippedExternal.push(link.href); continue; }
+    }
     try {
       const res = await page.request.get(link.href, { timeout: 10000, maxRedirects: 5 });
-      if (res.status() >= 400) broken.push(`${res.status()} ${link.href}`);
+      const status = res.status();
+      if (status < 400) continue;
+      if (!sameOrigin(link.href) && BOT_WALL.has(status)) {
+        blocked.push(`${status} ${link.href}`);
+      } else {
+        broken.push(`${status} ${link.href}`);
+      }
     } catch (err) {
-      broken.push(`unreachable ${link.href}`);
+      (sameOrigin(link.href) ? broken : blocked).push(`unreachable ${link.href}`);
     }
+  }
+
+  const checked = links.length - skippedExternal.length;
+  const notes = [];
+  if (skippedExternal.length) notes.push(`${skippedExternal.length} external link(s) not checked`);
+  if (blocked.length) notes.push(`${blocked.length} external link(s) behind bot protection: ${blocked.join('; ')}`);
+
+  if (!checked) {
+    return record('links_resolve', 'skipped', 'every link resolves', null,
+      `every link on this page is off-origin${notes.length ? ` — ${notes.join('; ')}` : ''}`);
   }
   return record(
     'links_resolve',
     broken.length ? 'failed' : 'passed',
     'every link resolves',
-    broken.length ? broken.join('; ') : `${links.length} link(s) resolve`,
+    broken.length ? broken.join('; ')
+      : `${checked} link(s) resolve${notes.length ? ` (${notes.join('; ')})` : ''}`,
     broken.length ? `These links do not resolve: ${broken.join('; ')}.` : null);
 }
 
@@ -857,14 +983,471 @@ function checkPageLoad(assertion, elapsedMs) {
       : `The page took ${elapsedMs}ms to load against a ${budget}ms budget.`);
 }
 
+// --------------------------------------------------------------- design & a11y
+//
+// These used to be skipped wholesale: `skipDesign()` returned "measured from the
+// screenshot, not the live DOM" for every one of them, so 68% of the cases the
+// platform generated could never run and the case that HAD measured a failing
+// 1.33:1 contrast was never executed (TR-008).
+//
+// Most of them can be measured live, and measuring live is strictly better: the
+// discovery raster answers "what colour is this pixel", the DOM answers "what
+// colour is this TEXT on ITS OWN background", which is the question WCAG asks
+// (TR-010). Three of them genuinely cannot be reproduced from the DOM, and those
+// are DECLARED unsupported rather than skipped in silence.
+
+/** Facts derived from a raster projection profile. The DOM cannot reproduce them. */
+const RASTER_ONLY = {
+  surface_share: 'share is measured by counting screenshot pixels; the DOM can only '
+    + 'estimate it, and an estimate reported as a pass or a fail would be a guess',
+  alignment: 'alignment is derived from a raster projection profile, not from element boxes',
+  spacing: 'the rhythm is derived from a raster projection profile, not from element boxes',
+};
+
+function unsupported(type) {
+  // A distinct outcome from `skipped`: this is a standing statement about what
+  // the runner can and cannot do, not a per-run accident. The backend excludes
+  // it from coverage instead of counting it as a pass (H1/H6).
+  return { ...record(type, 'unsupported', null, null, RASTER_ONLY[type]), permanent: true };
+}
+
+const hex = (rgb) => '#' + rgb.map((n) => Math.round(n).toString(16).padStart(2, '0')).join('').toUpperCase();
+
+function parseColour(value) {
+  if (!value) return null;
+  if (Array.isArray(value)) return value.slice(0, 3).map(Number);
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(value).trim());
+  if (m) {
+    const n = parseInt(m[1], 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  const rgb = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i.exec(String(value));
+  return rgb ? [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])] : null;
+}
+
+/** WCAG 2.1 relative luminance and contrast ratio — the arithmetic in the spec. */
+function luminance([r, g, b]) {
+  const f = (c) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+
+function contrastRatio(a, b) {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+const near = (a, b, tol = 8) => a && b && a.every((v, i) => Math.abs(v - b[i]) <= tol);
+
 /**
- * Design/a11y facts were measured from the discovery screenshot, not from the
- * live DOM, so this script cannot re-derive them. Saying so is the correct
- * outcome; claiming a pass would be a fabricated verification.
+ * Every visible text run on the page with the colours it is actually painted in.
+ *
+ * Walks up for the first non-transparent background, which is what the eye sees
+ * and what the raster sampler could only approximate. Font size and weight come
+ * back too, because WCAG's threshold is 3:1 for large text and 4.5:1 for the
+ * rest — a checker that applies 4.5 to everything reports headings as failures.
  */
-function skipDesign(type) {
-  return record(type, 'skipped', null, null,
-    'design facts are measured from the discovery screenshot, not the live DOM');
+async function readTextStyles(page) {
+  return page.evaluate(() => {
+    const out = [];
+    const seen = new Set();
+    const toRgb = (s) => {
+      const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+))?/i.exec(s || '');
+      return m ? { rgb: [+m[1], +m[2], +m[3]], a: m[4] === undefined ? 1 : +m[4] } : null;
+    };
+    const backdrop = (el) => {
+      let node = el;
+      while (node && node !== document.documentElement) {
+        const bg = toRgb(getComputedStyle(node).backgroundColor);
+        if (bg && bg.a > 0.1) return bg.rgb;
+        node = node.parentElement;
+      }
+      const root = toRgb(getComputedStyle(document.body).backgroundColor);
+      return root && root.a > 0.1 ? root.rgb : [255, 255, 255];
+    };
+    for (const el of document.querySelectorAll('*')) {
+      const text = Array.from(el.childNodes)
+        .filter((n) => n.nodeType === 3)
+        .map((n) => n.textContent.trim())
+        .join(' ')
+        .trim();
+      if (!text) continue;
+      const cs = getComputedStyle(el);
+      if (cs.visibility === 'hidden' || cs.display === 'none' || +cs.opacity === 0) continue;
+      const box = el.getBoundingClientRect();
+      if (box.width < 1 || box.height < 1) continue;
+      const ink = toRgb(cs.color);
+      if (!ink || ink.a < 0.1) continue;
+      const size = parseFloat(cs.fontSize) || 16;
+      const weight = parseInt(cs.fontWeight, 10) || 400;
+      const surface = backdrop(el);
+      const key = ink.rgb.join(',') + '|' + surface.join(',') + '|' + (size >= 18 || (size >= 14 && weight >= 700));
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        ink: ink.rgb,
+        surface,
+        fontSize: size,
+        fontWeight: weight,
+        large: size >= 18.66 || (size >= 14 && weight >= 700),
+        sample: text.slice(0, 60),
+        tag: el.tagName.toLowerCase(),
+      });
+    }
+    return out;
+  });
+}
+
+/** Colour + geometry of every visible element, for the design-fact checks. */
+async function readElementBoxes(page) {
+  return page.evaluate(() => {
+    const out = [];
+    const toRgb = (s) => {
+      const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+))?/i.exec(s || '');
+      return m ? { rgb: [+m[1], +m[2], +m[3]], a: m[4] === undefined ? 1 : +m[4] } : null;
+    };
+    for (const el of document.querySelectorAll('*')) {
+      const cs = getComputedStyle(el);
+      if (cs.visibility === 'hidden' || cs.display === 'none') continue;
+      const b = el.getBoundingClientRect();
+      if (b.width < 2 || b.height < 2) continue;
+      const bg = toRgb(cs.backgroundColor);
+      if (!bg || bg.a < 0.1) continue;
+      out.push({
+        colour: bg.rgb,
+        box: [Math.round(b.x), Math.round(b.y), Math.round(b.width), Math.round(b.height)],
+        area: Math.round(b.width * b.height),
+        tag: el.tagName.toLowerCase(),
+      });
+    }
+    return out;
+  });
+}
+
+async function checkContrastAA(page, step, assertion) {
+  const expected = assertion.expected || step.request?.expected || {};
+  const fact = String(step.request?.fact || '');
+  const m = /contrast:(#[0-9A-Fa-f]{6})_on_(#[0-9A-Fa-f]{6})/.exec(fact);
+  const styles = await readTextStyles(page);
+  if (!styles.length) {
+    return record('contrast_aa', 'skipped', expected, null, 'the page renders no visible text');
+  }
+
+  // The pair the case was written from, measured on the live page.
+  let subject = null;
+  if (m) {
+    const ink = parseColour(m[1]);
+    const surface = parseColour(m[2]);
+    subject = styles.find((s) => near(s.ink, ink) && near(s.surface, surface));
+    if (!subject) {
+      return record('contrast_aa', 'skipped', expected, null,
+        `${m[1]} on ${m[2]} is no longer painted on this page`);
+    }
+  } else {
+    // No fact to anchor to: judge the page by its worst real pair.
+    subject = styles.reduce((worst, s) => {
+      const r = contrastRatio(s.ink, s.surface);
+      return worst === null || r < worst.r ? { ...s, r } : worst;
+    }, null);
+  }
+
+  const ratio = Math.round(contrastRatio(subject.ink, subject.surface) * 100) / 100;
+  // WCAG 2.1: 3:1 for large text, 4.5:1 for the rest. Applying 4.5 to a heading
+  // reports a conforming page as broken.
+  const required = subject.large ? 3 : (Number(expected.min_ratio) || 4.5);
+  const actual = {
+    ratio,
+    required,
+    ink: hex(subject.ink),
+    surface: hex(subject.surface),
+    large_text: !!subject.large,
+    font_px: subject.fontSize,
+    sample: subject.sample,
+  };
+  return record('contrast_aa', ratio >= required ? 'passed' : 'failed',
+    { min_ratio: required }, actual,
+    ratio >= required ? null
+      : `${hex(subject.ink)} on ${hex(subject.surface)} is ${ratio}:1, below the `
+        + `${required}:1 WCAG AA minimum (text: "${subject.sample}")`);
+}
+
+async function checkElementPresent(page, step, assertion) {
+  const expected = assertion.expected || step.request?.expected || {};
+  const want = parseColour(expected.colour);
+  if (!want) return record('element_present', 'skipped', expected, null, 'no colour recorded');
+  const boxes = await readElementBoxes(page);
+  const hit = boxes.find((b) => near(b.colour, want, 6));
+  return record('element_present', hit ? 'passed' : 'failed', hex(want),
+    hit ? { colour: hex(hit.colour), box: hit.box, tag: hit.tag } : null,
+    hit ? null : `no visible element is painted ${hex(want)}`);
+}
+
+async function checkElementBox(page, step, assertion) {
+  const expected = assertion.expected || step.request?.expected || {};
+  const want = expected.box;
+  const tol = Number(expected.tolerance ?? 2);
+  if (!Array.isArray(want) || want.length < 4) {
+    return record('element_box', 'skipped', expected, null, 'no box recorded');
+  }
+  const boxes = await readElementBoxes(page);
+  const hit = boxes.find((b) => b.box.every((v, i) => Math.abs(v - want[i]) <= tol));
+  if (hit) return record('element_box', 'passed', want, hit.box);
+  // Report the nearest box: "no element there" is far less useful than "it moved".
+  const nearest = boxes.reduce((best, b) => {
+    const d = Math.abs(b.box[0] - want[0]) + Math.abs(b.box[1] - want[1])
+      + Math.abs(b.box[2] - want[2]) + Math.abs(b.box[3] - want[3]);
+    return best === null || d < best.d ? { box: b.box, tag: b.tag, d } : best;
+  }, null);
+  return record('element_box', 'failed', want, nearest && nearest.box,
+    nearest ? `nearest element is ${nearest.tag} at ${nearest.box.join(',')} `
+      + `(tolerance ${tol}px)` : 'the page has no comparable element');
+}
+
+async function checkSurfacePresent(page, step, assertion) {
+  const expected = assertion.expected || step.request?.expected || {};
+  const want = parseColour(expected.colour);
+  if (!want) return record('surface_present', 'skipped', expected, null, 'no colour recorded');
+  const boxes = await readElementBoxes(page);
+  const hits = boxes.filter((b) => near(b.colour, want, 6));
+  return record('surface_present', hits.length ? 'passed' : 'failed', hex(want),
+    hits.length ? { count: hits.length, largest: Math.max(...hits.map((h) => h.area)) } : null,
+    hits.length ? null : `${hex(want)} is not painted anywhere on this page`);
+}
+
+async function checkPaletteClosed(page, step, assertion) {
+  const expected = assertion.expected || step.request?.expected || {};
+  const allowed = (expected.allowed || []).map(parseColour).filter(Boolean);
+  if (!allowed.length) {
+    return record('palette_closed', 'skipped', expected, null, 'no palette recorded');
+  }
+  const boxes = await readElementBoxes(page);
+  // Ignore slivers: a 1px hairline is an antialiasing artefact, not a new brand
+  // colour, and reporting it would drown the finding that matters.
+  const strangers = [];
+  for (const b of boxes) {
+    if (b.area < 400) continue;
+    if (allowed.some((c) => near(c, b.colour, 10))) continue;
+    if (!strangers.some((s) => near(s.colour, b.colour, 6))) {
+      strangers.push({ colour: b.colour, box: b.box, tag: b.tag, area: b.area });
+    }
+  }
+  strangers.sort((a, b) => b.area - a.area);
+  const top = strangers.slice(0, 5).map((s) => `${hex(s.colour)} (${s.tag})`);
+  return record('palette_closed', strangers.length ? 'failed' : 'passed',
+    allowed.map(hex), top.length ? top : null,
+    strangers.length ? `${strangers.length} surface colour(s) outside the design: ${top.join(', ')}` : null);
+}
+
+/**
+ * Deterministic accessibility rules over the live DOM (TR-011).
+ *
+ * The crawler never recorded alt text, ARIA state, tabindex, id uniqueness or
+ * table semantics, so a whole class of defect was not merely unchecked — it was
+ * structurally invisible. None of these rules needs a model: each is a fact
+ * about the document, and each names the element it is about so the finding is
+ * actionable rather than a score.
+ */
+async function auditAccessibility(page) {
+  return page.evaluate(() => {
+    const findings = [];
+    const describe = (el) => {
+      const id = el.id ? `#${el.id}` : '';
+      const name = el.getAttribute('name') ? `[name="${el.getAttribute('name')}"]` : '';
+      return `${el.tagName.toLowerCase()}${id}${name}`;
+    };
+    const visible = (el) => {
+      const cs = getComputedStyle(el);
+      return cs.display !== 'none' && cs.visibility !== 'hidden';
+    };
+
+    // 1. duplicate ids — the DOM says getElementById returns the first, so the
+    //    second element is unreachable by id and any label pointing at it is wrong
+    const byId = new Map();
+    for (const el of document.querySelectorAll('[id]')) {
+      const list = byId.get(el.id) || [];
+      list.push(el);
+      byId.set(el.id, list);
+    }
+    for (const [id, list] of byId) {
+      if (list.length > 1) {
+        findings.push({
+          rule: 'duplicate-id',
+          element: `#${id}`,
+          detail: `id "${id}" is used by ${list.length} elements (${list.map(describe).join(', ')})`,
+        });
+      }
+    }
+
+    // 2. every control needs a programmatic name
+    for (const el of document.querySelectorAll('input, select, textarea')) {
+      if (!visible(el) || el.type === 'hidden') continue;
+      const labelled = (el.id && document.querySelector(`label[for="${CSS.escape(el.id)}"]`))
+        || el.closest('label')
+        || el.getAttribute('aria-label')
+        || (el.getAttribute('aria-labelledby')
+          && document.getElementById(el.getAttribute('aria-labelledby')));
+      if (!labelled) {
+        findings.push({
+          rule: 'control-without-label',
+          element: describe(el),
+          detail: el.placeholder
+            ? `only a placeholder ("${el.placeholder}") — a placeholder is not a label`
+            : 'no label, no aria-label, no aria-labelledby',
+        });
+      }
+    }
+
+    // 3. a label pointing at an id that does not exist names nothing
+    for (const label of document.querySelectorAll('label[for]')) {
+      const target = label.getAttribute('for');
+      if (target && !document.getElementById(target)) {
+        findings.push({
+          rule: 'label-for-missing-target',
+          element: `label[for="${target}"]`,
+          detail: `no element has id "${target}", so this label names nothing`,
+        });
+      }
+    }
+
+    // 4. images need alt; a decorative one carries an empty alt on purpose
+    for (const img of document.querySelectorAll('img')) {
+      if (!visible(img)) continue;
+      if (!img.hasAttribute('alt')) {
+        findings.push({
+          rule: 'image-without-alt',
+          element: describe(img) + ` src="${(img.getAttribute('src') || '').slice(0, 60)}"`,
+          detail: 'no alt attribute — a decorative image needs alt="" explicitly',
+        });
+      }
+    }
+
+    // 5. the document must declare its language
+    if (!document.documentElement.getAttribute('lang')) {
+      findings.push({
+        rule: 'html-without-lang',
+        element: 'html',
+        detail: 'the root element declares no language, so screen readers guess the pronunciation',
+      });
+    }
+
+    // 6. a positive tabindex overrides document order for the whole page
+    for (const el of document.querySelectorAll('[tabindex]')) {
+      const value = parseInt(el.getAttribute('tabindex'), 10);
+      if (value > 0) {
+        findings.push({
+          rule: 'positive-tabindex',
+          element: describe(el),
+          detail: `tabindex="${value}" pulls this control out of document order`,
+        });
+      }
+    }
+
+    // 7. a control that opens something must keep aria-expanded truthful
+    for (const el of document.querySelectorAll('[aria-expanded]')) {
+      const controlled = el.getAttribute('aria-controls');
+      if (!controlled) continue;
+      const target = document.getElementById(controlled);
+      if (!target) {
+        findings.push({
+          rule: 'aria-controls-missing-target',
+          element: describe(el),
+          detail: `aria-controls="${controlled}" names no element`,
+        });
+        continue;
+      }
+      const shown = getComputedStyle(target).display !== 'none'
+        && getComputedStyle(target).visibility !== 'hidden';
+      const claims = el.getAttribute('aria-expanded') === 'true';
+      if (shown !== claims) {
+        findings.push({
+          rule: 'aria-expanded-out-of-step',
+          element: describe(el),
+          detail: `aria-expanded="${claims}" while its target is ${shown ? 'visible' : 'hidden'}`,
+        });
+      }
+    }
+
+    // 8. a data table needs a caption and scoped headers to be readable at all
+    for (const table of document.querySelectorAll('table')) {
+      if (!visible(table)) continue;
+      const headers = table.querySelectorAll('th');
+      if (!headers.length) continue;             // a layout table, not a data table
+      if (!table.querySelector('caption')) {
+        findings.push({
+          rule: 'table-without-caption',
+          element: describe(table),
+          detail: 'a data table with no caption cannot be identified out of context',
+        });
+      }
+      const unscoped = Array.from(headers).filter((th) => !th.getAttribute('scope'));
+      if (unscoped.length) {
+        findings.push({
+          rule: 'header-without-scope',
+          element: describe(table),
+          detail: `${unscoped.length} of ${headers.length} header cells carry no scope`,
+        });
+      }
+    }
+
+    // 9. a target smaller than 24x24 CSS px cannot be hit reliably (WCAG 2.2)
+    for (const el of document.querySelectorAll('a[href], button, [role="button"], input[type="button"], input[type="submit"]')) {
+      if (!visible(el)) continue;
+      const b = el.getBoundingClientRect();
+      if (b.width === 0 || b.height === 0) continue;
+      if (b.width < 24 || b.height < 24) {
+        findings.push({
+          rule: 'target-too-small',
+          element: describe(el),
+          detail: `${Math.round(b.width)}x${Math.round(b.height)} px, below the 24x24 minimum`,
+        });
+      }
+    }
+
+    // 10. a field marked required only by a visual asterisk is not marked at all
+    for (const label of document.querySelectorAll('label')) {
+      const marksRequired = /\*/.test(label.textContent || '')
+        || /\*/.test(getComputedStyle(label, '::after').content || '');
+      if (!marksRequired) continue;
+      const target = label.getAttribute('for')
+        ? document.getElementById(label.getAttribute('for'))
+        : label.querySelector('input, select, textarea');
+      if (!target) continue;
+      if (!target.hasAttribute('required') && target.getAttribute('aria-required') !== 'true') {
+        findings.push({
+          rule: 'required-visually-only',
+          element: describe(target),
+          detail: 'the label marks it required with an asterisk, but the control does not',
+        });
+      }
+    }
+
+    return findings;
+  });
+}
+
+async function checkAccessibility(page, step) {
+  const findings = await auditAccessibility(page);
+  if (!findings.length) {
+    return record('a11y_audit', 'passed', 'no accessibility rule violated', { findings: 0 });
+  }
+  const byRule = {};
+  for (const f of findings) (byRule[f.rule] = byRule[f.rule] || []).push(f);
+  const summary = Object.entries(byRule)
+    .map(([rule, list]) => `${rule} x${list.length}`)
+    .join(', ');
+  return record('a11y_audit', 'failed', 'no accessibility rule violated',
+    { findings: findings.length, rules: Object.keys(byRule), detail: findings.slice(0, 25) },
+    `${findings.length} accessibility finding(s): ${summary}`);
+}
+
+/** The submit must not have navigated: a rejected form stays where it is. */
+async function checkNoNavigation(page, step, startUrl) {
+  const now = page.url();
+  const same = now.split('#')[0] === String(startUrl || '').split('#')[0];
+  return record('no_navigation', same ? 'passed' : 'failed', startUrl, now,
+    same ? null : `the page navigated to ${now} instead of reporting the error in place`);
 }
 
 // --------------------------------------------------------------------------- one case
@@ -874,16 +1457,30 @@ async function runCase(page, kase, opts) {
   const assertions = [];
   let errored = null;
 
+  // The budget for THIS attempt. Set per call rather than once at startup so the
+  // retry pass can raise it without disturbing the cases running at the base one.
+  STEP_WAIT = opts.stepWait || DEFAULTS.stepWait;
+
   for (const step of kase.checks || []) {
     const req = step.request || {};
     const check = String(req.check || '');
     const list = step.assertions || [];
 
+    // Before the step reads anything, let the page finish reacting to whatever
+    // the previous step (or the reset navigation) set in motion. Without this the
+    // first step of every case races the page's own hydration, and the assertion
+    // describes a half-built DOM.
+    await settle(page).catch(() => {});
+
     try {
       if (check === 'elements_present') {
         assertions.push(await checkElementsPresent(page, step, list[0] || {}));
       } else if (check === 'required_field_enforced') {
+        const before = page.url();
         assertions.push(await checkRequiredField(page, step));
+        if (list.some((a) => String(a.type) === 'no_navigation')) {
+          assertions.push(await checkNoNavigation(page, step, before));
+        }
         // The submit may have navigated; put the page back for the next case.
         await opts.reset();
       } else if (check === 'maxlength_enforced') {
@@ -908,11 +1505,27 @@ async function runCase(page, kase, opts) {
         assertions.push(await checkLinksResolve(page, step));
       } else if (check === 'page_load_ms') {
         assertions.push(checkPageLoad(list[0] || {}, opts.loadMs));
+      } else if (check === 'contrast_aa') {
+        assertions.push(await checkContrastAA(page, step, list[0] || {}));
+      } else if (check === 'element_present') {
+        assertions.push(await checkElementPresent(page, step, list[0] || {}));
+      } else if (check === 'element_box') {
+        assertions.push(await checkElementBox(page, step, list[0] || {}));
+      } else if (check === 'surface_present') {
+        assertions.push(await checkSurfacePresent(page, step, list[0] || {}));
+      } else if (check === 'palette_closed') {
+        assertions.push(await checkPaletteClosed(page, step, list[0] || {}));
+      } else if (check === 'a11y_audit') {
+        assertions.push(await checkAccessibility(page, step));
+      } else if (RASTER_ONLY[check]) {
+        // Declared, not forgotten: the backend excludes `unsupported` from the
+        // coverage numbers instead of counting it as a pass (H1/H6).
+        assertions.push(unsupported(check));
       } else if (list.length) {
         for (const a of list) {
           const t = String(a.type || 'unknown');
-          assertions.push(['contrast', 'design', 'a11y'].some((k) => t.includes(k))
-            ? skipDesign(t)
+          assertions.push(RASTER_ONLY[t]
+            ? unsupported(t)
             : record(t, 'skipped', a.expected, null, `no browser check implements '${t}'`));
         }
       } else {
@@ -928,10 +1541,14 @@ async function runCase(page, kase, opts) {
 
   const failed = assertions.find((a) => a.outcome === 'failed');
   const anyPassed = assertions.some((a) => a.outcome === 'passed');
+  const anyUnsupported = assertions.some((a) => a.outcome === 'unsupported');
+  // H1: nothing evaluated is never a pass. `unsupported` outranks `skipped`
+  // because it is a permanent statement, not this run's accident.
   const outcome = errored ? 'errored'
     : failed ? 'failed'
       : anyPassed ? 'passed'
-        : 'skipped';
+        : anyUnsupported ? 'unsupported'
+          : 'skipped';
 
   return {
     case_id: kase.id,
@@ -967,11 +1584,36 @@ async function main() {
   if (!plan.url) return fail('bad_arguments', 'plan.url is required', undefined, 2);
   if (!cases.length) return fail('bad_arguments', 'plan.cases is empty', undefined, 2);
 
-  let viewport, timeout;
+  // Artefacts are opt-in: without --artifacts the runner behaves exactly as
+  // before, which keeps the plans that do not want a 20-minute recording cheap.
+  const artifactsDir = args.artifacts || plan.artifacts_dir || null;
+  let shotsDir = null;
+  if (artifactsDir) {
+    try {
+      shotsDir = path.join(artifactsDir, 'shots');
+      fs.mkdirSync(shotsDir, { recursive: true });
+      fs.mkdirSync(path.join(artifactsDir, 'video'), { recursive: true });
+    } catch (err) {
+      return fail('bad_arguments', `cannot create --artifacts dir: ${err.message}`, undefined, 2);
+    }
+  }
+
+  let viewport, timeout, stepWait, stepWaitRetry;
   try {
     viewport = parseViewport(plan.viewport || args.viewport || DEFAULTS.viewport);
     timeout = asInt(args.timeout, plan.timeout_ms || DEFAULTS.timeout, 'timeout');
+    stepWait = asInt(args['step-wait'], plan.step_wait_ms || DEFAULTS.stepWait, 'step-wait');
+    stepWaitRetry = asInt(args['step-wait-retry'],
+      plan.step_wait_retry_ms || DEFAULTS.stepWaitRetry, 'step-wait-retry');
+    // A retry budget at or below the base one would spend the extra pass proving
+    // nothing, so it is raised rather than silently honoured as configured.
+    if (stepWaitRetry <= stepWait) stepWaitRetry = stepWait * 2;
   } catch (err) { return fail('bad_arguments', err.message, undefined, 2); }
+
+  // A full-viewport recording of a run with hundreds of cases is a very large
+  // file. Halving each dimension quarters the pixel count while leaving layout,
+  // navigation and error text readable, which is what the video is watched for.
+  const videoSize = { width: Math.round(viewport.width / 2), height: Math.round(viewport.height / 2) };
 
   let target;
   try { target = await assertAllowedUrl(plan.url); }
@@ -993,10 +1635,17 @@ async function main() {
         undefined, 3);
     }
 
+    // One context, one page, one continuous video: every case in this plan runs
+    // on the same page, so the recording is the whole run end to end rather than
+    // a pile of clips that have to be stitched back together. Playwright writes
+    // the file only on context.close(), which is why the close below is in a
+    // finally and is awaited.
+    const videoDir = artifactsDir ? path.join(artifactsDir, 'video') : null;
     const context = await browser.newContext({
       viewport,
       deviceScaleFactor: 1,
       reducedMotion: 'reduce',
+      ...(videoDir ? { recordVideo: { dir: videoDir, size: videoSize } } : {}),
       userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
         '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 TraceoCheck/1.0',
     });
@@ -1045,17 +1694,86 @@ async function main() {
       // Each case starts from a clean render — an earlier case that typed into a
       // field or submitted a form must not colour the next one's evidence.
       try { await reset(); } catch { /* keep the current page; the case will report */ }
-      results.push(await runCase(page, kase, {
-        reset, loadMs: firstLoadMs, allowSubmit: plan.allow_submit === true }));
+      const base = { reset, loadMs: firstLoadMs, allowSubmit: plan.allow_submit === true };
+      let result = await runCase(page, kase, { ...base, stepWait: stepWait });
+
+      // One retry at the wider budget, and ONLY for a case that did not pass.
+      // A pass is never re-run: it has already answered, and re-running it could
+      // only turn a good result into a flaky one. The retry re-navigates first so
+      // the second attempt starts from the same clean render as the first, making
+      // the extra time the only difference between them.
+      if (result.outcome === 'failed' || result.outcome === 'errored') {
+        try { await reset(); } catch { /* the retry will report what it finds */ }
+        const retried = await runCase(page, kase, { ...base, stepWait: stepWaitRetry });
+        // The retry REPLACES the first verdict either way. If it passed, the
+        // first failure was the clock, not the application. If it failed again,
+        // its evidence is the better record: same defect, observed with twice the
+        // patience, which is what makes the finding worth acting on.
+        result = { ...retried, retried: true, retried_after: result.outcome,
+          step_wait_ms: stepWaitRetry };
+      } else {
+        result = { ...result, step_wait_ms: stepWait };
+      }
+
+      // The screenshot is taken AFTER the verdict and BEFORE the next case's
+      // reset, so it shows the page in the state the assertion actually judged.
+      // Taken for every non-passing case, not only failures: an errored or
+      // skipped case is exactly the one whose reason is hardest to reconstruct
+      // from text, and the frame is often the whole explanation — a consent
+      // banner over the form, a login screen, an empty render.
+      if (shotsDir && result.outcome !== 'passed') {
+        const file = `${safeName(kase.id)}.png`;
+        try {
+          await page.screenshot({ path: path.join(shotsDir, file), fullPage: false });
+          result = { ...result, screenshot: file };
+        } catch (err) {
+          // A screenshot that cannot be taken must not sink the case's real
+          // verdict, which is already decided; the report says it is missing.
+          result = { ...result, screenshot_error: cleanMessage(err.message || err) };
+        }
+      }
+      results.push(result);
+    }
+
+    const finalUrl = page.url();
+
+    // Playwright flushes the recording on context close, and only then is the
+    // file complete on disk — so the close has to happen BEFORE the document is
+    // emitted, not in the finally that tears the browser down afterwards. The
+    // Video handle is taken while the page is still open because it cannot be
+    // obtained from a closed one.
+    let videoFile = null;
+    let videoError = null;
+    if (videoDir) {
+      const video = page.video();
+      try {
+        await context.close();
+        if (video) {
+          const src = await video.path();
+          // Playwright names the file after an internal id; a fixed name is what
+          // lets the backend serve it without recording the name anywhere.
+          videoFile = 'run.webm';
+          const dest = path.join(videoDir, videoFile);
+          if (path.resolve(src) !== path.resolve(dest)) fs.renameSync(src, dest);
+        }
+      } catch (err) {
+        // A recording that failed to save must not discard a run's results.
+        videoFile = null;
+        videoError = cleanMessage(err.message || err);
+      }
     }
 
     emit({
       ok: true,
       schema_version: SCHEMA_VERSION,
       url: target.href,
-      final_url: page.url(),
+      final_url: finalUrl,
       viewport: `${viewport.width}x${viewport.height}`,
       allow_submit: plan.allow_submit === true,
+      step_wait_ms: stepWait,
+      step_wait_retry_ms: stepWaitRetry,
+      video: videoFile,
+      ...(videoError ? { video_error: videoError } : {}),
       load_ms: firstLoadMs,
       elapsed_ms: Date.now() - startedAll,
       results,

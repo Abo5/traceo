@@ -3,8 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import jobs as jobstore
 from .config import settings
-from .db import Base, SessionLocal, engine
+from .db import Base, SessionLocal, engine, sync_schema, _enable_wal_once
 from .deps import get_current_user
+from .llm import provider_status, verify_provider
 from .models import Organisation, User
 from .security import hash_password
 
@@ -58,12 +59,20 @@ def get_job(job_id: str, user=Depends(get_current_user)):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "app": settings.APP_NAME}
+    # The model layer's real state travels with health, so "degraded" is visible
+    # to an operator without reading the log (G4).
+    return {"status": "ok", "app": settings.APP_NAME, "llm": provider_status()}
 
 
 @app.on_event("startup")
 def startup():
+    _enable_wal_once()          # once per database, never per connection (TR-019)
     Base.metadata.create_all(bind=engine)
+    sync_schema()               # columns added after the baseline
+    # G5/TR-007: prove the model layer can answer before anything depends on it.
+    # A provider chosen because an env var existed, that then fails every call,
+    # used to produce confident-looking nonsense under a job reporting success.
+    verify_provider()
     start_scheduler()  # FR-060 daemon thread — guarded internally, starts once
     if settings.SEED_DEMO:
         db = SessionLocal()

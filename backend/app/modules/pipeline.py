@@ -46,6 +46,7 @@ from sqlalchemy.orm import Session
 
 from .. import jobs as jobstore
 from ..db import SessionLocal, get_db
+from ..testtypes import project_test_types
 from ..deps import audit, get_project_scoped, require
 from ..jobs import JobError
 from ..models import (Endpoint, Requirement, RequirementTestCase, Run,
@@ -349,6 +350,17 @@ def run_pipeline_job(job, org_id: str, user_id: str, project_id: str,
         db.close()
 
     if browser_run_id:
+        # The 0.70-0.88 band is allocated to this stage but nothing inside it
+        # reports: run_verify_job hands the whole plan to the sidecar in ONE
+        # blocking call and only writes results once the browser is done. So the
+        # bar sits at exactly 0.70 for the entire phase — minutes, on modest
+        # hardware — which reads as a hang rather than as work in progress. Until
+        # the sidecar streams per-case progress, the message is the only place
+        # that can say so; naming the case count and the expected wait is what
+        # tells a frozen-looking bar apart from a dead one.
+        _say(job, 0.70,
+             f"Running {len(browser_cases)} page checks in a browser — this takes "
+             "several minutes and the progress bar will not move until they finish…")
         try:
             webverify.run_verify_job(_Stage(job, 0.70, 0.88, "Browser checks"),
                                      org_id, user_id, project_id, target_id,
@@ -440,9 +452,26 @@ def start_pipeline(project_id: str, body: PipelineRequest,
     get_project_scoped(project_id, user, db)
     url = webtarget.validate_target_url(body.url)
     viewport = webtarget.validate_viewport(body.viewport)
-    test_types = webtarget.validate_test_types(body.test_types)
+    # Omitting the types runs what the project declared it is for — the same
+    # rule POST /web-targets follows. Rejecting the omission made two endpoints
+    # disagree about one concept, and the field is optional in the model (TR-024).
+    test_types = (webtarget.validate_test_types(body.test_types)
+                  if body.test_types is not None
+                  else list(project_test_types(get_project_scoped(project_id, user, db))))
 
     document_id = None
+    if not body.document_id:
+        # A document uploaded to this project a moment ago IS the document the
+        # user means. Reporting "No document was provided" while one sits in the
+        # project is not a degraded mode, it is a false statement (TR-025, H9).
+        latest = db.scalars(
+            select(SourceDocument)
+            .where(SourceDocument.project_id == project_id,
+                   SourceDocument.organisation_id == user.organisation_id,
+                   SourceDocument.parse_status == "parsed")
+            .order_by(SourceDocument.created_at.desc())).first()
+        if latest is not None:
+            document_id = latest.id
     if body.document_id:
         doc = db.get(SourceDocument, body.document_id)
         if (doc is None or doc.project_id != project_id

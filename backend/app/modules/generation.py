@@ -385,10 +385,22 @@ def _positive_assertions(ep) -> list[dict]:
 
 
 def _error_assertion(ep) -> dict:
-    code = _first_status(ep, 400, 499)
-    if code is not None:
-        return {"type": "status_code", "expected": code}
-    return {"type": "status_code", "expected": 422, "expected_any": [400, 422]}
+    """A malformed request must be refused with a client error.
+
+    This used to demand EXACTLY the first 4xx the endpoint declared. On a secured
+    endpoint that is 401, so a case about an out-of-range `limit` insisted on 401
+    and failed when the target correctly answered 404 or 422 — a false finding
+    whose title claimed it was only checking for the absence of a 5xx (TR-022).
+    Any declared client error is a correct refusal; the case says so.
+    """
+    declared = sorted({int(code) for code in (_epget(ep, "response_schemas") or {})
+                       if str(code).isdigit() and 400 <= int(code) <= 499})
+    if declared:
+        # Prefer the validation codes when the endpoint declares them: a schema
+        # violation answered with 422 is more precise than one answered with 401.
+        preferred = next((c for c in (422, 400, 409, 404) if c in declared), declared[0])
+        return {"type": "status_code", "expected": preferred, "expected_any": declared}
+    return {"type": "status_code", "expected": 422, "expected_any": [400, 404, 409, 422]}
 
 
 # ---------------------------------------------------------------------------
@@ -750,6 +762,8 @@ def _persist_case(db: Session, org_id: str, project_id: str, req: Requirement,
         state="draft", generated=True, model=model_name,
         prompt_version=settings.PROMPT_VERSION, technique=case["technique"],
         edge_category=edge_category,
+        test_type=case_test_type(case, case.get("test_type")),
+        mutates=case_mutates(case),
     )
     db.add(tc)
     db.flush()
@@ -759,6 +773,54 @@ def _persist_case(db: Session, org_id: str, project_id: str, req: Requirement,
                         assertions=s["assertions"], extractions=s.get("extractions") or []))
     db.add(RequirementTestCase(requirement_id=req.id, test_case_id=tc.id,
                                link_source="generated", requirement_version_at_link=req.version))
+    return tc
+
+
+def _link_case(db: Session, case_id: str, req: Requirement) -> None:
+    """Cover one more requirement with a case that already exists."""
+    already = db.scalars(select(RequirementTestCase).where(
+        RequirementTestCase.test_case_id == case_id,
+        RequirementTestCase.requirement_id == req.id)).first()
+    if already is not None:
+        return
+    db.add(RequirementTestCase(requirement_id=case_id and req.id, test_case_id=case_id,
+                               link_source="generated",
+                               requirement_version_at_link=req.version))
+
+
+# --- test type + mutation, decided once (TR-015, TR-016) ---------------------
+
+_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_TRACK_BY_TECHNIQUE = {
+    "security": "security", "design": "ui", "a11y": "ui",
+    "performance": "performance", "edge_case": "functional",
+}
+
+
+def case_test_type(case: dict, explicit: str | None = None) -> str:
+    """Which of the five tracks this case belongs to.
+
+    Stored on the row rather than counted in a local, so a run can be reported
+    per type and the number on screen reconciles with what actually ran.
+    """
+    if explicit:
+        return explicit
+    return _TRACK_BY_TECHNIQUE.get(case.get("technique") or "", "functional")
+
+
+def case_mutates(case: dict) -> bool:
+    """True when running this case changes state on the target.
+
+    Read-only cases run first, so a record one of these creates cannot make an
+    unrelated listing case fail schema validation afterwards.
+    """
+    for step in case.get("steps") or []:
+        if (step.get("method") or "GET").upper() in _WRITE_METHODS:
+            return True
+        request = step.get("request") or {}
+        if request.get("check") in ("happy_path", "submit_gated", "error_recovery"):
+            return True
+    return False
 
 
 def _run_generation(job, org_id: str, user_id: str, project_id: str,
@@ -790,16 +852,25 @@ def _run_generation(job, org_id: str, user_id: str, project_id: str,
             Endpoint.excluded == False)).all()  # noqa: E712
         endpoints_by_key = {(e.method.upper(), e.path): e for e in endpoints}
 
-        # duplicate index over already-approved cases (FR-GEN-11)
-        dup_keys: set[tuple] = set()
-        approved = db.scalars(select(TestCase).where(
+        # Duplicate index over every LIVE case, not just the approved ones, and
+        # keyed to the case it already exists as.
+        #
+        # It used to cover approved cases only, so a case created a moment ago in
+        # this same run was invisible to it: eight requirements that mapped to
+        # one endpoint produced eight identical copies of every case. Measured on
+        # a real project — 336 cases, 57 distinct titles, 83% waste — paid for
+        # eight times over in model calls and again in execution time, with a
+        # traceability matrix that counted the same check eight times (TR-013).
+        dup_case_by_key: dict[tuple, str] = {}
+        live = db.scalars(select(TestCase).where(
             TestCase.project_id == project_id,
             TestCase.organisation_id == org_id,
-            TestCase.state == "approved")).all()
-        for c in approved:
+            TestCase.state != "archived")).all()
+        for c in live:
             first = c.steps[0] if c.steps else None
-            dup_keys.add((c.technique, first.method.upper() if first else "",
-                          first.path if first else "", c.title))
+            key = (c.technique, first.method.upper() if first else "",
+                   first.path if first else "", c.title)
+            dup_case_by_key.setdefault(key, c.id)
 
         provider = get_provider()
         generated = discarded = duplicates = 0
@@ -863,10 +934,19 @@ def _run_generation(job, org_id: str, user_id: str, project_id: str,
                         discarded += 1
                         continue
                     first = case["steps"][0]
-                    if (case["technique"], first["method"], first["path"], case["title"]) in dup_keys:
+                    key = (case["technique"], first["method"], first["path"],
+                           case["title"])
+                    existing = dup_case_by_key.get(key)
+                    if existing is not None:
+                        # The same check, asked for by another requirement. Link
+                        # it rather than copy it: the relation is many-to-many,
+                        # and one case covering three requirements is the truth
+                        # a matrix should show.
                         duplicates += 1
+                        _link_case(db, existing, req)
                         continue
-                    _persist_case(db, org_id, project_id, req, case, model_name)
+                    tc = _persist_case(db, org_id, project_id, req, case, model_name)
+                    dup_case_by_key[key] = tc.id
                     generated += 1
             db.commit()
 

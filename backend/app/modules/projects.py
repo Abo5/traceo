@@ -32,7 +32,9 @@ from .traceability import (GAP_NEXT_ACTIONS, derive_severity, gap_reason,
 
 router = APIRouter()
 
-_AUTH_TYPES = ("none", "api_key", "basic", "bearer", "oauth2_cc")
+# "login" signs in the way the application does and keeps what comes back,
+# so a secured API can actually be exercised rather than probed for 401s.
+_AUTH_TYPES = ("none", "api_key", "basic", "bearer", "oauth2_cc", "login")
 _AUTOMATIONS = ("auto", "manual")
 _TC_STATES = ("draft", "approved", "rejected", "stale", "archived")
 

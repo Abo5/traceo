@@ -16,6 +16,18 @@ const nextConfig = {
   // silently breaks the Dockerfile's COPY. Pinning it to this directory keeps
   // server.js at .next/standalone/server.js on every machine.
   outputFileTracingRoot: here,
+
+  // `next dev` treats a request for its /_next/* dev assets from an origin other
+  // than localhost as cross-origin and refuses it. That makes the app served to
+  // another machine on the LAN load its HTML but none of its JavaScript — a blank
+  // or unstyled page whose failure never mentions origins, so it looks like a
+  // build problem rather than a policy one. These entries are the LAN spellings
+  // of this host; they affect the dev server ONLY and have no bearing on a
+  // production build.
+  allowedDevOrigins: [
+    "192.168.100.202",
+    "panda.local",
+  ],
 };
 
 export default nextConfig;

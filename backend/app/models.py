@@ -93,7 +93,7 @@ class Requirement(TimestampMixin, Base):
     external_id: Mapped[str] = mapped_column(String(100), default="")  # as written in source
     description: Mapped[str] = mapped_column(Text)
     acceptance_criteria: Mapped[list] = mapped_column(JSON, default=list)
-    type: Mapped[str] = mapped_column(String(30), default="functional")  # functional|business_rule|data|interface|non_functional
+    type: Mapped[str] = mapped_column(String(30), default="functional")  # functional|business_rule|data|interface|api|non_functional
     priority: Mapped[str] = mapped_column(String(20), default="medium")
     state: Mapped[str] = mapped_column(String(20), default="extracted")  # extracted|confirmed|changed|removed
     version: Mapped[int] = mapped_column(Integer, default=1)
@@ -195,6 +195,14 @@ class TestCase(TimestampMixin, Base):
     model: Mapped[str] = mapped_column(String(100), default="")  # provenance FR-GEN-09
     prompt_version: Mapped[str] = mapped_column(String(20), default="")
     technique: Mapped[str] = mapped_column(String(30), default="")  # see TECHNIQUES
+    # TR-016: which of the five tracks this case belongs to. It used to live only
+    # in a counter inside the generator, so a run could never be reported per
+    # type — the number on screen was unreconcilable with what actually ran.
+    test_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # TR-015: this case changes state on the target. Mutating cases run after
+    # read-only ones, so a 4000-character record one of them creates cannot fail
+    # three unrelated cases that merely list the collection.
+    mutates: Mapped[bool] = mapped_column(Boolean, default=False)
     # Insight engine taxonomy (the sixth engine). NULL for every case that does not
     # belong to an edge-case family — which is every case generated before this
     # engine existed, and every manually authored one.
@@ -258,10 +266,15 @@ class TestResult(TimestampMixin, Base):
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
     test_case_id: Mapped[str] = mapped_column(ForeignKey("test_cases.id"), index=True)
     test_case_version: Mapped[int] = mapped_column(Integer, default=1)
-    outcome: Mapped[str] = mapped_column(String(20))  # passed|failed|errored
+    outcome: Mapped[str] = mapped_column(String(20))  # passed|failed|errored|inconclusive
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     failure_reason: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # assertion/expected/actual
     evidence: Mapped[list] = mapped_column(JSON, default=list)  # per-step, redacted + truncated
+    # H1 (TR-001): what was actually checked. A result with zero evaluated
+    # assertions is `inconclusive` — it may never be counted as a pass, and it
+    # is excluded from the coverage numerator and denominator alike (H6).
+    assertions_evaluated: Mapped[int] = mapped_column(Integer, default=0)
+    assertions_skipped: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class ApiKey(TimestampMixin, Base):

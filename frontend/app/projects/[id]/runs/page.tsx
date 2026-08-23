@@ -29,6 +29,34 @@ function shortId(id?: string): string {
 
 const VIEWPORTS = ["1280x800", "1440x900", "1920x1080", "390x844"];
 
+/**
+ * The pipeline's stages, in the order the backend walks them, each with the
+ * progress fraction it announces itself at (see `_say` in modules/pipeline.py).
+ *
+ * The job reports one message and one percentage; that is enough to say what is
+ * happening NOW, but not what already happened or what is still to come. Naming
+ * the stages here turns the same number into a checklist, which is what makes a
+ * long stage — writing the cases is usually the longest — legible as progress
+ * rather than as a stall.
+ */
+const PIPELINE_STAGES: { at: number; label: string }[] = [
+  { at: 0.02, label: "Reading your document" },
+  { at: 0.20, label: "Opening your app in a browser" },
+  { at: 0.58, label: "Writing the test cases" },
+  { at: 0.70, label: "Running the page checks" },
+  { at: 0.90, label: "Calling the APIs your app uses" },
+  { at: 0.99, label: "Collecting the results" },
+];
+
+/** Index of the stage a given percentage is inside; -1 before the first one. */
+function activeStageIndex(pct: number): number {
+  let i = -1;
+  PIPELINE_STAGES.forEach((s, n) => {
+    if (pct >= s.at * 100) i = n;
+  });
+  return i;
+}
+
 
 /** One line summarising what a pipeline stage did, from its own detail keys. */
 function stageDetail(s: any): string {
@@ -290,6 +318,8 @@ export default function RunsPage() {
 
   const trimmedUrl = pUrl.trim();
   const urlOk = /^https?:\/\/\S+$/i.test(trimmedUrl);
+  // Which stage the live percentage puts us in; -1 when no run is in flight.
+  const pipelineStage = pipelineJob ? activeStageIndex(pipelineJob.pct) : -1;
   const pipelineCounts: Record<string, number> = pipelineResult?.counts ?? {};
   const pipelineRuns: any[] = Array.isArray(pipelineResult?.runs) ? pipelineResult.runs : [];
   const pipelinePrompts: any[] = Array.isArray(pipelineResult?.fix_prompts)
@@ -636,8 +666,13 @@ export default function RunsPage() {
                   }}
                 >
                   <div className="row" style={{ gap: 10 }}>
-                    <span className="dot d-blue" aria-hidden />
-                    <b style={{ fontSize: 14, flex: 1 }}>{pipelineJob.msg}</b>
+                    <span className="dot d-blue" aria-hidden
+                          style={{ animation: "traceo-pulse 1.1s ease-in-out infinite" }} />
+                    {/* The server's own sentence, live: it is more specific than
+                        the stage name (it carries counts once it has them). */}
+                    <b style={{ fontSize: 14, flex: 1 }} data-testid="runs-pipeline-message">
+                      {pipelineJob.msg}
+                    </b>
                     <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: "var(--blueD)" }}>
                       {pipelineJob.pct}%
                     </span>
@@ -651,8 +686,35 @@ export default function RunsPage() {
                     aria-valuemin={0}
                     aria-valuemax={100}
                   >
-                    <i style={{ width: `${pipelineJob.pct}%`,
+                    <i className="animated"
+                       style={{ width: `${pipelineJob.pct}%`,
                                 background: "linear-gradient(90deg, var(--blue), var(--violet))" }} />
+                  </div>
+
+                  {/* One live region for the whole list: a screen reader should
+                      hear "Writing the test cases" once, not re-hear every row
+                      each time the percentage ticks. */}
+                  <div className="stage-list" data-testid="runs-pipeline-stages"
+                       aria-live="polite" aria-atomic="false">
+                    {PIPELINE_STAGES.map((stage, i) => {
+                      const active = i === pipelineStage;
+                      const done = i < pipelineStage;
+                      return (
+                        <div
+                          key={stage.label}
+                          className={`stage-row${active ? " is-active" : ""}${done ? " is-done" : ""}`}
+                          data-testid={`runs-pipeline-stage-${i}`}
+                          data-state={active ? "active" : done ? "done" : "pending"}
+                        >
+                          <span className="stage-icon" aria-hidden>
+                            {done ? <span className="done">✓</span>
+                              : active ? <span className="spinner" />
+                              : <span className="pending" />}
+                          </span>
+                          <span className="stage-label">{stage.label}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}

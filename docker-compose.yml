@@ -34,6 +34,39 @@ services:
       - traceo-data:/data
     restart: unless-stopped
 
+  # The air-gapped backend: Go API + Node + Playwright + Chromium in one image,
+  # every browser dependency baked in at build time (plan Decision B, NFR-D1).
+  # Larger than backend-go by design — that image cannot scan a page at all.
+  backend-airgapped:
+    profiles: ["airgapped"]
+    build:
+      # Repository root, because the sidecar scripts live outside the Go module.
+      context: .
+      dockerfile: Dockerfile.airgapped
+    image: traceo/airgapped:local
+    environment:
+      TRACEO_ENV: ${TRACEO_ENV:-development}
+      TRACEO_SECRET_KEY: ${TRACEO_SECRET_KEY:-}
+      TRACEO_SEED_DEMO: ${TRACEO_SEED_DEMO:-1}
+      # mock keeps the container offline. Point TRACEO_LOCAL_LLM_BASE_URL at a
+      # model server inside the perimeter and set TRACEO_LLM_PROVIDER=local to
+      # get a real model without leaving it.
+      TRACEO_LLM_PROVIDER: ${TRACEO_LLM_PROVIDER:-mock}
+      TRACEO_LOCAL_LLM_BASE_URL: ${TRACEO_LOCAL_LLM_BASE_URL:-}
+      TRACEO_LOCAL_LLM_MODEL: ${TRACEO_LOCAL_LLM_MODEL:-}
+      TRACEO_CORS_ORIGINS: ${TRACEO_CORS_ORIGINS:-http://localhost:3000}
+      # Loopback and private addresses are refused unless this is on; a local
+      # application under test is exactly that.
+      TRACEO_ALLOW_PRIVATE_TARGETS: ${TRACEO_ALLOW_PRIVATE_TARGETS:-0}
+    ports:
+      - "8000:8000"
+    volumes:
+      - traceo-data:/data
+    # Chromium needs more than the default 64MB of /dev/shm or it crashes on a
+    # heavy page — the classic headless-in-Docker failure.
+    shm_size: "1gb"
+    restart: unless-stopped
+
   backend-python:
     profiles: ["python"]
     build:
@@ -44,6 +77,12 @@ services:
       TRACEO_SECRET_KEY: ${TRACEO_SECRET_KEY:-}
       TRACEO_SEED_DEMO: ${TRACEO_SEED_DEMO:-1}
       TRACEO_LLM_PROVIDER: ${TRACEO_LLM_PROVIDER:-mock}
+      # Without these the container has no key, so TRACEO_LLM_PROVIDER=anthropic
+      # or =gemini would silently degrade to the mock provider (NFR-REL-03) and
+      # the stack would look configured while running offline.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      TRACEO_GEMINI_MODEL: ${TRACEO_GEMINI_MODEL:-gemini-3.5-flash}
       TRACEO_CORS_ORIGINS: ${TRACEO_CORS_ORIGINS:-http://localhost:3000}
     ports:
       - "8000:8000"

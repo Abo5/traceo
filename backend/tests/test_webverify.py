@@ -179,7 +179,7 @@ def test_browser_cases_are_executed_and_skips_are_not_passes(client, project, mo
     target_id, case_ids = _seed_target(org_id, pid)
 
     monkeypatch.setattr(webverify, "run_check_sidecar",
-                        lambda plan, timeout_s=None: _recorded(case_ids))
+                        lambda plan, timeout_s=None, artifacts_dir=None: _recorded(case_ids))
 
     r = client.post(f"/v1/web-targets/{target_id}/verify", json={}, headers=headers)
     assert r.status_code == 202, r.text
@@ -211,7 +211,7 @@ def test_a_verification_run_does_not_approve_anything(client, project, monkeypat
     org_id = _org_of(client, headers)
     target_id, case_ids = _seed_target(org_id, pid)
     monkeypatch.setattr(webverify, "run_check_sidecar",
-                        lambda plan, timeout_s=None: _recorded(case_ids))
+                        lambda plan, timeout_s=None, artifacts_dir=None: _recorded(case_ids))
 
     body = client.post(f"/v1/web-targets/{target_id}/verify", json={}, headers=headers).json()
     poll_job(client, headers, body["job_id"])
@@ -229,7 +229,7 @@ def test_environment_is_derived_from_the_target_and_reused(client, project, monk
     org_id = _org_of(client, headers)
     target_id, case_ids = _seed_target(org_id, pid)
     monkeypatch.setattr(webverify, "run_check_sidecar",
-                        lambda plan, timeout_s=None: _recorded(case_ids))
+                        lambda plan, timeout_s=None, artifacts_dir=None: _recorded(case_ids))
 
     first = client.post(f"/v1/web-targets/{target_id}/verify", json={}, headers=headers).json()
     poll_job(client, headers, first["job_id"])
@@ -255,7 +255,7 @@ def test_a_case_the_browser_never_answered_is_errored_not_dropped(client, projec
     partial = _recorded(case_ids)
     partial["results"] = partial["results"][:1]
     monkeypatch.setattr(webverify, "run_check_sidecar",
-                        lambda plan, timeout_s=None: partial)
+                        lambda plan, timeout_s=None, artifacts_dir=None: partial)
 
     body = client.post(f"/v1/web-targets/{target_id}/verify", json={}, headers=headers).json()
     poll_job(client, headers, body["job_id"])
@@ -341,7 +341,7 @@ def test_report_attaches_prompts_to_failures_only(client, project, monkeypatch):
     org_id = _org_of(client, headers)
     target_id, case_ids = _seed_target(org_id, pid)
     monkeypatch.setattr(webverify, "run_check_sidecar",
-                        lambda plan, timeout_s=None: _recorded(case_ids))
+                        lambda plan, timeout_s=None, artifacts_dir=None: _recorded(case_ids))
 
     body = client.post(f"/v1/web-targets/{target_id}/verify", json={}, headers=headers).json()
     poll_job(client, headers, body["job_id"])
@@ -375,7 +375,7 @@ def test_deleting_a_scanned_project_does_not_500(client, project, monkeypatch):
     org_id = _org_of(client, headers)
     target_id, case_ids = _seed_target(org_id, pid)
     monkeypatch.setattr(webverify, "run_check_sidecar",
-                        lambda plan, timeout_s=None: _recorded(case_ids))
+                        lambda plan, timeout_s=None, artifacts_dir=None: _recorded(case_ids))
 
     body = client.post(f"/v1/web-targets/{target_id}/verify", json={}, headers=headers).json()
     poll_job(client, headers, body["job_id"])

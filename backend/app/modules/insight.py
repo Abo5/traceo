@@ -646,7 +646,9 @@ def _build_permission_edge(ep, req, ctx) -> list[dict]:
         return []
     params, headers, body = _valid_request(ep)
     headers = {k: v for k, v in headers.items() if k.lower() != "authorization"}
-    headers["Authorization"] = "Bearer {{lower_privilege_token}}"
+    # One name for one concept: security.py calls this `low_privilege_token`, so
+    # an environment that configured it was still missing the insight variant.
+    headers["Authorization"] = "Bearer {{low_privilege_token}}"
     case = _mk(
         req, ep, PERMISSION_EDGE, "same request as a lower-privileged actor", "negative",
         [_step(ep, params, headers, body,
@@ -962,7 +964,11 @@ def _run_insight(job, org_id: str, user_id: str, project_id: str,
 
 
 class InsightGenerateRequest(BaseModel):
-    categories: list[str]
+    # Optional, like `test_types` everywhere else: omitting it asks for every
+    # category. Required, a caller that omitted it got pydantic's own
+    # {"detail":[...]} shape instead of this API's {code, message} contract —
+    # a coded error the client cannot branch on (TR-029).
+    categories: list[str] | None = None
     requirement_ids: list[str] | None = None
 
 
@@ -971,11 +977,15 @@ def start_insight_generation(project_id: str, body: InsightGenerateRequest,
                              user: User = Depends(require("generate")),
                              db: Session = Depends(get_db)):
     get_project_scoped(project_id, user, db)
-    categories = list(dict.fromkeys(body.categories or []))  # de-dup, keep order
-    if not categories:
-        raise HTTPException(422, detail={
-            "code": "invalid_category",
-            "message": "categories is required and must contain at least one category id"})
+    if body.categories is None:
+        categories = list(EDGE_CATEGORIES)          # omitted means all nine
+    else:
+        categories = list(dict.fromkeys(body.categories))  # de-dup, keep order
+        if not categories:
+            raise HTTPException(422, detail={
+                "code": "invalid_category",
+                "message": ("categories was given as an empty list. Omit it to run "
+                            "every category, or name at least one.")})
     illegal = [c for c in categories if c not in EDGE_CATEGORY_SET]
     if illegal:
         raise HTTPException(422, detail={

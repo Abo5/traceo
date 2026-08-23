@@ -784,11 +784,36 @@ def test_mock_extract_is_unchanged_by_the_framing():
     unframed = provider.complete_json(
         "extract_requirement", "SEGMENT:\n" + SEGMENT, EXTRACT_SCHEMA).data
     assert framed == unframed
-    assert framed["external_id"] == "REQ-77"
-    assert len(framed["acceptance_criteria"]) == 2
+    # The extractor returns every requirement the segment states (TR-005); this
+    # segment states one, and the framing must not change what comes back.
+    assert len(framed["requirements"]) == 1
+    only = framed["requirements"][0]
+    assert only["external_id"] == "REQ-77"
+    assert len(only["acceptance_criteria"]) == 2
     # no delimiter leaked into the stored requirement text
-    assert UNTRUSTED_OPEN not in framed["description"]
-    assert UNTRUSTED_CLOSE not in framed["description"]
+    assert UNTRUSTED_OPEN not in only["description"]
+    assert UNTRUSTED_CLOSE not in only["description"]
+
+
+def test_mock_extract_returns_every_requirement_in_a_dense_segment():
+    """TR-005: a section stating five rules must not come back as one.
+
+    The regression this guards is silent by nature — 22 written requirements
+    became 7 extracted, and the job reported success.
+    """
+    from app.modules.ingestion import EXTRACT_PROMPT, EXTRACT_SCHEMA
+
+    dense = (
+        "**REQ-BKG-01** Replaying an idempotency key must return the original booking.\n"
+        "**REQ-BKG-02** A slot may not be booked beyond its capacity.\n"
+        "**REQ-BKG-03** The total is rounded to two decimals.\n"
+        "**REQ-BKG-04** created_at is a true UTC instant.\n"
+        "**REQ-BKG-05** notes is limited to 255 characters.\n"
+    )
+    data = MockProvider().complete_json(
+        "extract_requirement", EXTRACT_PROMPT + frame_untrusted(dense), EXTRACT_SCHEMA).data
+    ids = [r["external_id"] for r in data["requirements"]]
+    assert ids == ["REQ-BKG-01", "REQ-BKG-02", "REQ-BKG-03", "REQ-BKG-04", "REQ-BKG-05"], ids
 
 
 def test_mock_map_is_unchanged_by_the_framing():

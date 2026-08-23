@@ -9,12 +9,48 @@ from .base import LLMResult, strip_untrusted_frame
 
 EN_MUST = ("shall", "must", "required to", "has to")
 
-ID_RE = re.compile(r"\b((?:REQ|FR|BR|NFR|UC)[-_ ]?\d+(?:[-.]\d+)?)\b", re.IGNORECASE)
+# Identifiers come in two shapes in real documents: REQ-12 and REQ-AUTH-01.
+# Matching only the first left every domain-scoped id unlabelled, which is
+# what the traceability matrix keys on.
+ID_RE = re.compile(
+    r"\b((?:REQ|FR|BR|NFR|UC|SRS|BUS)[-_ ]?(?:[A-Z]{2,10}[-_ ])?\d+(?:[-.]\d+)?)\b",
+    re.IGNORECASE)
 BULLET_RE = re.compile(r"^\s*(?:[-*•▪]|\d+[.)]|[a-h][.)])\s+(.*)$")
+
+
+# A requirement identifier at the start of a line begins a new requirement. This
+# is what lets one segment yield the several rules it actually states.
+_ID_OPENER = re.compile(
+    r"^\s*(?:[*_#>\-\d.)\s]{0,8})?\**\s*"
+    r"((?:REQ|FR|BR|NFR|UC|SRS|BUS)[-_ ]?[A-Z]{0,10}[-_ ]?\d+(?:[.-]\d+)*)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _split_on_ids(text: str) -> list[str]:
+    """Split a segment at each requirement identifier, keeping any preamble."""
+    starts = [m.start() for m in _ID_OPENER.finditer(text)]
+    if len(starts) < 2:
+        return [text]
+    chunks = []
+    if starts[0] > 0 and text[:starts[0]].strip():
+        chunks.append(text[:starts[0]])
+    for i, start in enumerate(starts):
+        end = starts[i + 1] if i + 1 < len(starts) else len(text)
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+    return chunks
 
 
 class MockProvider:
     name = "mock"
+    # The label this provider stamps on everything it produces. It is an
+    # attribute, not just a literal inside complete_json, because callers read
+    # `provider.model` to record provenance BEFORE any call is made — and a
+    # provider without one used to fall through to the configured Anthropic
+    # model id, attributing mock output to Claude.
+    model = "mock-deterministic"
 
     def complete_json(self, prompt_id: str, prompt: str, schema: dict) -> LLMResult:
         if prompt_id.startswith("extract_requirement"):
@@ -28,15 +64,28 @@ class MockProvider:
         else:
             data = {}
         jsonschema.validate(data, schema)
-        return LLMResult(data=data, model="mock-deterministic", prompt_version="v1.0")
+        return LLMResult(data=data, model=self.model, prompt_version="v1.0")
 
     # --- requirement structuring ---
     def _extract(self, segment: str) -> dict:
-        # SENTINEL CONTRACT: ingestion.EXTRACT_PROMPT ends with "SEGMENT:\n" and the
-        # segment itself is wrapped by llm.base.frame_untrusted. Stripping the frame
-        # here keeps this deterministic parse byte-identical to the pre-hardening
-        # behaviour — if either sentinel moves, it moves in both files at once.
+        """Every requirement stated in the segment, not just the first.
+
+        A segment often holds several rules. Returning one collapsed the rest
+        without a word — the same loss the model path had (TR-005) — so the
+        deterministic path splits on the identifier before parsing.
+        """
         text = strip_untrusted_frame(segment.split("SEGMENT:\n", 1)[-1])
+        chunks = _split_on_ids(text)
+        return {"requirements": [self._extract_one(chunk) for chunk in chunks]}
+
+    def _extract_one(self, segment: str) -> dict:
+        # SENTINEL CONTRACT: ingestion.EXTRACT_PROMPT ends with "SEGMENT:\n" and the
+        # segment itself is wrapped by llm.base.frame_untrusted. The frame is
+        # stripped by _extract above before the text is split; this parse stays
+        # byte-identical to the pre-hardening behaviour for a single-rule chunk.
+        # Markdown emphasis around an identifier ("**REQ-BKG-01**") is decoration,
+        # not part of the id or of the sentence.
+        text = re.sub(r"\*\*(.+?)\*\*", r"\1", segment)
         lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
         m = ID_RE.search(text)
         external_id = m.group(1).upper().replace(" ", "-").replace("_", "-") if m else ""

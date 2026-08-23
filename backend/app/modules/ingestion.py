@@ -20,6 +20,7 @@ from .. import jobs as jobstore
 from ..config import settings
 from ..db import SessionLocal, get_db
 from ..deps import audit, get_project_scoped, require
+from ..jobs import JobError
 from ..llm import UNTRUSTED_NOTE, frame_untrusted, get_provider
 from ..models import Project, Requirement, RequirementTestCase, SourceDocument, User
 from .generation import try_autopilot_generation
@@ -30,20 +31,30 @@ ALLOWED_EXTENSIONS = {".pdf", ".docx", ".md", ".txt"}
 MAX_SEGMENTS = 500
 MIN_SEGMENT_CHARS = 15
 
-REQUIREMENT_TYPES = {"functional", "business_rule", "data", "interface", "non_functional"}
+# "api" is its own type rather than a flavour of "interface": a requirement over
+# backend endpoints and a requirement over a rendered screen are verified by
+# different engines, carry different evidence and fail for different reasons.
+# Folding both into "interface" made the matrix unable to answer "how covered is
+# the API?" — the one question an API-first suite exists to answer.
+REQUIREMENT_TYPES = {"functional", "business_rule", "data", "interface", "api",
+                     "non_functional"}
 
 # The segment comes from a file the user uploaded, so it is untrusted input: it is
 # framed by llm.frame_untrusted and introduced by UNTRUSTED_NOTE before the
 # "SEGMENT:\n" sentinel. The sentinel itself is unchanged — MockProvider splits on
 # it (app/llm/mock.py) and strips the frame, so the offline path is unaffected.
 EXTRACT_PROMPT = (
-    "Extract the software requirement from this segment. "
+    "Extract EVERY software requirement stated in this segment — a segment often "
+    "states more than one, and each must come back as its own object. Keep each "
+    "requirement's own identifier (REQ-..., FR-..., NFR-...) exactly as written; "
+    "leave external_id empty only when the text truly carries none. Do not merge "
+    "two rules into one, and do not invent a requirement that is not stated. "
     "Answer in English.\n"
     + UNTRUSTED_NOTE
     + "SEGMENT:\n"
 )
 
-EXTRACT_SCHEMA = {
+_REQUIREMENT_OBJECT = {
     "type": "object",
     "properties": {
         "external_id": {"type": "string"},
@@ -55,6 +66,17 @@ EXTRACT_SCHEMA = {
     },
     "required": ["external_id", "description", "acceptance_criteria",
                  "type", "priority", "confidence"],
+}
+
+# A segment may hold SEVERAL requirements. Asking for one object per segment is
+# what lost 16 of 22 requirements from a densely written document, silently:
+# a section with five rules yielded one, and the traceability matrix then
+# reported healthy coverage of a contract three quarters of which it had never
+# seen (TR-005).
+EXTRACT_SCHEMA = {
+    "type": "object",
+    "properties": {"requirements": {"type": "array", "items": _REQUIREMENT_OBJECT}},
+    "required": ["requirements"],
 }
 
 # --- deterministic text utilities -------------------------------------------------
@@ -170,23 +192,8 @@ def segment_pages(pages: list[tuple[int | None, str]]) -> list[dict]:
 
 # --- LLM structuring (per-segment, failure-isolated) --------------------------------
 
-def _structure_segment(provider, segment_text: str) -> dict:
-    """One LLM call per segment. A failing segment degrades to a raw-text requirement
-    with confidence 0.3 — it is never silently dropped."""
-    try:
-        result = provider.complete_json(
-            "extract_requirement", EXTRACT_PROMPT + frame_untrusted(segment_text),
-            EXTRACT_SCHEMA)
-        data = dict(result.data)
-    except Exception:
-        return {
-            "external_id": "",
-            "description": segment_text[:2000],
-            "acceptance_criteria": [],
-            "type": "functional",
-            "priority": "medium",
-            "confidence": 0.3,
-        }
+def _normalise_requirement(raw: dict, segment_text: str) -> dict:
+    data = dict(raw or {})
     data["external_id"] = str(data.get("external_id") or "").strip()
     data["description"] = str(data.get("description") or "").strip() or segment_text[:2000]
     data["acceptance_criteria"] = [str(c) for c in (data.get("acceptance_criteria") or [])]
@@ -198,6 +205,32 @@ def _structure_segment(provider, segment_text: str) -> dict:
     except (TypeError, ValueError):
         data["confidence"] = 0.5
     return data
+
+
+def _structure_segment(provider, segment_text: str) -> tuple[list[dict], str | None]:
+    """One LLM call per segment. Returns (requirements, degradation_reason).
+
+    A failing call still yields the raw text at confidence 0.3 so nothing is
+    dropped — but it now REPORTS that it degraded. Swallowing the failure is how
+    a dead API key produced 37 confident-looking "requirements" whose text was
+    markdown headings, under a job that said `completed` (TR-006 / H5).
+    """
+    try:
+        result = provider.complete_json(
+            "extract_requirement", EXTRACT_PROMPT + frame_untrusted(segment_text),
+            EXTRACT_SCHEMA)
+        items = (result.data or {}).get("requirements") or []
+    except Exception as exc:  # noqa: BLE001
+        return ([_normalise_requirement(
+            {"external_id": "", "description": segment_text[:2000], "confidence": 0.3},
+            segment_text)], f"{type(exc).__name__}: {exc}"[:200])
+
+    if not items:
+        return ([_normalise_requirement(
+            {"external_id": "", "description": segment_text[:2000], "confidence": 0.3},
+            segment_text)], "the model returned no requirement for this segment")
+
+    return ([_normalise_requirement(item, segment_text) for item in items], None)
 
 
 def confirm_all_extracted(db: Session, org_id: str, project_id: str) -> int:
@@ -317,6 +350,41 @@ def _persist_requirements(db: Session, doc: SourceDocument, extractions: list[di
     return counts
 
 
+# Requirement identifiers as they appear in a document, used to reconcile what
+# was written against what was extracted (H4). Deliberately narrow: it matches
+# the shapes a requirements document actually uses, not every hyphenated token.
+_DOC_ID_RE = re.compile(r"\b((?:REQ|FR|BR|NFR|UC|SRS|BUS)-[A-Z]{2,10}-\d{1,3}|"
+                        r"(?:REQ|FR|BR|NFR|UC|SRS|BUS)-\d{1,3})\b")
+
+
+def _reconcile_ids(document_text: str, extractions: list[dict]) -> dict:
+    """Which identifiers the document states, and which of them came back.
+
+    Extraction used to lose most of a densely written document without a word.
+    Counting is not enough to notice that: 7 requirements from a 22-requirement
+    document looks like a perfectly ordinary result. Naming the missing ids is
+    what makes the loss visible (H4/TR-005).
+    """
+    written = []
+    seen = set()
+    for match in _DOC_ID_RE.finditer(document_text or ""):
+        value = match.group(1).upper()
+        if value not in seen:
+            seen.add(value)
+            written.append(value)
+    if not written:
+        return {"ids_in_document": 0, "ids_extracted": 0, "ids_missing": []}
+
+    got = {str(e["data"].get("external_id") or "").strip().upper()
+           for e in extractions}
+    missing = [i for i in written if i not in got]
+    return {
+        "ids_in_document": len(written),
+        "ids_extracted": len(written) - len(missing),
+        "ids_missing": missing,
+    }
+
+
 def _run_ingest(job, document_id: str, project_id: str, org_id: str, actor_id: str):
     """Job body — owns its own session (runs on a worker thread)."""
     db = SessionLocal()
@@ -338,17 +406,37 @@ def _run_ingest(job, document_id: str, project_id: str, org_id: str, actor_id: s
             raise
 
         segments = segment_pages(pages)
+        # Reconciliation reads the segmented text rather than the page tuples:
+        # the segments ARE the document as the extractor sees it, so an id that
+        # is missing from them was never offered to the model in the first place.
+        document_text = "\n".join(seg["text"] for seg in segments)
         job.message = f"Segmented document into {len(segments)} candidate requirements"
 
         provider = get_provider()
         extractions: list[dict] = []
         total = len(segments)
+        degraded = 0
+        degraded_reasons: list[str] = []
         for i, seg in enumerate(segments):
             job.progress = i / total if total else 1.0
-            job.message = f"Extracting requirement {i + 1}/{total}"
-            data = _structure_segment(provider, seg["text"])
-            extractions.append({"data": data, "segment": seg["text"],
-                                "page": seg["page"], "index": i})
+            job.message = f"Extracting requirements from segment {i + 1}/{total}"
+            items, why = _structure_segment(provider, seg["text"])
+            if why:
+                degraded += 1
+                if why not in degraded_reasons:
+                    degraded_reasons.append(why)
+            for data in items:
+                extractions.append({"data": data, "segment": seg["text"],
+                                    "page": seg["page"], "index": i})
+
+        # H5: a model that answered nothing is a number on the result, not a
+        # silence. If EVERY segment degraded there is no extraction to report —
+        # persisting raw text as requirements would be worse than failing.
+        if total and degraded == total:
+            raise JobError("llm_unavailable",
+                           "The model could not be reached, so no requirement was "
+                           "extracted. The document was not changed. "
+                           + (degraded_reasons[0] if degraded_reasons else ""))
 
         job.message = "Persisting requirements"
         counts = _persist_requirements(db, doc, extractions)
@@ -359,7 +447,9 @@ def _run_ingest(job, document_id: str, project_id: str, org_id: str, actor_id: s
               {"filename": doc.filename, "version": doc.version,
                "segments": total, **counts})
 
-        result = {"document_id": doc.id, "segments": total, **counts}
+        result = {"document_id": doc.id, "segments": total, **counts,
+                  "degraded": degraded, "degraded_reasons": degraded_reasons,
+                  **_reconcile_ids(document_text, extractions)}
         # sessions run with autoflush=False — flush so the freshly persisted
         # requirements are visible to the autopilot chain's queries below
         db.flush()

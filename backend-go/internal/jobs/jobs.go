@@ -36,9 +36,42 @@ type Job struct {
 	// ErrorCode is set only when the job failed with a coded jobs.Error.
 	ErrorCode *string `json:"error_code"`
 	Created   string  `json:"created_at"`
+
+	// --- stage proxying (see Scoped) --------------------------------------
+	// parent is non-nil on a proxy returned by Scoped. A proxy owns no state of
+	// its own: every Set writes through to the parent, scaled and labelled.
+	parent *Job
+	lo, hi float64
+	label  string
+}
+
+// Scoped returns a job-shaped proxy that maps a sub-job's own 0..1 progress into
+// the [lo, hi] slice of this job, prefixing its messages with label.
+//
+// The engine job bodies write progress directly. Handing a composing job (the
+// pipeline) straight to each of them would make every stage reset the bar to
+// zero, so each stage gets one of these instead — same type, scaled writes.
+func (j *Job) Scoped(lo, hi float64, label string) *Job {
+	return &Job{ID: j.ID, Kind: j.Kind, Status: "running",
+		parent: j, lo: lo, hi: hi, label: label}
 }
 
 func (j *Job) Set(progress float64, message string) {
+	if j.parent != nil {
+		scaled := -1.0
+		if progress >= 0 {
+			frac := progress
+			if frac > 1 {
+				frac = 1
+			}
+			scaled = j.lo + (j.hi-j.lo)*frac
+		}
+		if message != "" && j.label != "" {
+			message = j.label + ": " + message
+		}
+		j.parent.Set(scaled, message)
+		return
+	}
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if progress >= 0 {
