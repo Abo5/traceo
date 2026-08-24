@@ -77,7 +77,7 @@ def _seed_target(org_id: str, project_id: str, *, status: str = "discovered",
                 tc = TestCase(organisation_id=org_id, project_id=project_id, title=title,
                               description="", preconditions="", type="negative",
                               priority="high", state="draft", generated=True,
-                              technique="ep")
+                              technique="ep", test_type="functional")
                 db.add(tc)
                 db.flush()
                 db.add(TestStep(test_case_id=tc.id, order=0, method="GET", path="/login",
@@ -203,6 +203,14 @@ def test_browser_cases_are_executed_and_skips_are_not_passes(client, project, mo
     assert outcomes["Form: 'login' renders every discovered field"] == "passed"
     assert outcomes["Form: 'login' rejects submission with Email empty"] == "failed"
     assert outcomes["Form: Notes accepts at most 5 characters"] == "skipped"
+
+    # The report groups its results by discipline, so every case has to name the
+    # one it belongs to. `type` is the case's own shape (positive/negative) and
+    # has never answered this; without `test_type` the UI can only file every
+    # result under "unclassified", which is what it did before this was added.
+    for case in payload["cases"]:
+        assert "test_type" in case["test_case"], case["test_case"]
+        assert case["test_case"]["test_type"] == "functional", case["test_case"]["title"]
 
 
 def test_a_verification_run_does_not_approve_anything(client, project, monkeypatch):

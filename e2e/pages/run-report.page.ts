@@ -44,6 +44,31 @@ export class RunReportPage {
     return this.page.getByTestId('runs-report-errored-stat');
   }
 
+  /**
+   * The all-results tab is split into one section per discipline, in canonical
+   * order, and a discipline the run did not produce has no section at all — an
+   * empty heading would report a kind of testing as covered and clean when it
+   * never ran.
+   */
+  get typeSections(): Locator {
+    return this.page.getByTestId('runs-report-type-section');
+  }
+
+  typeSection(type: string): Locator {
+    return this.page.locator(`[data-testid="runs-report-type-section"][data-type="${type}"]`);
+  }
+
+  /** The disciplines this report actually shows, in the order it shows them. */
+  async listedTypes(): Promise<string[]> {
+    return this.typeSections.evaluateAll((nodes) =>
+      nodes.map((n) => n.getAttribute('data-type') ?? ''));
+  }
+
+  /** Result rows inside one discipline's table. */
+  rowsOfType(type: string): Locator {
+    return this.typeSection(type).getByTestId('runs-report-result-row');
+  }
+
   // --- actions ----------------------------------------------------------------
 
   async goto(projectId: string, runId: string): Promise<void> {

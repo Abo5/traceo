@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { TEST_TYPES, TEST_TYPE_META, type TestType } from "@/lib/test-types";
 import type { CSSProperties, ReactNode } from "react";
 import { useParams } from "next/navigation";
 import { API, api, getToken } from "@/lib/api";
@@ -96,6 +97,12 @@ export default function RunReportPage() {
     reqs: "Requirements",
     caseCol: "Case",
     outcome: "Outcome",
+    ofType: "cases",
+    ofTypeOne: "case",
+    typePassed: "passed",
+    typeAttention: "need attention",
+    untyped: "Unclassified",
+    untypedHint: "These cases predate the type being recorded on a case.",
     durationCol: "Duration",
     empty: "No results",
     emptyHint: "No case has finished in this run yet",
@@ -219,6 +226,43 @@ export default function RunReportPage() {
   }, [results]);
 
   const failures = cases.filter((c) => c.outcome === "failed" || c.outcome === "errored");
+
+  /**
+   * The results, split by the discipline each case belongs to.
+   *
+   * A run mixes five kinds of testing, and they are not read the same way: a
+   * failing security case and a failing performance case call for different
+   * people and different fixes. One flat table of 133 rows makes the reader do
+   * that sorting in their head every time.
+   *
+   * Canonical order, and only the types this run actually produced — an empty
+   * "Security" heading would report a discipline as covered-and-clean when it
+   * was never run at all.
+   */
+  const byType = useMemo(() => {
+    const buckets = new Map<string, any[]>();
+    for (const c of cases) {
+      const raw = String(c.test_case?.test_type ?? c.test_type ?? "").trim().toLowerCase();
+      const key = (TEST_TYPES as readonly string[]).includes(raw) ? raw : "untyped";
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key)!.push(c);
+    }
+    const order = [...TEST_TYPES, "untyped"];
+    return order
+      .filter((k) => buckets.has(k))
+      .map((k) => {
+        const items = buckets.get(k)!;
+        return {
+          key: k,
+          label: k === "untyped" ? L.untyped : TEST_TYPE_META[k as TestType].label,
+          scope: k === "untyped" ? L.untypedHint : TEST_TYPE_META[k as TestType].scope,
+          items,
+          passed: items.filter((c) => c.outcome === "passed").length,
+          attention: items.filter((c) => c.outcome === "failed" || c.outcome === "errored").length,
+        };
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cases]);
   const sevFailures = sevF === "all" ? failures : failures.filter((c) => c.severity === sevF);
   const perf: any[] = Array.isArray(report?.perf) ? report.perf : [];
 
@@ -601,42 +645,106 @@ export default function RunReportPage() {
           </div>
         ))}
 
-      {/* All results */}
+      {/* All results, one section per discipline */}
       {tab === "all" && (
-        <Card pad={false}>
-          {cases.length === 0 ? (
+        cases.length === 0 ? (
+          <Card pad={false}>
             <Empty title={L.empty} hint={L.emptyHint} testId="runs-report-results-empty" />
-          ) : (
-            <Table head={["ID", L.caseCol, L.outcome, L.durationCol, L.reqs]} testId="runs-report-table-root">
-              {cases.map((c, i) => (
-                <tr key={caseId(c) || i} data-testid="runs-report-result-row">
-                  <td>
-                    <M style={{ color: "var(--text-secondary)" }}>{shortId(caseId(c))}</M>
-                  </td>
-                  <td style={{ fontSize: 13, color: "var(--text)" }}>{caseTitle(c)}</td>
-                  <td>
-                    <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                      <StatusDot state={c.outcome} testId="runs-report-result-status-dot" />
-                      <Badge tone={OUTCOME_TONE[c.outcome] ?? "muted"} testId="runs-report-result-outcome-badge" state={c.outcome}>{c.outcome}</Badge>
-                    </span>
-                  </td>
-                  <td>
-                    <M style={{ color: "var(--text-secondary)" }}>{fmtDur(Number(c.duration_ms) || 0)}</M>
-                  </td>
-                  <td>
-                    <span style={{ display: "inline-flex", gap: 8, flexWrap: "wrap" }}>
-                      {caseReqChips(c).map((r: any, j: number) => (
-                        <M key={j} style={{ fontSize: 10, color: "var(--accent-text)" }}>
-                          {r.external_id ?? r.id}
-                        </M>
-                      ))}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </Table>
-          )}
-        </Card>
+          </Card>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+            {byType.map((group) => (
+              <section
+                key={group.key}
+                data-testid="runs-report-type-section"
+                data-type={group.key}
+                style={{ display: "flex", flexDirection: "column", gap: 10 }}
+              >
+                <header
+                  style={{ display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}
+                >
+                  <h3
+                    data-testid="runs-report-type-heading"
+                    style={{ fontSize: 15, fontWeight: 650, margin: 0, color: "var(--text)" }}
+                  >
+                    {group.label}
+                  </h3>
+                  <Badge tone="muted" testId="runs-report-type-count">
+                    {group.items.length} {group.items.length === 1 ? L.ofTypeOne : L.ofType}
+                  </Badge>
+                  <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                    <span data-testid="runs-report-type-passed">{group.passed}</span> {L.typePassed}
+                    {group.attention > 0 && (
+                      <>
+                        {" · "}
+                        <span
+                          data-testid="runs-report-type-attention"
+                          style={{ color: "var(--error-text)" }}
+                        >
+                          {group.attention}
+                        </span>{" "}
+                        {L.typeAttention}
+                      </>
+                    )}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 11.5,
+                      color: "var(--text-muted)",
+                      flex: 1,
+                      minWidth: 200,
+                      textAlign: "right",
+                    }}
+                  >
+                    {group.scope}
+                  </span>
+                </header>
+
+                <Card pad={false}>
+                  <Table
+                    head={["ID", L.caseCol, L.outcome, L.durationCol, L.reqs]}
+                    testId={`runs-report-table-${group.key}`}
+                  >
+                    {group.items.map((c: any, i: number) => (
+                      <tr key={caseId(c) || i} data-testid="runs-report-result-row">
+                        <td>
+                          <M style={{ color: "var(--text-secondary)" }}>{shortId(caseId(c))}</M>
+                        </td>
+                        <td style={{ fontSize: 13, color: "var(--text)" }}>{caseTitle(c)}</td>
+                        <td>
+                          <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                            <StatusDot state={c.outcome} testId="runs-report-result-status-dot" />
+                            <Badge
+                              tone={OUTCOME_TONE[c.outcome] ?? "muted"}
+                              testId="runs-report-result-outcome-badge"
+                              state={c.outcome}
+                            >
+                              {c.outcome}
+                            </Badge>
+                          </span>
+                        </td>
+                        <td>
+                          <M style={{ color: "var(--text-secondary)" }}>
+                            {fmtDur(Number(c.duration_ms) || 0)}
+                          </M>
+                        </td>
+                        <td>
+                          <span style={{ display: "inline-flex", gap: 8, flexWrap: "wrap" }}>
+                            {caseReqChips(c).map((r: any, j: number) => (
+                              <M key={j} style={{ fontSize: 10, color: "var(--accent-text)" }}>
+                                {r.external_id ?? r.id}
+                              </M>
+                            ))}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </Table>
+                </Card>
+              </section>
+            ))}
+          </div>
+        )
       )}
 
       {/* Compare */}

@@ -594,7 +594,12 @@ The **QA Insight Agent** screen — the sixth engine: fully deterministic, no la
 | `runs-report-failure-severity-badge` | Badge | `data-state` carries the severity |
 | `runs-report-failure-outcome-badge` | Badge | `data-state="failed\|errored"` |
 | `runs-report-results-empty` | Empty | No results to list |
-| `runs-report-table-root` | Table | All-results table |
+| `runs-report-type-section` | section (repeated) | One discipline's results; `data-type` carries `functional\|api\|ui\|performance\|security\|untyped` |
+| `runs-report-type-heading` | heading | The discipline's name |
+| `runs-report-type-count` | Badge | How many cases that discipline contributed |
+| `runs-report-type-passed` | span | Passed within the discipline |
+| `runs-report-type-attention` | span | Failed or errored within the discipline; absent when none |
+| `runs-report-table-<type>` | Table | That discipline's results table, one per section |
 | `runs-report-result-row` | row (repeated) | One result |
 | `runs-report-result-status-dot` | StatusDot | Result outcome indicator |
 | `runs-report-result-outcome-badge` | Badge | `data-state="passed\|failed\|errored"` |
