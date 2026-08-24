@@ -64,6 +64,29 @@ export class RunReportPage {
       nodes.map((n) => n.getAttribute('data-type') ?? ''));
   }
 
+  /**
+   * The failures tab is split the same way, and by the same reasoning — but it
+   * lists only disciplines that actually failed, so its sections are a subset of
+   * the all-results ones.
+   */
+  get failureTypeSections(): Locator {
+    return this.page.getByTestId('runs-report-failure-type-section');
+  }
+
+  failureTypeSection(type: string): Locator {
+    return this.page.locator(`[data-testid="runs-report-failure-type-section"][data-type="${type}"]`);
+  }
+
+  /** Failure cards inside one discipline's section. */
+  failuresOfType(type: string): Locator {
+    return this.failureTypeSection(type).getByTestId('runs-report-failure-row');
+  }
+
+  /** Shown when the severity filter matches none of the run's failures. */
+  get noFailuresAtSeverity(): Locator {
+    return this.page.getByTestId('runs-report-no-failures-at-severity-empty');
+  }
+
   /** Result rows inside one discipline's table. */
   rowsOfType(type: string): Locator {
     return this.typeSection(type).getByTestId('runs-report-result-row');

@@ -593,6 +593,10 @@ The **QA Insight Agent** screen — the sixth engine: fully deterministic, no la
 | `runs-report-failure-toggle-button` | Button | Expand/collapse failure evidence |
 | `runs-report-failure-severity-badge` | Badge | `data-state` carries the severity |
 | `runs-report-failure-outcome-badge` | Badge | `data-state="failed\|errored"` |
+| `runs-report-failure-type-section` | section (repeated) | One discipline's failures; `data-type` carries `functional\|api\|ui\|performance\|security\|untyped` |
+| `runs-report-failure-type-heading` | heading | The discipline's name |
+| `runs-report-failure-type-count` | Badge | How many of that discipline are failing |
+| `runs-report-no-failures-at-severity-empty` | Empty | The run failed, but nothing at the filtered severity |
 | `runs-report-results-empty` | Empty | No results to list |
 | `runs-report-type-section` | section (repeated) | One discipline's results; `data-type` carries `functional\|api\|ui\|performance\|security\|untyped` |
 | `runs-report-type-heading` | heading | The discipline's name |
