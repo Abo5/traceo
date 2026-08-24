@@ -1,28 +1,22 @@
 /**
- * The landing hero's WebGL scene: the specimen under glass.
+ * The landing hero's WebGL scene: a browser window that Traceo takes apart.
  *
- * A luminous core — the application under test — sits inside a frosted vessel,
- * with heavy glass panes turning slowly around it. The glass is real: physical
- * transmission with roughness, so whatever sits behind a pane is genuinely
- * refracted and blurred by it rather than faked with an overlay. Bring a pane
- * forward and it clears; the thing behind it sharpens because the material
- * changed, not because a filter was swapped.
- *
- * That is the product's argument, made in a material. Traceo's whole claim is
- * that you can see what your application is actually doing rather than what it
- * probably does, and the page opens on something you cannot quite make out
- * until you clear the glass in front of it.
+ * The animation is the explanation. Rather than illustrate the product with
+ * stock abstractions — floating cubes, orbiting spheres — this renders the one
+ * thing Traceo actually operates on (a page with fields, rules and links) and
+ * then performs the four things Traceo actually does to it: look at it, write
+ * cases grounded in what was found, run them, and hand back a fix for each red.
+ * A visitor who only watches the canvas and never reads a word should still
+ * come away with the right idea of the product.
  *
  * Framework-free on purpose. React owns the copy, the scroll position and the
- * remediation brief; this owns pixels. The only traffic between them is
- * `setStage()` going in and `onBugFixed` coming out, which keeps sixty renders
- * a second from ever touching React's reconciler.
+ * fix-prompt card; this owns pixels. The only traffic between them is
+ * `setStage()` going in and `onBugFixed` coming out, which keeps sixty
+ * renders a second from ever touching React's reconciler.
  *
- * Cost note: every transmissive object makes the renderer draw the scene again
- * into a transmission target. Four of them would be four extra passes a frame,
- * so the target is rendered at half resolution and the beads are ordinary
- * translucent material rather than glass. Frosted glass hides the difference —
- * that is the one place where the cheap thing and the right thing agree.
+ * Everything is built from core three — rounded panels come from Shape +
+ * ExtrudeGeometry rather than the examples/jsm RoundedBoxGeometry — so the
+ * bundle carries no example-module baggage.
  */
 import * as THREE from "three";
 
@@ -43,78 +37,172 @@ export type SceneOptions = {
   reducedMotion?: boolean;
 };
 
+/* ---------------------------------------------------------------------------
+ * Palette — the app's own tokens, hard-coded as numbers because WebGL cannot
+ * read CSS custom properties. Kept in sync with globals.css by hand; these are
+ * the design's blue/violet/pink spectrum over a deep slate ground.
+ * ------------------------------------------------------------------------- */
 const C = {
-  gold: 0xc9a961,
-  azure: 0x4c7bff,
-  azureDeep: 0x2f55e0,
-  glass: 0xdbe6ff,
-  ok: 0x3fa37a,
-  err: 0xc6425a,
-  ivory: 0xf2efe9,
+  frame: 0x121a2e,
+  bar: 0x1a2340,
+  block: 0x223056,
+  line: 0x2c3c68,
+  field: 0x18213c,
+  button: 0x3d6bf5,
+  edge: 0x4c6ef5,
+  edgeSoft: 0x2e3f6b,
+  blue: 0x3d6bf5,
+  violet: 0x7a5ae6,
+  pink: 0xd9479e,
+  ok: 0x22c55e,
+  err: 0xf43f5e,
+  scan: 0x7f9cff,
 };
 
-/* --- what the panes and the core stand for -------------------------------- */
+/* ---------------------------------------------------------------------------
+ * The page under test, as data.
+ *
+ * Every visual element is declared once here and the scene is built from it,
+ * so a chip, a label, a verdict tick and a bug marker can all refer to the same
+ * element by id and stay in agreement. `label` is what the scan light reveals —
+ * these read like real discovery output because that is what they stand in for.
+ * ------------------------------------------------------------------------- */
+type ElKind = "frame" | "bar" | "block" | "line" | "field" | "button" | "dot" | "chip";
 
-const PANES = [
-  { id: "P1", label: "Discovery", angle: -0.5, radius: 3.5, w: 2.3, h: 3.1, tilt: 0.2, lift: 0.55 },
-  { id: "P2", label: "Derivation", angle: 1.7, radius: 3.9, w: 1.95, h: 2.6, tilt: -0.26, lift: -0.7 },
-  { id: "P3", label: "Execution", angle: 3.6, radius: 3.3, w: 2.15, h: 2.9, tilt: 0.13, lift: 0.15 },
-];
-
-/** What discovery read off the page — revealed when the first pane clears. */
-const OBSERVED = [
-  'input[type="email"] · required',
-  'input[name="pin"] · pattern=^\\d{4}$',
-  "maxlength=32",
-  '<button type="submit">',
-  '<a href="/pricing">',
-];
-
-const BEADS = [
-  { id: "B1", label: "full_name accepts 32 characters", pass: true },
-  { id: "B2", label: "pin rejects a 3-digit value", pass: true },
-  { id: "B3", label: "country selection is accepted", pass: true },
-  { id: "C4", label: "submission refused with email empty", pass: false },
-  { id: "B5", label: "whitespace-only email is refused", pass: true },
-  { id: "C6", label: "submit blocked with terms unticked", pass: false },
-  { id: "C7", label: "/pricing resolves", pass: false },
-  { id: "B8", label: "/docs resolves", pass: true },
-  { id: "B9", label: "load completes inside budget", pass: true },
-];
-
-const UNGROUNDED = ["password strength ≥ 12", "2FA code expires in 30 s", "referral code is unique"];
-
-const DEFECTS: Record<string, { title: string; where: string; requirement: string; actions: string[] }> = {
-  C4: {
-    title: "The form submits with the email left empty",
-    where: "#email on /signup",
-    requirement: 'BRD-014 — "Email is mandatory at registration"',
-    actions: [
-      "reject the submission while this field is empty, in the handler AND on the server",
-      "show the user an error next to the field (aria-invalid + a message element)",
-    ],
-  },
-  C6: {
-    title: "Submit goes through with the terms box unticked",
-    where: "button[type=submit] on /signup",
-    requirement: 'TRD-208 — "Registration requires accepting the terms"',
-    actions: ["block submission while the required checkbox is unticked, in the handler AND on the server"],
-  },
-  C7: {
-    title: "A link points at a page that isn't there",
-    where: 'a[href="/pricing"] on /signup',
-    requirement: 'BRD-031 — "Every navigation link resolves to a live page"',
-    actions: ["fix or remove the links that do not resolve"],
-  },
+type ElDef = {
+  id: string;
+  kind: ElKind;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  z?: number;
+  color?: number;
+  label?: string;
+  /** The rule discovery found — an element with one earns a generated case. */
+  cite?: string;
+  bug?: { title: string; where: string; requirement: string; actions: string[] };
 };
 
-/* --- helpers --------------------------------------------------------------- */
+const FIELD_X = 1.75;
 
-const damp = (cur: number, to: number, lambda: number, dt: number) =>
-  cur + (to - cur) * (1 - Math.exp(-lambda * dt));
+const ELEMENTS: ElDef[] = [
+  // --- window chrome ---
+  { id: "frame", kind: "frame", x: 0, y: 0, w: 7.2, h: 4.7, z: -0.18, color: C.frame },
+  { id: "titlebar", kind: "bar", x: 0, y: 1.98, w: 6.9, h: 0.46, color: C.bar },
+  { id: "dot1", kind: "dot", x: -3.14, y: 1.98, w: 0.12, h: 0.12, color: 0xf43f5e },
+  { id: "dot2", kind: "dot", x: -2.92, y: 1.98, w: 0.12, h: 0.12, color: 0xf59e0b },
+  { id: "dot3", kind: "dot", x: -2.7, y: 1.98, w: 0.12, h: 0.12, color: 0x22c55e },
+  { id: "urlbar", kind: "field", x: 0.3, y: 1.98, w: 4.6, h: 0.26, color: 0x141c33 },
 
-/** A rounded slab, from core three only. */
-function slabGeometry(w: number, h: number, depth: number, r = 0.22): THREE.ExtrudeGeometry {
+  // --- left column: content ---
+  {
+    id: "h1", kind: "block", x: -1.85, y: 1.16, w: 2.6, h: 0.34, color: C.block,
+    label: "<h1> Create your account",
+  },
+  { id: "p1", kind: "line", x: -2.05, y: 0.72, w: 2.2, h: 0.11, color: C.line },
+  { id: "p2", kind: "line", x: -2.25, y: 0.48, w: 1.8, h: 0.11, color: C.line },
+  {
+    id: "hero", kind: "block", x: -1.85, y: -0.5, w: 2.6, h: 1.2, color: 0x1d2a4c,
+    label: "<img> 2.4 MB · no width/height",
+  },
+  {
+    id: "link", kind: "chip", x: -2.72, y: -1.5, w: 0.86, h: 0.3, color: 0x1c274a,
+    label: '<a href="/pricing">',
+    cite: "link target resolves",
+    bug: {
+      title: "A link points at a page that isn't there",
+      where: 'a[href="/pricing"] on /signup',
+      requirement: 'BRD-031 — "Every navigation link resolves to a live page"',
+      actions: [
+        "fix or remove the links that do not resolve",
+      ],
+    },
+  },
+  { id: "link2", kind: "chip", x: -1.72, y: -1.5, w: 0.86, h: 0.3, color: 0x1c274a, label: '<a href="/docs">' },
+
+  // --- right column: the form ---
+  { id: "card", kind: "bar", x: FIELD_X, y: -0.2, w: 3.0, h: 3.5, z: -0.06, color: 0x16203a },
+  {
+    id: "email", kind: "field", x: FIELD_X, y: 1.02, w: 2.5, h: 0.38, color: C.field,
+    label: 'input[type="email"] · required',
+    cite: "required field is enforced",
+    bug: {
+      title: "The form submits with the email left empty",
+      where: "#email on /signup",
+      requirement: 'BRD-014 — "Email is mandatory at registration"',
+      actions: [
+        "reject the submission while this field is empty, in the handler AND on the server",
+        "show the user an error next to the field (aria-invalid + a message element)",
+      ],
+    },
+  },
+  {
+    id: "name", kind: "field", x: FIELD_X, y: 0.44, w: 2.5, h: 0.38, color: C.field,
+    label: 'input[name="full_name"] · maxlength=32',
+    cite: "maxlength is enforced",
+  },
+  {
+    id: "pin", kind: "field", x: FIELD_X, y: -0.14, w: 2.5, h: 0.38, color: C.field,
+    label: 'input[name="pin"] · pattern=^\\d{4}$',
+    cite: "pattern is enforced",
+  },
+  {
+    id: "country", kind: "field", x: FIELD_X, y: -0.72, w: 2.5, h: 0.38, color: C.field,
+    label: "<select> · 194 options",
+    cite: "selection is accepted",
+  },
+  {
+    id: "terms", kind: "chip", x: 0.86, y: -1.24, w: 0.28, h: 0.28, color: 0x1c274a,
+    label: 'input[type="checkbox"] · required',
+    cite: "submit is gated on the checkbox",
+  },
+  { id: "termsLabel", kind: "line", x: 1.75, y: -1.24, w: 1.3, h: 0.12, color: C.line },
+  {
+    id: "submit", kind: "button", x: 1.3, y: -1.82, w: 1.5, h: 0.44, color: C.button,
+    label: '<button type="submit">',
+    cite: "the happy path submits",
+    bug: {
+      title: "Submit goes through with the terms box unticked",
+      where: "button[type=submit] on /signup",
+      requirement: 'TRD-208 — "Registration requires accepting the terms"',
+      actions: [
+        "block submission while the required checkbox is unticked, in the handler AND on the server",
+      ],
+    },
+  },
+];
+
+/** Cases the model proposes but discovery cannot vouch for — these get thrown away. */
+const UNGROUNDED = [
+  "password strength ≥ 12",
+  "2FA code expires in 30s",
+  "referral code is unique",
+];
+
+/* ---------------------------------------------------------------------------
+ * Camera framing per act.
+ *
+ * `bias` is the half of the screen the model should sit on, as a FRACTION of
+ * the visible width rather than a distance in world units: positive pushes the
+ * model right (for the acts whose copy is on the left), negative pushes it
+ * left. Expressed this way the composition survives any aspect ratio, which a
+ * fixed world offset does not — the same offset that clears a 16:9 headline
+ * throws the model off the side of a phone.
+ * ------------------------------------------------------------------------- */
+type Frame = { z: number; focus: [number, number]; bias: number; scale: number };
+
+const FRAMES: Record<Stage, Frame> = {
+  0: { z: 10.4, focus: [0, 0], bias: 0.375, scale: 0.8 },
+  1: { z: 6.6, focus: [1.75, 0.25], bias: 0.42, scale: 0.85 },
+  2: { z: 11.5, focus: [-0.9, 0.1], bias: -0.355, scale: 0.68 },
+  3: { z: 9.4, focus: [0.3, 0], bias: 0.371, scale: 0.8 },
+  4: { z: 8.2, focus: [1.7, -0.25], bias: -0.22, scale: 0.78 },
+};
+
+/* --- small geometry helpers ------------------------------------------------ */
+
+function roundedShape(w: number, h: number, r: number): THREE.Shape {
   const s = new THREE.Shape();
   const x = -w / 2;
   const y = -h / 2;
@@ -128,51 +216,76 @@ function slabGeometry(w: number, h: number, depth: number, r = 0.22): THREE.Extr
   s.quadraticCurveTo(x, y + h, x, y + h - rr);
   s.lineTo(x, y + rr);
   s.quadraticCurveTo(x, y, x + rr, y);
-  const g = new THREE.ExtrudeGeometry(s, {
-    depth, bevelEnabled: true, bevelThickness: 0.05, bevelSize: 0.05, bevelSegments: 3, curveSegments: 10,
-  });
-  g.translate(0, 0, -depth / 2);
-  return g;
+  return s;
 }
 
-type Pane = {
-  id: string;
+function glyphTexture(glyph: string, hex: number): THREE.CanvasTexture {
+  const size = 128;
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = size;
+  const ctx = cv.getContext("2d")!;
+  const css = "#" + hex.toString(16).padStart(6, "0");
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size / 2 - 6, 0, Math.PI * 2);
+  ctx.fillStyle = css;
+  ctx.globalAlpha = 0.18;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 5;
+  ctx.strokeStyle = css;
+  ctx.stroke();
+  ctx.fillStyle = css;
+  ctx.font = "bold 68px Inter, system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(glyph, size / 2, size / 2 + 3);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function glowTexture(): THREE.CanvasTexture {
+  const size = 256;
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = size;
+  const ctx = cv.getContext("2d")!;
+  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  g.addColorStop(0, "rgba(150,180,255,0.95)");
+  g.addColorStop(0.35, "rgba(90,130,255,0.35)");
+  g.addColorStop(1, "rgba(60,100,255,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const damp = (cur: number, to: number, lambda: number, dt: number) =>
+  cur + (to - cur) * (1 - Math.exp(-lambda * dt));
+
+/* --------------------------------------------------------------------------- */
+
+type Chip = {
   mesh: THREE.Mesh;
-  mat: THREE.MeshPhysicalMaterial;
-  angle: number;
-  radius: number;
-  tilt: number;
-  lift: number;
-  clear: number;
-  hover: number;
-  front: boolean;
+  target: THREE.Vector3;
+  home: THREE.Vector3;
+  stackAt: THREE.Vector3;
+  grounded: boolean;
+  delay: number;
+  state: "hidden" | "toStack" | "stacked" | "dissolving" | "gone" | "toHome";
+  t: number;
 };
 
-type Bead = {
+type Marker = {
   id: string;
-  mesh: THREE.Mesh;
-  mat: THREE.MeshStandardMaterial;
-  halo: THREE.Mesh;
-  angle: number;
-  radius: number;
-  height: number;
-  speed: number;
-  pass: boolean;
+  group: THREE.Group;
+  ring: THREE.Mesh;
+  core: THREE.Mesh;
+  pos: THREE.Vector3;
+  def: NonNullable<ElDef["bug"]>;
   fixed: boolean;
-  revealed: number;
   hover: number;
-};
-
-type Ghost = { mesh: THREE.Mesh; mat: THREE.MeshStandardMaterial; base: THREE.Vector3; t: number };
-
-type Frame = { z: number; focus: [number, number]; bias: number; scale: number };
-
-const FRAMES: Record<Stage, Frame> = {
-  0: { z: 12.6, focus: [0, 0], bias: 0.42, scale: 0.82 },
-  1: { z: 9.4, focus: [0, 0], bias: 0.36, scale: 1.0 },
-  2: { z: 10.6, focus: [0, 0], bias: -0.32, scale: 0.95 },
-  3: { z: 10.0, focus: [0, 0], bias: 0.34, scale: 0.95 },
-  4: { z: 9.2, focus: [0, -0.1], bias: -0.3, scale: 1.0 },
+  pop: number;
 };
 
 export class TraceoScene {
@@ -190,36 +303,38 @@ export class TraceoScene {
   private disposed = false;
 
   private stage: Stage = 0;
-  private frameSpec = FRAMES[0];
-  private worldScale = 1;
+  private stageT = 0;
 
-  private core = new THREE.Group();
-  private shards: THREE.Mesh[] = [];
-  private vessel!: THREE.Mesh;
-  private vesselMat!: THREE.MeshPhysicalMaterial;
-  private panes: Pane[] = [];
-  private beads: Bead[] = [];
-  private ghosts: Ghost[] = [];
-  private bursts: { pts: THREE.Points; life: number }[] = [];
-  private labels: { el: HTMLDivElement; anchor: THREE.Object3D | null; offset: THREE.Vector3; shown: number; onlyStage?: Stage; caption?: boolean }[] = [];
-  private envTexture: THREE.Texture | null = null;
-  private motes!: THREE.Points;
-  private textures: THREE.Texture[] = [];
+  private meshes = new Map<string, THREE.Mesh>();
+  private defs = new Map<string, ElDef>();
+  private labels: { el: HTMLDivElement; pos: THREE.Vector3; shown: number; onlyStage?: Stage }[] = [];
+  private chips: Chip[] = [];
+  private markers: Marker[] = [];
+  private verdicts: THREE.Sprite[] = [];
+  private particles!: THREE.Points;
+  private scanGlow!: THREE.Sprite;
+  private scanLight!: THREE.PointLight;
+  private burstPool: { pts: THREE.Points; life: number }[] = [];
 
+  // pointer / drag
   private pointer = new THREE.Vector2(0, 0);
   private pointerActive = false;
+  private scanPoint = new THREE.Vector3(0, 0, 0.3);
   private dragging = false;
   private dragMoved = 0;
   private lastDrag = { x: 0, y: 0 };
   private spin = { x: 0, y: 0 };
   private spinTarget = { x: 0, y: 0 };
-  private cursorPointer = false;
-  private hoverPane: string | null = null;
-  private hoverBead: string | null = null;
+  private hovering = false;
 
-  private camPos = new THREE.Vector3(0, 0, 12);
-  private camAim = new THREE.Vector3();
+  private camPos = new THREE.Vector3(0, 0.25, 10.4);
+  private worldScale = 1;
+  private chipCycle = 0;
+  private frameSpec = FRAMES[0];
+  private camAim = new THREE.Vector3(0, 0, 0);
   private raycaster = new THREE.Raycaster();
+  private planeZ = new THREE.Plane(new THREE.Vector3(0, 0, 1), -0.3);
+  private textures: THREE.Texture[] = [];
 
   constructor(host: HTMLElement, opts: SceneOptions = {}) {
     this.host = host;
@@ -234,16 +349,11 @@ export class TraceoScene {
     const h = this.host.clientHeight || 1;
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
-    // Transmission is the expensive part; a lower pixel ratio costs far less
-    // than a lower transmission resolution and is far harder to see.
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.setSize(w, h);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.16;
-    const anyRenderer = this.renderer as unknown as { transmissionResolutionScale?: number };
-    if ("transmissionResolutionScale" in anyRenderer) anyRenderer.transmissionResolutionScale = 0.5;
-
+    this.renderer.toneMappingExposure = 1.15;
     const canvas = this.renderer.domElement;
     canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:pan-y";
     this.host.appendChild(canvas);
@@ -252,303 +362,286 @@ export class TraceoScene {
     this.labelLayer.style.cssText = "position:absolute;inset:0;pointer-events:none;overflow:hidden";
     this.host.appendChild(this.labelLayer);
 
-    this.camera = new THREE.PerspectiveCamera(40, w / h, 0.1, 100);
+    this.camera = new THREE.PerspectiveCamera(42, w / h, 0.1, 100);
+    this.camera.position.copy(this.camPos);
     this.scene.add(this.world);
+    this.scene.fog = new THREE.Fog(0x080c18, 12, 26);
 
-    this.buildEnvironment();
-    this.buildBackdrop();
     this.buildLights();
-    this.buildCore();
-    this.buildVessel();
-    this.buildPanes();
-    this.buildBeads();
-    this.buildGhosts();
+    this.buildPage();
+    this.buildParticles();
+    this.buildScan();
+    this.buildMarkers();
 
     this.bind();
-    this.opts.onBugCount?.(3, 3);
+    this.applyStage(0, true);
+    this.opts.onBugCount?.(this.markers.length, this.markers.length);
     this.start();
   }
 
-  /**
-   * Glass has nothing to show without something to reflect, so the scene gets
-   * an environment built here rather than fetched: a gradient with three soft
-   * highlights, projected equirectangularly and pre-filtered. No network, no
-   * HDR asset, and the highlights are placed where the panes will catch them.
-   */
-  private buildEnvironment() {
-    const cv = document.createElement("canvas");
-    cv.width = 512;
-    cv.height = 256;
-    const ctx = cv.getContext("2d")!;
-    const g = ctx.createLinearGradient(0, 0, 0, 256);
-    g.addColorStop(0, "#22335a");
-    g.addColorStop(0.45, "#0d1526");
-    g.addColorStop(1, "#05080f");
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 512, 256);
-
-    const spot = (x: number, y: number, r: number, colour: string) => {
-      const rg = ctx.createRadialGradient(x, y, 0, x, y, r);
-      rg.addColorStop(0, colour);
-      rg.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = rg;
-      ctx.fillRect(x - r, y - r, r * 2, r * 2);
-    };
-    spot(130, 62, 120, "rgba(168,196,255,0.95)");
-    spot(372, 96, 96, "rgba(201,169,97,0.6)");
-    spot(286, 208, 130, "rgba(70,105,180,0.4)");
-
-    const tex = new THREE.CanvasTexture(cv);
-    tex.mapping = THREE.EquirectangularReflectionMapping;
-    tex.colorSpace = THREE.SRGBColorSpace;
-
-    const pmrem = new THREE.PMREMGenerator(this.renderer);
-    const env = pmrem.fromEquirectangular(tex).texture;
-    this.scene.environment = env;
-    this.envTexture = env;
-    pmrem.dispose();
-    tex.dispose();
+  private buildLights() {
+    this.scene.add(new THREE.HemisphereLight(0x8fa8ff, 0x0a0f1e, 1.05));
+    const key = new THREE.DirectionalLight(0xdce6ff, 1.5);
+    key.position.set(3.5, 5, 7);
+    this.scene.add(key);
+    const rimV = new THREE.PointLight(C.violet, 55, 26);
+    rimV.position.set(-6.5, 2.5, 3.5);
+    this.scene.add(rimV);
+    const rimP = new THREE.PointLight(C.pink, 26, 22);
+    rimP.position.set(6.5, -3, 2.5);
+    this.scene.add(rimP);
   }
 
-  /**
-   * Something for the glass to bend.
-   *
-   * Frosted glass in front of empty space is a grey sheet — refraction needs a
-   * source, and roughness needs structure to smear. So there is a lit backdrop
-   * behind everything and a field of motes between it and the panes. Both sit
-   * in the scene rather than the rotating world, so turning the assembly moves
-   * the glass across the light instead of carrying the light with it.
-   */
-  private buildBackdrop() {
-    const cv = document.createElement("canvas");
-    cv.width = 1024;
-    cv.height = 640;
-    const ctx = cv.getContext("2d")!;
-    ctx.fillStyle = "#070b14";
-    ctx.fillRect(0, 0, 1024, 640);
-    const glow = (x: number, y: number, r: number, colour: string) => {
-      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-      g.addColorStop(0, colour);
-      g.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = g;
-      ctx.fillRect(x - r, y - r, r * 2, r * 2);
-    };
-    // Weighted to the right of frame, where the glass sits. The copy occupies
-    // the left third and needs the ground to stay dark under it.
-    glow(690, 300, 360, "rgba(74,112,225,0.6)");
-    glow(880, 176, 230, "rgba(201,169,97,0.34)");
-    glow(560, 470, 260, "rgba(56,86,168,0.34)");
-    glow(300, 300, 260, "rgba(40,62,120,0.22)");
+  private buildPage() {
+    for (const def of ELEMENTS) {
+      this.defs.set(def.id, def);
+      const depth = def.kind === "frame" ? 0.22 : def.kind === "bar" ? 0.12 : 0.09;
+      const radius = def.kind === "dot" ? def.w / 2 : Math.min(0.09, def.h / 2.2);
+      const shape = roundedShape(def.w, def.h, radius);
+      const geom = new THREE.ExtrudeGeometry(shape, {
+        depth,
+        bevelEnabled: true,
+        bevelThickness: 0.012,
+        bevelSize: 0.012,
+        bevelSegments: 2,
+        curveSegments: 6,
+      });
+      geom.translate(0, 0, -depth / 2);
 
-    const tex = new THREE.CanvasTexture(cv);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    this.textures.push(tex);
-    const mesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(38, 24),
-      new THREE.MeshBasicMaterial({ map: tex, depthWrite: false }),
-    );
-    mesh.position.z = -9.5;
-    this.scene.add(mesh);
+      const isAccent = def.kind === "button";
+      const mat = new THREE.MeshStandardMaterial({
+        color: def.color ?? C.block,
+        roughness: isAccent ? 0.3 : 0.62,
+        metalness: isAccent ? 0.15 : 0.08,
+        emissive: new THREE.Color(isAccent ? C.button : C.edgeSoft),
+        emissiveIntensity: isAccent ? 0.5 : 0.12,
+      });
 
-    const N = 420;
+      const mesh = new THREE.Mesh(geom, mat);
+      mesh.position.set(def.x, def.y, def.z ?? 0);
+      mesh.userData.baseEmissive = mat.emissiveIntensity;
+      mesh.userData.def = def;
+      this.world.add(mesh);
+      this.meshes.set(def.id, mesh);
+
+      // A hairline outline is what makes a slab read as a piece of interface.
+      const pts = shape.getPoints(28).map((p) => new THREE.Vector3(p.x, p.y, depth / 2 + 0.004));
+      const lineGeom = new THREE.BufferGeometry().setFromPoints(pts);
+      const lineMat = new THREE.LineBasicMaterial({
+        color: isAccent ? 0xa9c0ff : C.edge,
+        transparent: true,
+        opacity: isAccent ? 0.7 : 0.34,
+      });
+      mesh.add(new THREE.LineLoop(lineGeom, lineMat));
+
+      if (def.label) this.addLabel(def);
+    }
+  }
+
+  private addLabel(def: ElDef) {
+    this.makeLabel(def.label!, new THREE.Vector3(def.x, def.y + def.h / 2 + 0.22, 0.2));
+  }
+
+  /** A caption in the scene. Without `onlyStage` it belongs to the scanner. */
+  private makeLabel(text: string, pos: THREE.Vector3, onlyStage?: Stage) {
+    const el = document.createElement("div");
+    el.textContent = text;
+    el.style.cssText = [
+      "position:absolute",
+      "left:0",
+      "top:0",
+      "transform:translate(-50%,-50%)",
+      "padding:4px 9px",
+      "border-radius:7px",
+      "font:500 11px/1.35 'JetBrains Mono',ui-monospace,monospace",
+      "letter-spacing:0.01em",
+      "color:#dbe6ff",
+      "background:rgba(12,18,36,0.86)",
+      "border:1px solid rgba(108,142,255,0.45)",
+      "box-shadow:0 6px 22px rgba(0,0,0,0.45)",
+      "white-space:nowrap",
+      "opacity:0",
+      "will-change:transform,opacity",
+    ].join(";");
+    this.labelLayer.appendChild(el);
+    this.labels.push({ el, pos, shown: 0, onlyStage });
+  }
+
+  private buildParticles() {
+    const N = 1400;
     const pos = new Float32Array(N * 3);
     const col = new Float32Array(N * 3);
-    const a = new THREE.Color(0x8fb0ff);
-    const b = new THREE.Color(C.gold);
+    const seed = new Float32Array(N);
+    const c1 = new THREE.Color(C.blue);
+    const c2 = new THREE.Color(C.violet);
     for (let i = 0; i < N; i++) {
-      pos[i * 3] = (Math.random() - 0.5) * 22;
-      pos[i * 3 + 1] = (Math.random() - 0.5) * 13;
-      pos[i * 3 + 2] = -8 + Math.random() * 6.5;
-      const c = a.clone().lerp(b, Math.random() * 0.5);
-      col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+      const r = 5.5 + Math.random() * 7;
+      const a = Math.random() * Math.PI * 2;
+      pos[i * 3] = Math.cos(a) * r * (0.8 + Math.random() * 0.5);
+      pos[i * 3 + 1] = (Math.random() - 0.5) * 9;
+      pos[i * 3 + 2] = -3 - Math.random() * 9;
+      const c = c1.clone().lerp(c2, Math.random());
+      col[i * 3] = c.r;
+      col[i * 3 + 1] = c.g;
+      col[i * 3 + 2] = c.b;
+      seed[i] = Math.random() * Math.PI * 2;
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
     g.setAttribute("color", new THREE.BufferAttribute(col, 3));
-    this.motes = new THREE.Points(
-      g,
-      new THREE.PointsMaterial({
-        size: 0.07, vertexColors: true, transparent: true, opacity: 0.5,
-        depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true,
-      }),
-    );
-    this.scene.add(this.motes);
-  }
-
-  private buildLights() {
-    this.scene.add(new THREE.HemisphereLight(0x9fb4dc, 0x080c16, 0.5));
-    const key = new THREE.DirectionalLight(0xf3efe6, 1.1);
-    key.position.set(3, 4.5, 7);
-    this.scene.add(key);
-    const warm = new THREE.PointLight(C.gold, 26, 24);
-    warm.position.set(-6, 2, 3.5);
-    this.scene.add(warm);
-    const cool = new THREE.PointLight(0x5f7fb8, 30, 24);
-    cool.position.set(6, -2, 4);
-    this.scene.add(cool);
-  }
-
-  /** The application under test: a small lattice of emissive shards. */
-  private buildCore() {
-    const geom = new THREE.BoxGeometry(0.2, 0.2, 0.2);
-    const positions: [number, number, number][] = [
-      [0, 0, 0], [0.42, 0.2, -0.1], [-0.4, 0.28, 0.12], [0.16, -0.42, 0.2],
-      [-0.3, -0.3, -0.22], [0.5, -0.14, 0.3], [-0.52, -0.05, -0.3], [0.06, 0.5, 0.26],
-      [0.3, 0.34, -0.4], [-0.18, -0.5, -0.05], [0.44, 0.02, -0.44], [-0.44, 0.4, -0.12],
-    ];
-    for (const [x, y, z] of positions) {
-      const mat = new THREE.MeshStandardMaterial({
-        color: 0x9fc0ff,
-        emissive: new THREE.Color(C.azure),
-        emissiveIntensity: 1.5,
-        roughness: 0.3,
-        metalness: 0.2,
-      });
-      const m = new THREE.Mesh(geom, mat);
-      m.position.set(x, y, z);
-      m.userData.home = m.position.clone();
-      m.userData.seed = Math.random() * Math.PI * 2;
-      this.core.add(m);
-      this.shards.push(m);
-    }
-    this.world.add(this.core);
-  }
-
-  /** The frosted vessel around it — the glass you are looking through. */
-  private buildVessel() {
-    this.vesselMat = new THREE.MeshPhysicalMaterial({
-      color: C.glass,
-      metalness: 0,
-      roughness: 0.16,
-      transmission: 1,
-      thickness: 0.45,
-      ior: 1.48,
-      attenuationColor: new THREE.Color(0x9fc0ff),
-      attenuationDistance: 14,
-      clearcoat: 1,
-      clearcoatRoughness: 0.12,
-      iridescence: 0.3,
-      iridescenceIOR: 1.25,
-      envMapIntensity: 1.5,
+    g.userData.seed = seed;
+    g.userData.base = pos.slice();
+    const m = new THREE.PointsMaterial({
+      size: 0.045,
+      vertexColors: true,
       transparent: true,
+      opacity: 0.75,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      sizeAttenuation: true,
     });
-    this.vessel = new THREE.Mesh(new THREE.IcosahedronGeometry(1.42, 4), this.vesselMat);
-    this.world.add(this.vessel);
+    this.particles = new THREE.Points(g, m);
+    this.scene.add(this.particles);
   }
 
-  private buildPanes() {
-    for (const def of PANES) {
-      const mat = new THREE.MeshPhysicalMaterial({
-        color: 0xf2f7ff,
-        metalness: 0,
-        roughness: 0.22,
-        transmission: 1,
-        thickness: 0.2,
-        ior: 1.5,
-        attenuationColor: new THREE.Color(0xbcd2ff),
-        attenuationDistance: 22,
-        clearcoat: 1,
-        clearcoatRoughness: 0.1,
-        iridescence: 0.42,
-        iridescenceIOR: 1.3,
-        specularIntensity: 1,
-        envMapIntensity: 1.6,
-        transparent: true,
-        side: THREE.FrontSide,
-      });
-      const mesh = new THREE.Mesh(slabGeometry(def.w, def.h, 0.22), mat);
-      this.world.add(mesh);
-      this.panes.push({
-        id: def.id, mesh, mat, angle: def.angle, radius: def.radius,
-        tilt: def.tilt, lift: def.lift, clear: 0, hover: 0, front: false,
-      });
-      this.makeLabel(def.label, mesh, new THREE.Vector3(0, def.h / 2 + 0.3, 0), { caption: true });
+  private buildScan() {
+    const tex = glowTexture();
+    this.textures.push(tex);
+    const mat = new THREE.SpriteMaterial({
+      map: tex,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      opacity: 0.9,
+    });
+    this.scanGlow = new THREE.Sprite(mat);
+    this.scanGlow.scale.setScalar(2.6);
+    this.scanGlow.position.set(0, 0, 0.5);
+    this.world.add(this.scanGlow);
+
+    this.scanLight = new THREE.PointLight(C.scan, 12, 4.5, 1.8);
+    this.scanLight.position.set(0, 0, 1.1);
+    this.world.add(this.scanLight);
+  }
+
+  private buildMarkers() {
+    const ringGeom = new THREE.TorusGeometry(0.17, 0.022, 10, 32);
+    const coreGeom = new THREE.OctahedronGeometry(0.085, 0);
+    // A marker is ~34px across and drifts with the scene's idle sway, so the
+    // pixel a visitor aims at is not quite the pixel they release on. The hit
+    // volume is deliberately much larger than the mark it stands for.
+    const hitGeom = new THREE.SphereGeometry(0.36, 8, 6);
+    const hitMat = new THREE.MeshBasicMaterial({ visible: false });
+    for (const def of ELEMENTS) {
+      if (!def.bug) continue;
+      const group = new THREE.Group();
+      const pos = new THREE.Vector3(def.x + def.w / 2 - 0.06, def.y + def.h / 2 + 0.04, 0.32);
+      group.position.copy(pos);
+
+      const ring = new THREE.Mesh(
+        ringGeom,
+        new THREE.MeshBasicMaterial({ color: C.err, transparent: true, opacity: 0.9 })
+      );
+      const core = new THREE.Mesh(
+        coreGeom,
+        new THREE.MeshStandardMaterial({
+          color: C.err,
+          emissive: new THREE.Color(C.err),
+          emissiveIntensity: 1.4,
+          roughness: 0.3,
+        })
+      );
+      group.add(ring, core, new THREE.Mesh(hitGeom, hitMat));
+      group.visible = false;
+      group.scale.setScalar(0.001);
+      this.world.add(group);
+      this.markers.push({ id: def.id, group, ring, core, pos, def: def.bug, fixed: false, hover: 0, pop: 0 });
     }
   }
 
-  /**
-   * The derived cases, orbiting the vessel. Ordinary translucent material, not
-   * glass: nine more transmissive objects would triple the frame cost to say
-   * something the frost in front of them would swallow anyway.
-   */
-  private buildBeads() {
-    const geom = new THREE.IcosahedronGeometry(0.13, 1);
-    BEADS.forEach((b, i) => {
-      const mat = new THREE.MeshStandardMaterial({
-        color: 0xc8d8ff,
-        emissive: new THREE.Color(C.azure),
-        emissiveIntensity: 0.7,
-        roughness: 0.25,
-        metalness: 0.1,
-        transparent: true,
-        opacity: 0,
-      });
-      const mesh = new THREE.Mesh(geom, mat);
-      const halo = new THREE.Mesh(
-        new THREE.SphereGeometry(0.36, 10, 8),
-        new THREE.MeshBasicMaterial({ visible: false }),
-      );
-      mesh.add(halo);
-      this.world.add(mesh);
-      this.beads.push({
-        id: b.id, mesh, mat, halo,
-        angle: (i / BEADS.length) * Math.PI * 2,
-        radius: 2.35 + (i % 3) * 0.22,
-        height: Math.sin(i * 1.7) * 0.85,
-        speed: 0.1 + (i % 4) * 0.015,
-        pass: b.pass, fixed: false, revealed: 0, hover: 0,
-      });
-      this.makeLabel(b.label, mesh, new THREE.Vector3(0, 0.32, 0), {});
-    });
-  }
+  /* --- chips (the generated cases) ----------------------------------------- */
 
-  /** Candidates with nothing behind them: they never take on substance. */
-  private buildGhosts() {
-    const geom = new THREE.IcosahedronGeometry(0.13, 1);
-    UNGROUNDED.forEach((label, i) => {
-      const mat = new THREE.MeshStandardMaterial({
-        color: 0xffb3c0,
-        emissive: new THREE.Color(C.err),
-        emissiveIntensity: 0.8,
-        roughness: 0.3,
-        transparent: true,
-        opacity: 0,
-      });
+  private ensureChips() {
+    if (this.chips.length) return;
+    const geom = new THREE.PlaneGeometry(0.92, 0.26);
+    const grounded = ELEMENTS.filter((e) => e.cite);
+    const stackX = -4.75;
+    let row = 0;
+
+    const make = (color: number, from: THREE.Vector3, home: THREE.Vector3, isGrounded: boolean, delay: number) => {
+      const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0 });
       const mesh = new THREE.Mesh(geom, mat);
-      const base = new THREE.Vector3(-1.1 + i * 1.1, 2.4 + i * 0.25, 1.4);
-      mesh.position.copy(base);
+      mesh.position.copy(from);
       mesh.visible = false;
       this.world.add(mesh);
-      this.ghosts.push({ mesh, mat, base, t: -0.55 * i });
-      this.makeLabel(label, mesh, new THREE.Vector3(0, 0.32, 0), { onlyStage: 2 });
+      const stackAt = isGrounded
+        ? new THREE.Vector3(stackX, 1.85 - row * 0.34, 0.35)
+        // The rejected ones travel to the gate and get no further.
+        : new THREE.Vector3(stackX + 1.35, 0.5 - row * 0.34, 0.35);
+      row++;
+      this.chips.push({
+        mesh, target: stackAt.clone(), home, stackAt, grounded: isGrounded,
+        delay, state: "hidden", t: 0,
+      });
+    };
+
+    grounded.forEach((def, i) => {
+      const from = new THREE.Vector3(def.x, def.y, 0.3);
+      make(C.blue, from.clone(), from.clone(), true, i * 0.13);
     });
+    // Held back deliberately: the discard only means something once the
+    // visitor has watched the grounded ones land.
+    row = 0;
+    UNGROUNDED.forEach((_, i) => {
+      const from = new THREE.Vector3(-0.4 + i * 0.5, -2.4, 0.3);
+      make(C.err, from, from.clone(), false, 1.5 + i * 0.42);
+    });
+
+    this.makeLabel("7 grounded — each cites what it saw", new THREE.Vector3(stackX + 0.15, 2.3, 0.4), 2);
+    this.makeLabel("3 discarded — nothing to cite", new THREE.Vector3(stackX + 1.5, -1.15, 0.4), 2);
   }
 
-  private makeLabel(
-    text: string,
-    anchor: THREE.Object3D | null,
-    offset: THREE.Vector3,
-    opts: { onlyStage?: Stage; caption?: boolean },
-  ) {
-    const el = document.createElement("div");
-    el.textContent = text;
-    el.style.cssText = [
-      "position:absolute", "left:0", "top:0", "transform:translate(-50%,-50%)",
-      opts.caption ? "padding:0" : "padding:4px 9px",
-      opts.caption ? "" : "border-radius:3px",
-      opts.caption
-        ? "font:400 10px/1 'JetBrains Mono',ui-monospace,monospace"
-        : "font:400 10.5px/1.4 'JetBrains Mono',ui-monospace,monospace",
-      opts.caption ? "letter-spacing:0.24em" : "letter-spacing:0.02em",
-      opts.caption ? "text-transform:uppercase" : "",
-      opts.caption ? "color:#c9a961" : "color:#e4ebf7",
-      opts.caption ? "background:none" : "background:rgba(9,14,26,0.82)",
-      opts.caption ? "" : "border:1px solid rgba(201,169,97,0.3)",
-      opts.caption ? "" : "backdrop-filter:blur(6px)",
-      "white-space:nowrap", "opacity:0", "will-change:transform,opacity",
-    ].filter(Boolean).join(";");
-    this.labelLayer.appendChild(el);
-    this.labels.push({ el, anchor, offset, shown: 0, onlyStage: opts.onlyStage, caption: opts.caption });
+  /* --- verdicts ------------------------------------------------------------ */
+
+  private ensureVerdicts() {
+    if (this.verdicts.length) return;
+    const okTex = glyphTexture("✓", C.ok);
+    this.textures.push(okTex);
+    for (const def of ELEMENTS) {
+      if (!def.cite || def.bug) continue;
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: okTex, transparent: true, opacity: 0, depthWrite: false }));
+      s.scale.setScalar(0.001);
+      s.position.set(def.x + def.w / 2 - 0.04, def.y + def.h / 2 + 0.04, 0.32);
+      this.world.add(s);
+      this.verdicts.push(s);
+    }
+  }
+
+  private burst(at: THREE.Vector3, hex: number) {
+    const N = 46;
+    const pos = new Float32Array(N * 3);
+    const vel: number[] = [];
+    for (let i = 0; i < N; i++) {
+      pos[i * 3] = at.x;
+      pos[i * 3 + 1] = at.y;
+      pos[i * 3 + 2] = at.z;
+      const a = Math.random() * Math.PI * 2;
+      const b = (Math.random() - 0.5) * Math.PI;
+      const sp = 1.6 + Math.random() * 2.6;
+      vel.push(Math.cos(a) * Math.cos(b) * sp, Math.sin(b) * sp, Math.sin(a) * Math.cos(b) * sp * 0.5);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    g.userData.vel = vel;
+    const pts = new THREE.Points(
+      g,
+      new THREE.PointsMaterial({
+        color: hex, size: 0.07, transparent: true, opacity: 1,
+        depthWrite: false, blending: THREE.AdditiveBlending,
+      })
+    );
+    this.world.add(pts);
+    this.burstPool.push({ pts, life: 0 });
   }
 
   /* --- input --------------------------------------------------------------- */
@@ -561,8 +654,8 @@ export class TraceoScene {
       const dx = e.clientX - this.lastDrag.x;
       const dy = e.clientY - this.lastDrag.y;
       this.dragMoved += Math.abs(dx) + Math.abs(dy);
-      this.spinTarget.y += dx * 0.005;
-      this.spinTarget.x = THREE.MathUtils.clamp(this.spinTarget.x - dy * 0.003, -0.4, 0.4);
+      this.spinTarget.y = THREE.MathUtils.clamp(this.spinTarget.y + dx * 0.005, -0.85, 0.85);
+      this.spinTarget.x = THREE.MathUtils.clamp(this.spinTarget.x - dy * 0.004, -0.45, 0.45);
       this.lastDrag = { x: e.clientX, y: e.clientY };
     }
   };
@@ -577,12 +670,8 @@ export class TraceoScene {
   private onPointerUp = (e: PointerEvent) => {
     const wasDrag = this.dragMoved > 6;
     this.dragging = false;
-    try {
-      this.renderer.domElement.releasePointerCapture?.(e.pointerId);
-    } catch {
-      /* capture was never taken */
-    }
-    if (!wasDrag) this.tryFix();
+    this.renderer.domElement.releasePointerCapture?.(e.pointerId);
+    if (!wasDrag) this.tryFixAtPointer();
   };
 
   private onPointerLeave = () => {
@@ -596,7 +685,7 @@ export class TraceoScene {
     const h = this.host.clientHeight || 1;
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.setSize(w, h);
   };
 
@@ -615,63 +704,45 @@ export class TraceoScene {
     document.addEventListener("visibilitychange", this.onVisibility);
   }
 
-  private pickBead(): Bead | null {
-    if (!this.pointerActive) return null;
-    this.raycaster.setFromCamera(this.pointer, this.camera);
-    const live = this.beads.filter((b) => b.revealed > 0.5);
-    const hits = this.raycaster.intersectObjects(live.map((b) => b.halo), false);
-    if (!hits.length) return null;
-    return live.find((b) => b.halo === hits[0].object) ?? null;
-  }
-
-  private pickPane(): Pane | null {
-    if (!this.pointerActive) return null;
-    this.raycaster.setFromCamera(this.pointer, this.camera);
-    const hits = this.raycaster.intersectObjects(this.panes.map((p) => p.mesh), false);
-    if (!hits.length) return null;
-    return this.panes.find((p) => p.mesh === hits[0].object) ?? null;
-  }
-
-  private tryFix() {
+  private tryFixAtPointer() {
+    // Act 3 shows the reds as results; act 4 is where they become repairable.
+    // Letting a click land a stage early would fire a fix prompt at a visitor
+    // who has not been told what one is yet.
     if (this.stage < 4) return;
-    const bead = this.pickBead();
-    if (!bead || bead.pass || bead.fixed) return;
-    this.fix(bead);
+    const live = this.markers.filter((m) => !m.fixed && m.group.visible);
+    if (!live.length) return;
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+    const hits = this.raycaster.intersectObjects(live.map((m) => m.group), true);
+    if (!hits.length) return;
+    let obj: THREE.Object3D | null = hits[0].object;
+    while (obj && !live.some((m) => m.group === obj)) obj = obj.parent;
+    const marker = live.find((m) => m.group === obj);
+    if (marker) this.fix(marker);
   }
 
-  private fix(bead: Bead) {
-    bead.fixed = true;
-    bead.pass = true;
-    bead.mat.color.setHex(0xbdf0d8);
-    bead.mat.emissive.setHex(C.ok);
-    this.burst(bead.mesh.position, C.ok);
+  private fix(marker: Marker) {
+    marker.fixed = true;
+    marker.pop = 0.0001;
+    this.burst(marker.group.position.clone(), C.ok);
 
-    const remaining = this.beads.filter((b) => !b.pass).length;
-    const def = DEFECTS[bead.id];
-    if (def) this.opts.onBugFixed?.({ id: bead.id, ...def, remaining });
-    this.opts.onBugCount?.(remaining, 3);
-  }
+    const okTex = glyphTexture("✓", C.ok);
+    this.textures.push(okTex);
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: okTex, transparent: true, opacity: 0, depthWrite: false }));
+    s.position.copy(marker.group.position);
+    s.scale.setScalar(0.001);
+    this.world.add(s);
+    this.verdicts.push(s);
 
-  private burst(at: THREE.Vector3, hex: number) {
-    const N = 40;
-    const pos = new Float32Array(N * 3);
-    const vel: number[] = [];
-    for (let i = 0; i < N; i++) {
-      pos[i * 3] = at.x; pos[i * 3 + 1] = at.y; pos[i * 3 + 2] = at.z;
-      const a = Math.random() * Math.PI * 2;
-      const b = (Math.random() - 0.5) * Math.PI;
-      const sp = 1 + Math.random() * 1.9;
-      vel.push(Math.cos(a) * Math.cos(b) * sp, Math.sin(b) * sp, Math.sin(a) * Math.cos(b) * sp);
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    g.userData.vel = vel;
-    const pts = new THREE.Points(
-      g,
-      new THREE.PointsMaterial({ color: hex, size: 0.07, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending }),
-    );
-    this.world.add(pts);
-    this.bursts.push({ pts, life: 0 });
+    const remaining = this.markers.filter((m) => !m.fixed).length;
+    this.opts.onBugFixed?.({
+      id: marker.id,
+      title: marker.def.title,
+      where: marker.def.where,
+      requirement: marker.def.requirement,
+      actions: marker.def.actions,
+      remaining,
+    });
+    this.opts.onBugCount?.(remaining, this.markers.length);
   }
 
   /* --- public API ---------------------------------------------------------- */
@@ -679,26 +750,40 @@ export class TraceoScene {
   setStage(next: Stage) {
     if (next === this.stage) return;
     this.stage = next;
-    this.frameSpec = FRAMES[next];
-    if (next < 4) this.spinTarget = { x: 0, y: 0 };
-
-    // One pane is brought to the front per act; it clears as it arrives.
-    this.panes.forEach((p, i) => {
-      p.front = (next === 1 && i === 0) || (next === 2 && i === 1) || (next >= 3 && i === 2);
-    });
-    for (const g of this.ghosts) {
-      g.mesh.visible = next === 2;
-      if (next === 2) {
-        g.t = -0.55 * this.ghosts.indexOf(g);
-        g.mesh.position.copy(g.base);
-        g.mat.opacity = 0;
-      }
-    }
+    this.stageT = 0;
+    this.applyStage(next, false);
   }
 
-  /** The keyboard-reachable equivalent of clicking each failed case. */
+  /** The keyboard-reachable equivalent of clicking every red marker. */
   fixAll() {
-    for (const b of this.beads) if (!b.pass && !b.fixed) this.fix(b);
+    for (const m of this.markers) if (!m.fixed && m.group.visible) this.fix(m);
+  }
+
+  private applyStage(stage: Stage, _immediate: boolean) {
+    if (stage >= 2) this.ensureChips();
+    if (stage >= 3) this.ensureVerdicts();
+
+    // Camera framing per act. Act 1 leans into the form, act 2 pulls back so the
+    // stack of generated cases has somewhere to land, act 4 sits close enough
+    // that the red markers are comfortable click targets.
+    this.frameSpec = FRAMES[stage];
+
+    if (stage < 4) this.spinTarget = { x: 0, y: 0 };
+
+    for (const c of this.chips) {
+      if (stage === 2 && c.state === "hidden") c.state = "toStack";
+      if (stage >= 3 && (c.state === "stacked" || c.state === "toStack") && c.grounded) {
+        c.state = "toHome";
+        c.t = 0;
+      }
+    }
+    for (const m of this.markers) {
+      if (stage >= 3 && !m.fixed) m.group.visible = true;
+      if (stage < 3) {
+        m.group.visible = false;
+        m.group.scale.setScalar(0.001);
+      }
+    }
   }
 
   start() {
@@ -720,224 +805,266 @@ export class TraceoScene {
 
   /* --- the loop ------------------------------------------------------------ */
 
-  private resolveFrame() {
-    const f = this.frameSpec;
-    const aspect = this.camera.aspect;
-    const portrait = aspect < 1;
-    const scale = f.scale * (portrait ? 0.62 : 1);
-    const bias = f.bias * (portrait ? 0.18 : 1);
-    const halfH = f.z * Math.tan((this.camera.fov * Math.PI) / 360);
-    const halfW = halfH * aspect;
-
-    this.worldScale = scale;
-    this.camAim.set(
-      f.focus[0] * scale - bias * halfW,
-      f.focus[1] * scale - (portrait ? halfH * 0.34 : 0),
-      0,
-    );
-    this.camPos.set(this.camAim.x, this.camAim.y + 0.2, f.z);
-  }
-
   private frame() {
     const dt = Math.min(this.clock.getDelta(), 0.05);
     const t = this.clock.elapsedTime;
+    this.stageT += dt;
     const reduce = !!this.opts.reducedMotion;
 
     this.resolveFrame();
-    this.camera.position.lerp(this.camPos, reduce ? 1 : 1 - Math.exp(-3 * dt));
+
+    // Camera easing.
+    this.camera.position.lerp(this.camPos, reduce ? 1 : 1 - Math.exp(-3.2 * dt));
     this.camera.lookAt(this.camAim);
 
+    // World rotation: the drag the visitor applied, plus an idle sway.
     if (!reduce) {
-      this.spin.y = damp(this.spin.y, this.spinTarget.y + t * 0.055, 2.2, dt);
-      this.spin.x = damp(this.spin.x, this.spinTarget.x + Math.cos(t * 0.13) * 0.03, 2.2, dt);
+      const idleY = Math.sin(t * 0.24) * 0.075;
+      const idleX = Math.cos(t * 0.19) * 0.035;
+      this.spin.y = damp(this.spin.y, this.spinTarget.y + idleY, 3, dt);
+      this.spin.x = damp(this.spin.x, this.spinTarget.x + idleX, 3, dt);
     } else {
       this.spin.y = this.spinTarget.y;
       this.spin.x = this.spinTarget.x;
     }
     this.world.rotation.y = this.spin.y;
     this.world.rotation.x = this.spin.x;
-    this.world.scale.setScalar(damp(this.world.scale.x || 1, this.worldScale, reduce ? 40 : 3, dt));
+    const sc = damp(this.world.scale.x, this.worldScale, reduce ? 40 : 3.2, dt);
+    this.world.scale.setScalar(sc);
 
-    this.updateHover(dt);
-    this.updateCore(dt, t, reduce);
-    this.updatePanes(dt, t, reduce);
-    this.updateBeads(dt, t, reduce);
-    this.updateGhosts(dt);
+    this.updateScan(dt, t, reduce);
     this.updateLabels(dt);
+    this.updateChips(dt);
+    this.updateMarkers(dt, t);
+    this.updateVerdicts(dt);
     this.updateBursts(dt);
-    if (!reduce) this.motes.rotation.z = t * 0.012;
+    if (!reduce) this.updateParticles(t);
 
     this.renderer.render(this.scene, this.camera);
   }
 
-  private updateHover(_dt: number) {
-    const bead = this.dragging ? null : this.pickBead();
-    this.hoverBead = bead?.id ?? null;
-    const pane = bead || this.dragging ? null : this.pickPane();
-    this.hoverPane = pane?.id ?? null;
+  /**
+   * Turn the act's framing into a camera, for the viewport we actually have.
+   *
+   * Portrait has no room to stand copy beside the model, so the model shrinks,
+   * moves back toward centre and rides higher up the screen — the copy then
+   * reads as a card over it rather than beside it.
+   */
+  private resolveFrame() {
+    const f = this.frameSpec;
+    const aspect = this.camera.aspect;
+    const portrait = aspect < 1;
+    const scale = f.scale * (portrait ? 0.62 : 1);
+    const bias = f.bias * (portrait ? 0.25 : 1);
 
-    const wantPointer = !!bead && this.stage >= 4 && !bead.pass;
-    if (wantPointer !== this.cursorPointer) {
-      this.cursorPointer = wantPointer;
-      this.renderer.domElement.style.cursor = wantPointer ? "pointer" : "grab";
-    }
+    const halfH = f.z * Math.tan((this.camera.fov * Math.PI) / 360);
+    const halfW = halfH * aspect;
+
+    this.worldScale = scale;
+    // Aiming BELOW the model lifts it up the screen, which on portrait is what
+    // leaves the lower half free for the copy card.
+    this.camAim.set(
+      f.focus[0] * scale - bias * halfW,
+      f.focus[1] * scale - (portrait ? halfH * 0.45 : 0),
+      0
+    );
+    this.camPos.set(this.camAim.x, this.camAim.y + 0.2, f.z);
   }
 
-  private updateCore(dt: number, t: number, reduce: boolean) {
-    // The lattice loosens as the acts progress: the application stops being one
-    // opaque thing and becomes the parts discovery found in it.
-    const spread = this.stage === 0 ? 1 : 1.35;
-    for (const m of this.shards) {
-      const home = m.userData.home as THREE.Vector3;
-      const seed = m.userData.seed as number;
-      const drift = reduce ? 0 : Math.sin(t * 0.6 + seed) * 0.05;
-      m.position.lerp(home.clone().multiplyScalar(spread).addScalar(drift), 1 - Math.exp(-2 * dt));
-      if (!reduce) {
-        m.rotation.x += dt * 0.25;
-        m.rotation.y += dt * 0.32;
-      }
-      const mat = m.material as THREE.MeshStandardMaterial;
-      mat.emissiveIntensity = 1.2 + (reduce ? 0 : Math.sin(t * 1.6 + seed) * 0.4);
-    }
-    if (!reduce) this.core.rotation.y = t * 0.12;
-  }
-
-  private updatePanes(dt: number, t: number, reduce: boolean) {
-    for (const p of this.panes) {
-      const hovered = this.hoverPane === p.id;
-      // Hover or an act brings a pane forward, and forward means clear: the
-      // roughness is what makes the glass frosted, so this really is wiping it.
-      const wantClear = hovered || p.front ? 1 : 0;
-      p.clear = damp(p.clear, wantClear, 4, dt);
-      p.hover = damp(p.hover, hovered ? 1 : 0, 6, dt);
-
-      p.mat.roughness = 0.24 - p.clear * 0.21;
-      p.mat.thickness = 0.2 - p.clear * 0.12;
-      p.mat.clearcoatRoughness = 0.1 - p.clear * 0.08;
-
-      // A pane the act has called forward stops orbiting and comes to a known
-      // place. Letting it clear wherever its orbit happened to be meant the act
-      // was framed by chance — sometimes centre stage, sometimes half off screen.
-      if (p.front) {
-        // Between the camera and the core, so you look THROUGH it at the thing
-        // it is about. Past centre rather than at it: the pane is nearer the
-        // camera than the core is, so perspective carries it back toward frame
-        // centre on its own.
-        const target = 1.94;
-        const delta = ((target - p.angle + Math.PI) % (Math.PI * 2)) - Math.PI;
-        p.angle += delta * (1 - Math.exp(-2.4 * dt));
-      } else if (!reduce) {
-        p.angle += dt * 0.11;
-      }
-      const radius = p.radius - p.clear * 1.3 - p.hover * 0.15;
-      // A presented pane also settles toward the core's height, so its caption
-      // has room above it instead of running off the top of the frame.
-      const lift = p.lift * (1 - p.clear * 0.85) + p.clear * 0.1;
-      p.mesh.position.set(
-        Math.cos(p.angle) * radius,
-        lift + Math.sin(p.angle * 0.7) * 0.3 * (1 - p.clear),
-        Math.sin(p.angle) * radius,
+  private updateScan(dt: number, t: number, reduce: boolean) {
+    // Where the cursor meets the page plane — the point the "scanner" is on.
+    if (this.pointerActive) {
+      this.raycaster.setFromCamera(this.pointer, this.camera);
+      const hit = new THREE.Vector3();
+      const local = this.raycaster.ray.intersectPlane(this.planeZ, hit);
+      if (local) this.world.worldToLocal(hit);
+      if (local) this.scanPoint.lerp(hit, reduce ? 1 : 1 - Math.exp(-14 * dt));
+    } else if (!reduce) {
+      // Idle: the scanner keeps working on its own, so the page is never still.
+      const r = 2.2;
+      this.scanPoint.lerp(
+        new THREE.Vector3(Math.sin(t * 0.5) * r + 0.6, Math.cos(t * 0.37) * 1.2, 0.3),
+        1 - Math.exp(-2.5 * dt)
       );
-      p.mesh.rotation.set(p.tilt, -p.angle + Math.PI / 2, 0);
-      void t;
     }
-  }
+    this.scanGlow.position.set(this.scanPoint.x, this.scanPoint.y, 0.55);
+    this.scanLight.position.set(this.scanPoint.x, this.scanPoint.y, 1.15);
+    const pulse = reduce ? 1 : 1 + Math.sin(t * 3.4) * 0.06;
+    this.scanGlow.scale.setScalar(2.5 * pulse);
 
-  private updateBeads(dt: number, t: number, reduce: boolean) {
-    const want = this.stage >= 2 ? 1 : 0;
-    for (const b of this.beads) {
-      b.revealed = damp(b.revealed, want, 2.4, dt);
-      b.mat.opacity = b.revealed;
-      const hovered = this.hoverBead === b.id;
-      b.hover = damp(b.hover, hovered ? 1 : 0, 8, dt);
-
-      if (!reduce) b.angle += dt * b.speed;
-      const r = b.radius * (0.55 + b.revealed * 0.45);
-      b.mesh.position.set(
-        Math.cos(b.angle) * r,
-        b.height + (reduce ? 0 : Math.sin(t * 0.5 + b.angle) * 0.12),
-        Math.sin(b.angle) * r,
-      );
-      b.mesh.scale.setScalar(0.85 + b.hover * 0.5);
-      if (!reduce) b.mesh.rotation.y += dt * 0.6;
-
-      // A verdict only exists after execution; before that every bead is neutral.
-      if (this.stage >= 3) {
-        const target = b.pass ? C.ok : C.err;
-        b.mat.emissive.lerp(new THREE.Color(target), 1 - Math.exp(-3 * dt));
-        b.mat.emissiveIntensity = b.pass
-          ? 0.8
-          : 1.1 + (reduce ? 0 : Math.sin(t * 2.6) * 0.45);
-      } else {
-        b.mat.emissive.lerp(new THREE.Color(C.azure), 1 - Math.exp(-3 * dt));
-        b.mat.emissiveIntensity = 0.7;
-      }
-    }
-  }
-
-  private updateGhosts(dt: number) {
-    for (const g of this.ghosts) {
-      if (!g.mesh.visible) continue;
-      g.t += dt;
-      if (g.t < 0) continue;
-      if (g.t < 2.6) {
-        // proposed: it drifts toward the vessel with the others
-        g.mat.opacity = damp(g.mat.opacity, 0.9, 2.4, dt);
-        g.mesh.position.lerp(new THREE.Vector3(g.base.x * 0.45, 0.5, 1.9), 1 - Math.exp(-1.1 * dt));
-      } else {
-        // cut: nothing behind it, so it never becomes a case
-        g.mat.opacity = damp(g.mat.opacity, 0, 1.6, dt);
-        g.mesh.position.y -= dt * 1.1;
-        g.mesh.rotation.z += dt * 1.4;
-        if (g.t > 5.6) {
-          g.t = 0;
-          g.mesh.position.copy(g.base);
-          g.mesh.rotation.set(0, 0, 0);
-          g.mat.opacity = 0;
-        }
-      }
+    // Panels brighten as the scanner passes: discovery made visible.
+    for (const [, mesh] of this.meshes) {
+      const mat = mesh.material as THREE.MeshStandardMaterial;
+      const d = mesh.position.distanceTo(this.scanPoint);
+      const near = THREE.MathUtils.clamp(1 - d / 1.9, 0, 1);
+      const base = mesh.userData.baseEmissive as number;
+      mat.emissiveIntensity = damp(mat.emissiveIntensity, base + near * 0.85, 9, dt);
     }
   }
 
   private updateLabels(dt: number) {
+    const showAll = this.stage === 1;
     const r = this.renderer.domElement.getBoundingClientRect();
     for (const l of this.labels) {
-      let want: number;
-      if (l.onlyStage !== undefined) {
-        want = this.stage === l.onlyStage ? 1 : 0;
-      } else if (l.caption) {
-        // A pane names itself only while it is the one being looked through.
-        const pane = this.panes.find((p) => p.mesh === l.anchor);
-        want = pane ? Math.max(0, pane.clear - 0.25) : 0;
-      } else {
-        // A case names itself on hover — otherwise nine labels shout at once.
-        const bead = this.beads.find((b) => b.mesh === l.anchor);
-        want = bead ? bead.hover * bead.revealed : 0;
-      }
-      if (l.anchor && "material" in l.anchor) {
-        const mat = (l.anchor as THREE.Mesh).material as THREE.Material & { opacity?: number };
-        if (typeof mat.opacity === "number" && (l.anchor as THREE.Mesh).visible === false) want = 0;
-        else if (l.onlyStage !== undefined && typeof mat.opacity === "number") want *= mat.opacity;
-      }
+      const world = l.pos.clone().applyMatrix4(this.world.matrixWorld);
+      const d = l.pos.distanceTo(this.scanPoint);
+      const want = l.onlyStage !== undefined
+        ? (this.stage === l.onlyStage ? 1 : 0)
+        : this.stage > 1 ? 0          // past discovery, the scanner stops narrating
+        : showAll ? 1 : d < 1.35 ? 1 : 0;
       l.shown = damp(l.shown, want, 8, dt);
+
       if (l.shown < 0.02) {
         l.el.style.opacity = "0";
         continue;
       }
-      const anchor = l.anchor
-        ? l.anchor.getWorldPosition(new THREE.Vector3()).add(l.offset)
-        : l.offset.clone().applyMatrix4(this.world.matrixWorld);
-      const p = anchor.project(this.camera);
+      const p = world.project(this.camera);
       const x = (p.x * 0.5 + 0.5) * r.width;
       const y = (-p.y * 0.5 + 0.5) * r.height;
-      l.el.style.opacity = p.z > 1 ? "0" : l.shown.toFixed(3);
-      l.el.style.transform = `translate(-50%,-50%) translate(${x.toFixed(1)}px,${y.toFixed(1)}px)`;
+      const behind = p.z > 1;
+      l.el.style.opacity = behind ? "0" : String(l.shown.toFixed(3));
+      l.el.style.transform = `translate(-50%,-50%) translate(${x.toFixed(1)}px,${y.toFixed(1)}px) scale(${(0.9 + l.shown * 0.1).toFixed(3)})`;
+    }
+  }
+
+  private updateChips(dt: number) {
+    // Generation replays while the act is on screen: a visitor who arrives
+    // mid-cycle should still get to watch the rejected cases fall out.
+    if (this.stage === 2 && this.chips.length) {
+      const settled = this.chips.every((c) => c.state === "stacked" || c.state === "gone");
+      this.chipCycle = settled ? this.chipCycle + dt : 0;
+      if (this.chipCycle > 2.6) {
+        this.chipCycle = 0;
+        for (const c of this.chips) {
+          c.mesh.position.copy(c.home);
+          c.mesh.rotation.z = 0;
+          c.mesh.visible = false;
+          (c.mesh.material as THREE.MeshBasicMaterial).opacity = 0;
+          c.state = "toStack";
+          c.t = 0;
+        }
+      }
+    }
+
+    for (const c of this.chips) {
+      const mat = c.mesh.material as THREE.MeshBasicMaterial;
+      switch (c.state) {
+        case "hidden":
+          break;
+        case "toStack": {
+          c.t += dt;
+          if (c.t < c.delay) break;
+          c.mesh.visible = true;
+          mat.opacity = damp(mat.opacity, 1, 6, dt);
+          c.mesh.position.lerp(c.stackAt, 1 - Math.exp(-4.5 * dt));
+          if (c.mesh.position.distanceTo(c.stackAt) < 0.05) {
+            c.state = c.grounded ? "stacked" : "dissolving";
+            c.t = 0;
+          }
+          break;
+        }
+        case "stacked":
+          mat.opacity = damp(mat.opacity, 1, 6, dt);
+          break;
+        case "dissolving": {
+          // The ungrounded ones never make it into the suite. They fall out and
+          // fade — the grounding gate, as a gesture.
+          c.t += dt;
+          if (c.t > 0.55) {
+            mat.opacity = damp(mat.opacity, 0, 1.5, dt);
+            c.mesh.position.y -= dt * 0.85;
+            c.mesh.rotation.z += dt * 1.1;
+          }
+          if (mat.opacity < 0.02) {
+            c.mesh.visible = false;
+            c.state = "gone";
+          }
+          break;
+        }
+        case "toHome": {
+          c.t += dt;
+          c.mesh.visible = true;
+          c.mesh.position.lerp(c.home, 1 - Math.exp(-5 * dt));
+          if (c.mesh.position.distanceTo(c.home) < 0.12) {
+            mat.opacity = damp(mat.opacity, 0, 7, dt);
+            if (mat.opacity < 0.03) {
+              c.mesh.visible = false;
+              c.state = "gone";
+            }
+          }
+          break;
+        }
+        case "gone":
+          break;
+      }
+    }
+  }
+
+  private updateMarkers(dt: number, t: number) {
+    // Face the camera through the parent's rotation, not around it.
+    const faceCam = this.world
+      .getWorldQuaternion(new THREE.Quaternion())
+      .invert()
+      .multiply(this.camera.quaternion);
+    const live = this.markers.filter((m) => !m.fixed && m.group.visible);
+    let anyHover = false;
+    if (live.length && this.stage >= 4 && this.pointerActive && !this.dragging) {
+      this.raycaster.setFromCamera(this.pointer, this.camera);
+      const hits = this.raycaster.intersectObjects(live.map((m) => m.group), true);
+      if (hits.length) {
+        let obj: THREE.Object3D | null = hits[0].object;
+        while (obj && !live.some((m) => m.group === obj)) obj = obj.parent;
+        const hovered = live.find((m) => m.group === obj);
+        if (hovered) {
+          hovered.hover = 1;
+          anyHover = true;
+        }
+      }
+    }
+    if (anyHover !== this.hovering) {
+      this.hovering = anyHover;
+      this.renderer.domElement.style.cursor = anyHover ? "pointer" : "grab";
+    }
+
+    for (const m of this.markers) {
+      if (m.fixed) {
+        if (m.pop > 0) {
+          m.pop += dt * 4;
+          const s = Math.max(0.001, 1 - m.pop);
+          m.group.scale.setScalar(s);
+          if (m.pop >= 1) {
+            m.group.visible = false;
+            m.pop = 0;
+          }
+        }
+        continue;
+      }
+      if (!m.group.visible) continue;
+      const target = 1 + m.hover * 0.35;
+      const cur = m.group.scale.x;
+      m.group.scale.setScalar(damp(cur, target, 9, dt));
+      m.hover = damp(m.hover, 0, 6, dt);
+      const pulse = 1 + Math.sin(t * 4.2) * 0.12;
+      m.ring.scale.setScalar(pulse);
+      m.ring.rotation.z += dt * 1.1;
+      (m.core.material as THREE.MeshStandardMaterial).emissiveIntensity = 1.1 + Math.sin(t * 4.2) * 0.5;
+      m.group.quaternion.copy(faceCam);
+    }
+  }
+
+  private updateVerdicts(dt: number) {
+    const want = this.stage >= 3 ? 1 : 0;
+    for (const s of this.verdicts) {
+      const mat = s.material as THREE.SpriteMaterial;
+      mat.opacity = damp(mat.opacity, want, 5, dt);
+      const target = want ? 0.3 : 0.001;
+      s.scale.setScalar(damp(s.scale.x, target, 7, dt));
     }
   }
 
   private updateBursts(dt: number) {
-    for (let i = this.bursts.length - 1; i >= 0; i--) {
-      const b = this.bursts[i];
+    for (let i = this.burstPool.length - 1; i >= 0; i--) {
+      const b = this.burstPool[i];
       b.life += dt;
       const attr = b.pts.geometry.getAttribute("position") as THREE.BufferAttribute;
       const vel = b.pts.geometry.userData.vel as number[];
@@ -945,19 +1072,34 @@ export class TraceoScene {
         attr.setXYZ(
           j,
           attr.getX(j) + vel[j * 3] * dt,
-          attr.getY(j) + vel[j * 3 + 1] * dt - 0.8 * dt * b.life,
-          attr.getZ(j) + vel[j * 3 + 2] * dt,
+          attr.getY(j) + vel[j * 3 + 1] * dt - 1.1 * dt * b.life,
+          attr.getZ(j) + vel[j * 3 + 2] * dt
         );
       }
       attr.needsUpdate = true;
-      (b.pts.material as THREE.PointsMaterial).opacity = Math.max(0, 1 - b.life / 1.1);
+      const mat = b.pts.material as THREE.PointsMaterial;
+      mat.opacity = Math.max(0, 1 - b.life / 1.1);
       if (b.life > 1.1) {
         this.world.remove(b.pts);
         b.pts.geometry.dispose();
-        (b.pts.material as THREE.Material).dispose();
-        this.bursts.splice(i, 1);
+        mat.dispose();
+        this.burstPool.splice(i, 1);
       }
     }
+  }
+
+  private updateParticles(t: number) {
+    const g = this.particles.geometry;
+    const attr = g.getAttribute("position") as THREE.BufferAttribute;
+    const base = g.userData.base as Float32Array;
+    const seed = g.userData.seed as Float32Array;
+    for (let i = 0; i < attr.count; i++) {
+      const s = seed[i];
+      attr.setY(i, base[i * 3 + 1] + Math.sin(t * 0.35 + s) * 0.22);
+      attr.setX(i, base[i * 3] + Math.cos(t * 0.28 + s) * 0.18);
+    }
+    attr.needsUpdate = true;
+    this.particles.rotation.y = t * 0.012;
   }
 
   /* --- teardown ------------------------------------------------------------ */
@@ -975,13 +1117,12 @@ export class TraceoScene {
     document.removeEventListener("visibilitychange", this.onVisibility);
 
     this.scene.traverse((o) => {
-      const m = o as THREE.Mesh;
-      if (m.geometry) m.geometry.dispose();
-      const mat = (m as unknown as { material?: THREE.Material | THREE.Material[] }).material;
-      if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
-      else if (mat) mat.dispose();
+      const any = o as THREE.Mesh;
+      if (any.geometry) any.geometry.dispose();
+      const mat = (any as any).material;
+      if (Array.isArray(mat)) mat.forEach((m: THREE.Material) => m.dispose());
+      else if (mat) (mat as THREE.Material).dispose();
     });
-    this.envTexture?.dispose();
     for (const tex of this.textures) tex.dispose();
     this.renderer.dispose();
     c.remove();

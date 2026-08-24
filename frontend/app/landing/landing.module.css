@@ -1,40 +1,18 @@
 /*
- * Landing page styling — ink and champagne.
+ * Landing page styling.
  *
- * The palette is deliberately narrow: a deep ink ground, ivory and slate for
- * type, one azure that marks the product's own controls, and a champagne gold
- * used sparingly for rules, marks and the things the page asserts about itself.
- * Nothing else is saturated except a result — emerald for a pass, crimson for a
- * failure — so colour on this page always means something.
- *
- * Headings are set in a serif and body copy in Inter. The pairing is what makes
- * the page read as a document rather than a dashboard, which is the register a
- * product about audit and evidence should be speaking in.
- *
- * The lower half hands over to ivory. Both halves are stated here rather than
- * inherited from globals.css: the app's tokens are tuned for a light product
- * surface, and half of this page is not one.
+ * The page runs dark over the WebGL half and hands off to the app's own light
+ * palette below, so a visitor who clicks through to /projects lands somewhere
+ * that looks related rather than somewhere else entirely. Colours are the
+ * design tokens from globals.css wherever the token works on dark; where it
+ * does not — the greys are tuned for white — the value is stated here and
+ * checked against AA on the dark ground instead.
  */
 
 .page {
-  --ink: #0a0f1c;
-  --ink-2: #0e1526;
-  --ivory: #f2efe9;
-  --slate: #aab6cc;
-  --slate-dim: #8593ad;
-  --azure: #2f55e0;
-  --azure-lift: #6f95ff;
-  --gold: #c9a961;
-  --gold-dim: rgba(201, 169, 97, 0.26);
-  --hair: rgba(148, 168, 208, 0.16);
-  --emerald: #3fa37a;
-  --crimson: #d9536b;
-
-  --mono: "JetBrains Mono", ui-monospace, monospace;
-
   position: relative;
-  background: var(--ink);
-  color: var(--ivory);
+  background: #070b16;
+  color: #eaf0ff;
   min-height: 100vh;
   overflow-x: clip;
 }
@@ -44,7 +22,8 @@
 .sceneWrap {
   position: absolute;
   inset: 0 0 auto 0;
-  height: 500vh; /* hero + four acts, each one viewport tall */
+  /* hero + four acts, each one viewport tall */
+  height: 500vh;
   z-index: 0;
 }
 
@@ -60,19 +39,28 @@
   inset: 0;
   cursor: grab;
   background:
-    radial-gradient(120% 90% at 72% 18%, rgba(47, 85, 224, 0.16), transparent 58%),
-    radial-gradient(80% 70% at 12% 82%, rgba(201, 169, 97, 0.07), transparent 60%),
-    linear-gradient(180deg, #080d18 0%, #0b1222 48%, #080d18 100%);
+    radial-gradient(120% 90% at 70% 15%, rgba(61, 107, 245, 0.22), transparent 60%),
+    radial-gradient(90% 80% at 15% 80%, rgba(122, 90, 230, 0.18), transparent 62%),
+    linear-gradient(180deg, #070b16 0%, #0a1024 45%, #070b16 100%);
 }
 
-.canvas:active { cursor: grabbing; }
+.canvas:active {
+  cursor: grabbing;
+}
+
+.canvas[data-ready="0"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: inherit;
+}
 
 .canvas :global(.landing-canvas-fallback) {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(70% 60% at 62% 40%, rgba(47, 85, 224, 0.26), transparent 70%),
-    radial-gradient(50% 50% at 22% 72%, rgba(201, 169, 97, 0.1), transparent 70%);
+    radial-gradient(70% 60% at 60% 40%, rgba(61, 107, 245, 0.35), transparent 70%),
+    radial-gradient(50% 50% at 25% 70%, rgba(217, 71, 158, 0.18), transparent 70%);
 }
 
 /* --- scroll column ------------------------------------------------------- */
@@ -84,7 +72,9 @@
 }
 
 .scroller a,
-.scroller button { pointer-events: auto; }
+.scroller button {
+  pointer-events: auto;
+}
 
 /* --- hero ---------------------------------------------------------------- */
 
@@ -92,58 +82,57 @@
   min-height: 100vh;
   display: flex;
   align-items: center;
-  padding: 0 clamp(20px, 7vw, 116px);
+  padding: 0 clamp(20px, 7vw, 110px);
   position: relative;
 }
 
-.heroInner { max-width: 640px; }
-
-/* The eyebrow sits on a gold hairline rather than in a pill: a rule reads as a
-   masthead, a pill reads as a badge, and this is the top of a document. */
-.eyebrow {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  font: 400 10.5px/1 var(--mono);
-  letter-spacing: 0.26em;
-  text-transform: uppercase;
-  color: var(--gold);
-  margin-bottom: 30px;
+.heroInner {
+  max-width: 620px;
 }
 
-.eyebrow::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: linear-gradient(90deg, var(--gold-dim), transparent);
+.eyebrow {
+  display: inline-block;
+  font: 600 11px/1 "JetBrains Mono", ui-monospace, monospace;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #9fb6ff;
+  background: rgba(61, 107, 245, 0.14);
+  border: 1px solid rgba(108, 142, 255, 0.4);
+  padding: 7px 12px;
+  border-radius: 999px;
+  margin-bottom: 26px;
+  backdrop-filter: blur(6px);
 }
 
 .h1 {
-  font-size: clamp(38px, 6.6vw, 70px);
-  line-height: 1.05;
-  letter-spacing: -0.034em;
+  font-size: clamp(40px, 7.2vw, 78px);
+  line-height: 1.03;
+  letter-spacing: -0.035em;
   font-weight: 700;
-  margin: 0 0 24px;
-  color: var(--ivory);
+  margin: 0 0 22px;
+  color: #ffffff;
   text-wrap: balance;
 }
 
 .h1 em {
   font-style: normal;
-  color: #dcc98f;
+  background: linear-gradient(96deg, #6d94ff 0%, #a78bfa 48%, #f472b6 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .lede {
-  font-size: clamp(15px, 1.5vw, 17.5px);
-  line-height: 1.7;
-  color: var(--slate);
-  margin: 0 0 36px;
-  max-width: 53ch;
+  font-size: clamp(15.5px, 1.6vw, 18.5px);
+  line-height: 1.62;
+  color: #c3cfeb;
+  margin: 0 0 34px;
+  max-width: 56ch;
 }
 
 .ctaRow {
   display: flex;
-  gap: 18px;
+  gap: 14px;
   flex-wrap: wrap;
   align-items: center;
 }
@@ -151,63 +140,88 @@
 .ctaPrimary {
   display: inline-flex;
   align-items: center;
-  background: var(--azure);
+  gap: 8px;
+  background: var(--blue, #3d6bf5);
   color: #fff;
-  font-weight: 500;
-  font-size: 14px;
-  letter-spacing: 0.01em;
-  padding: 14px 26px;
-  border-radius: 3px;
+  font-weight: 600;
+  font-size: 14.5px;
+  padding: 13px 24px;
+  border-radius: 11px;
   text-decoration: none;
-  border: 1px solid rgba(155, 182, 255, 0.3);
-  transition: background 0.18s ease, border-color 0.18s ease;
+  border: 1px solid rgba(160, 190, 255, 0.35);
+  box-shadow: 0 10px 34px rgba(61, 107, 245, 0.42);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
 }
 
 .ctaPrimary:hover {
-  background: #3a62ee;
-  border-color: rgba(155, 182, 255, 0.55);
+  transform: translateY(-2px);
+  background: #4d78ff;
+  box-shadow: 0 16px 44px rgba(61, 107, 245, 0.5);
 }
 
-/* The secondary call is a rule under type, not a second button. One button on
-   a page means one obvious next step. */
 .ctaGhost {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  color: var(--ivory);
-  font-weight: 400;
-  font-size: 14px;
-  padding: 6px 2px;
+  gap: 6px;
+  color: #cbd8f7;
+  font-weight: 500;
+  font-size: 14.5px;
+  padding: 13px 18px;
+  border-radius: 11px;
   text-decoration: none;
-  border-bottom: 1px solid var(--gold-dim);
-  transition: border-color 0.18s ease, color 0.18s ease;
+  border: 1px solid rgba(150, 175, 235, 0.28);
+  background: rgba(255, 255, 255, 0.04);
+  transition: background 0.18s ease, border-color 0.18s ease;
 }
 
 .ctaGhost:hover {
-  color: #fff;
-  border-bottom-color: var(--gold);
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(150, 175, 235, 0.5);
 }
 
 .hint {
-  margin: 34px 0 0;
-  font: 400 11.5px/1.6 var(--mono);
-  letter-spacing: 0.04em;
-  color: var(--slate-dim);
+  margin: 26px 0 0;
+  font-size: 12.5px;
+  color: #93a4c8;
 }
 
 .kbd {
-  color: #c3cee2;
-  border-bottom: 1px solid var(--hair);
-  padding-bottom: 1px;
+  font: 500 11.5px/1 "JetBrains Mono", ui-monospace, monospace;
+  border: 1px solid rgba(150, 175, 235, 0.32);
+  border-radius: 5px;
+  padding: 3px 7px;
+  color: #c9d7f5;
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .scrollCue {
   position: absolute;
-  left: clamp(20px, 7vw, 116px);
-  bottom: 40px;
-  width: 1px;
-  height: 46px;
-  background: linear-gradient(180deg, var(--gold-dim), transparent);
+  left: 50%;
+  bottom: 34px;
+  width: 22px;
+  height: 36px;
+  border: 1.5px solid rgba(150, 175, 235, 0.42);
+  border-radius: 12px;
+  transform: translateX(-50%);
+}
+
+.scrollCue::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 7px;
+  width: 3px;
+  height: 7px;
+  border-radius: 2px;
+  background: #9fb6ff;
+  transform: translateX(-50%);
+  animation: cue 1.9s ease-in-out infinite;
+}
+
+@keyframes cue {
+  0%, 100% { opacity: 0; transform: translate(-50%, 0); }
+  35% { opacity: 1; }
+  70% { opacity: 0; transform: translate(-50%, 12px); }
 }
 
 /* --- acts ---------------------------------------------------------------- */
@@ -216,307 +230,308 @@
   min-height: 100vh;
   display: flex;
   align-items: center;
-  padding: 0 clamp(20px, 7vw, 116px);
+  padding: 0 clamp(20px, 7vw, 110px);
 }
 
 .actCard {
-  max-width: 505px;
-  background: rgba(9, 13, 24, 0.78);
-  border: 1px solid var(--hair);
-  border-top: 1px solid var(--gold-dim);
-  border-radius: 4px;
-  padding: 34px 36px 32px;
-  backdrop-filter: blur(16px);
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
+  max-width: 500px;
+  background: rgba(9, 14, 30, 0.72);
+  border: 1px solid rgba(108, 142, 255, 0.24);
+  border-radius: 18px;
+  padding: 30px 32px;
+  backdrop-filter: blur(14px);
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.5);
 }
 
-.actRight { margin-left: auto; }
+.actRight {
+  margin-left: auto;
+}
 
 .kicker {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  font: 400 10.5px/1 var(--mono);
-  letter-spacing: 0.24em;
+  display: block;
+  font: 600 11px/1 "JetBrains Mono", ui-monospace, monospace;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--gold);
-  margin-bottom: 18px;
-}
-
-.kickerNum {
-  font-size: 12px;
-  color: var(--slate-dim);
+  color: #8ba6f5;
+  margin-bottom: 14px;
 }
 
 .h2 {
-  font-size: clamp(23px, 2.7vw, 31px);
-  line-height: 1.2;
-  letter-spacing: -0.024em;
-  font-weight: 640;
-  margin: 0 0 18px;
-  color: var(--ivory);
+  font-size: clamp(24px, 3vw, 33px);
+  line-height: 1.18;
+  letter-spacing: -0.025em;
+  font-weight: 660;
+  margin: 0 0 16px;
+  color: #ffffff;
   text-wrap: balance;
 }
 
 .body {
-  font-size: 14.5px;
-  line-height: 1.75;
-  color: var(--slate);
+  font-size: 15px;
+  line-height: 1.68;
+  color: #c3cfeb;
   margin: 0;
 }
 
 .note {
-  margin: 20px 0 0;
-  padding-left: 15px;
-  border-left: 1px solid var(--gold-dim);
-  font-size: 13px;
-  line-height: 1.65;
-  color: var(--slate-dim);
+  margin: 16px 0 0;
+  padding-left: 13px;
+  border-left: 2px solid var(--blue, #3d6bf5);
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: #9fb2d8;
 }
 
 .bugBar {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-top: 26px;
-  padding-top: 22px;
-  border-top: 1px solid var(--hair);
+  gap: 14px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(108, 142, 255, 0.2);
   flex-wrap: wrap;
 }
 
 .bugCount {
-  font: 400 12.5px/1.5 var(--mono);
-  letter-spacing: 0.03em;
-  color: var(--slate);
+  font-size: 13.5px;
+  color: #c3cfeb;
 }
 
 .bugCount b {
-  color: var(--crimson);
-  font-weight: 600;
+  color: #ff8095;
+  font-size: 16px;
 }
 
-.bugCount[data-clear="1"] b { color: var(--emerald); }
-
 .smallBtn {
-  font: 400 12px/1 Inter, system-ui, sans-serif;
-  letter-spacing: 0.03em;
-  color: var(--ivory);
-  background: transparent;
-  border: 1px solid rgba(155, 182, 255, 0.34);
-  border-radius: 3px;
-  padding: 10px 16px;
+  font: 600 12.5px/1 Inter, system-ui, sans-serif;
+  color: #dce6ff;
+  background: rgba(61, 107, 245, 0.22);
+  border: 1px solid rgba(108, 142, 255, 0.5);
+  border-radius: 9px;
+  padding: 9px 15px;
   cursor: pointer;
-  transition: background 0.16s ease, border-color 0.16s ease;
+  transition: background 0.16s ease;
 }
 
 .smallBtn:hover:not(:disabled) {
-  background: rgba(47, 85, 224, 0.2);
-  border-color: rgba(155, 182, 255, 0.6);
+  background: rgba(61, 107, 245, 0.4);
 }
 
 .smallBtn:disabled {
-  opacity: 0.4;
+  opacity: 0.45;
   cursor: default;
 }
 
-/* --- remediation brief, inside the act card ------------------------------ */
+/* --- fix prompt, inside the act card ------------------------------------ */
 
 .prompt {
-  margin-top: 20px;
-  border: 1px solid var(--hair);
-  border-left: 2px solid var(--emerald);
-  border-radius: 3px;
-  background: rgba(6, 11, 20, 0.6);
-  padding: 15px 16px 16px;
+  margin-top: 16px;
+  border: 1px solid rgba(34, 197, 94, 0.34);
+  border-radius: 12px;
+  background: rgba(6, 14, 12, 0.5);
+  padding: 12px 13px 13px;
   animation: rise 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @keyframes rise {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: none; }
 }
 
 .promptHead {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 10px;
+  margin-bottom: 9px;
 }
 
 .promptTag {
-  font: 400 9.5px/1 var(--mono);
-  letter-spacing: 0.2em;
+  font: 600 10px/1 "JetBrains Mono", ui-monospace, monospace;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--emerald);
+  color: #7ee0a4;
+  background: rgba(34, 197, 94, 0.14);
+  border: 1px solid rgba(34, 197, 94, 0.42);
+  padding: 5px 8px;
+  border-radius: 6px;
 }
 
 .promptHint {
-  font: 400 11px/1 var(--mono);
-  letter-spacing: 0.04em;
-  color: var(--slate-dim);
+  font-size: 11.5px;
+  color: #93a4c8;
   margin-right: auto;
 }
 
 .promptClose {
   background: none;
   border: none;
-  color: var(--slate-dim);
+  color: #93a4c8;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 13px;
   padding: 3px 6px;
+  border-radius: 6px;
   line-height: 1;
 }
 
-.promptClose:hover { color: var(--ivory); }
+.promptClose:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
 
 .promptBody {
-  margin: 0 0 13px;
-  font: 400 10.6px/1.68 var(--mono);
-  color: #c2cde0;
+  margin: 0 0 11px;
+  font: 400 10.8px/1.6 "JetBrains Mono", ui-monospace, monospace;
+  color: #c8d6f5;
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 205px;
+  max-height: 210px;
   overflow: auto;
 }
 
-/* --- the ivory half ------------------------------------------------------ */
+/* --- light half ---------------------------------------------------------- */
 
 .features,
 .closer {
   position: relative;
   z-index: 2;
-  background: #f7f6f3;
-  border-top: 1px solid rgba(201, 169, 97, 0.3);
-  color: #16213e;
-  padding: clamp(76px, 10vw, 138px) clamp(20px, 7vw, 116px);
+  background: var(--canvas, #f6f7f9);
+  color: var(--tx, #1b1f2b);
+  padding: clamp(70px, 10vw, 130px) clamp(20px, 7vw, 110px);
 }
 
+.features {
+  border-top: 1px solid rgba(108, 142, 255, 0.18);
+}
+
+/* Blend the seam where the WebGL half hands over to the app's own palette,
+   so the two halves read as one page rather than two stacked ones. */
 .features::before {
   content: "";
   position: absolute;
   inset: 0 0 auto 0;
-  height: 72px;
-  background: linear-gradient(180deg, var(--ink) 0%, rgba(10, 15, 28, 0) 100%);
+  height: 130px;
+  background: linear-gradient(180deg, #070b16 0%, rgba(7, 11, 22, 0) 100%);
   pointer-events: none;
 }
 
 .featuresInner,
 .closerInner {
-  max-width: 1060px;
+  max-width: 1080px;
   margin: 0 auto;
 }
 
 .h2Light {
-  font-size: clamp(25px, 3.1vw, 36px);
+  font-size: clamp(26px, 3.4vw, 38px);
   line-height: 1.16;
   letter-spacing: -0.028em;
   font-weight: 680;
-  margin: 0 0 16px;
-  color: #16213e;
+  margin: 0 0 14px;
+  color: var(--tx, #1b1f2b);
   text-wrap: balance;
 }
 
 .subLight {
-  font-size: 15.5px;
-  line-height: 1.7;
-  color: #5b6478;
-  margin: 0 0 52px;
-  max-width: 60ch;
+  font-size: 16px;
+  line-height: 1.65;
+  color: var(--tx2, #5d6472);
+  margin: 0 0 42px;
+  max-width: 62ch;
 }
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 0;
-  border-top: 1px solid #ddd8cd;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 18px;
 }
 
-/* Columns divided by rules rather than boxed as cards — a specification sheet,
-   not a set of tiles. */
 .feature {
-  padding: 30px 26px 30px 0;
-  border-bottom: 1px solid #ddd8cd;
+  background: var(--card, #fff);
+  border: 1px solid var(--bor, #e8eaf0);
+  border-radius: 15px;
+  padding: 24px 22px;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
 }
 
-.feature + .feature {
-  padding-left: 26px;
-  border-left: 1px solid #ddd8cd;
+.feature:hover {
+  transform: translateY(-3px);
+  border-color: rgba(61, 107, 245, 0.4);
+  box-shadow: 0 16px 40px rgba(27, 31, 43, 0.09);
 }
 
 .featureKicker {
-  display: block;
-  font: 400 10px/1 var(--mono);
-  letter-spacing: 0.2em;
+  display: inline-block;
+  font: 600 10.5px/1 "JetBrains Mono", ui-monospace, monospace;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: #9a7f3f;
-  margin-bottom: 16px;
+  color: var(--blueD, #2f55e0);
+  background: var(--blueS, #eef2ff);
+  padding: 5px 9px;
+  border-radius: 6px;
+  margin-bottom: 14px;
 }
 
 .featureTitle {
   font-size: 16.5px;
-  line-height: 1.32;
+  line-height: 1.3;
   font-weight: 650;
-  letter-spacing: -0.012em;
-  margin: 0 0 10px;
-  color: #16213e;
+  margin: 0 0 9px;
+  color: var(--tx, #1b1f2b);
 }
 
 .featureBody {
-  font-size: 13.5px;
-  line-height: 1.7;
-  color: #5b6478;
+  font-size: 13.8px;
+  line-height: 1.62;
+  color: var(--tx2, #5d6472);
   margin: 0;
 }
 
 .closer {
   text-align: center;
-  padding-top: clamp(60px, 7vw, 96px);
+  border-top: 1px solid var(--bor, #e8eaf0);
 }
 
 .closer .subLight {
   margin-inline: auto;
-  margin-bottom: 38px;
+  margin-bottom: 32px;
 }
 
 /* --- motion & small screens ---------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {
+  .scrollCue::after { animation: none; opacity: 0.7; }
   .prompt { animation: none; }
+  .ctaPrimary:hover, .feature:hover { transform: none; }
 }
 
 @media (max-width: 720px) {
-  .actCard { max-width: 100%; padding: 26px 22px 24px; }
+  .actCard { max-width: 100%; }
   .actRight { margin-left: 0; }
   .promptBody { max-height: 150px; }
 
   /* Portrait has no column to spare, so the model rides above and the copy
-     becomes a panel over it — the same treatment the acts already use. */
+     becomes a card over it — the same card the acts already use, so the
+     treatment reads as intentional rather than as a mobile fallback. */
   .hero {
     align-items: flex-end;
     padding-bottom: 30px;
   }
 
+  /* Both calls fit on one line at this size, which buys back the vertical room
+     the model needs above the card. */
+  .ctaRow { flex-wrap: nowrap; }
+  .ctaPrimary, .ctaGhost { padding: 12px 15px; font-size: 13.5px; white-space: nowrap; }
+
   .heroInner {
-    background: rgba(9, 13, 24, 0.8);
-    border: 1px solid var(--hair);
-    border-top: 1px solid var(--gold-dim);
-    border-radius: 4px;
-    padding: 26px 22px 24px;
-    backdrop-filter: blur(16px);
+    background: rgba(9, 14, 30, 0.74);
+    border: 1px solid rgba(108, 142, 255, 0.24);
+    border-radius: 18px;
+    padding: 24px 20px 22px;
+    backdrop-filter: blur(14px);
     box-shadow: 0 26px 70px rgba(0, 0, 0, 0.5);
   }
 
-  .h1 { font-size: clamp(31px, 9vw, 42px); }
-  .eyebrow { margin-bottom: 20px; }
-  .lede { margin-bottom: 26px; }
-  .hint { margin-top: 22px; }
+  .h1 { font-size: clamp(34px, 10vw, 46px); }
+  .eyebrow { margin-bottom: 18px; }
+  .lede { margin-bottom: 24px; }
   .scrollCue { display: none; }
-  .ctaRow { gap: 14px; }
-  .ctaPrimary { padding: 12px 18px; font-size: 13.5px; }
-
-  .feature,
-  .feature + .feature {
-    padding: 26px 0;
-    border-left: none;
-  }
 }

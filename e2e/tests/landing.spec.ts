@@ -85,13 +85,13 @@ test.describe('landing page — the fix loop', () => {
     await landing.waitForScene();
     await landing.openAct(4);
 
-    await expect(landing.bugBar).toContainText('3 defects outstanding');
+    await expect(landing.bugBar).toContainText('3 defects');
     await expect(landing.fixPrompt).toHaveCount(0);
 
     await landing.fixEveryDefect();
 
     await expect(landing.fixPrompt).toBeVisible();
-    await expect(landing.bugBar).toContainText('resolved');
+    await expect(landing.bugBar).toContainText('All clear');
     // The one line every generated prompt ends with. It is the product's
     // position on what a passing test is allowed to mean, so the page must not
     // quietly drop it (backend/app/modules/fixprompt.py).
