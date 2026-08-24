@@ -60,6 +60,11 @@ const DEFAULTS = {
   // slow — the single largest source of false failures in a browser suite.
   // It is a CEILING, not a sleep: a page that settles in 80ms costs 80ms.
   stepWait: 3000,
+  // Budget for the RE-load between cases. The first load of a page pays the
+  // full wait strategy; after that the document is warm and only the first
+  // control has to exist again. Absent, this read as `undefined` and Playwright
+  // substituted its own 30s default — in the one path that runs once per case.
+  rehydrate: 1500,
   // Second chance for a case that failed or errored at the base budget. A slow
   // page and a broken one look identical in one attempt; they stop looking alike
   // when the slow one is given twice the time and then passes. A case that fails
@@ -1652,8 +1657,8 @@ async function main() {
     const page = await context.newPage();
 
     let loadMs = 0;
-    /** Load (or reload) the target and wait for it to be interactive. */
-    let firstLoadDone = false;
+    /** Pages already given the full wait strategy, and what it cost them. */
+    const firstLoadFor = new Map();
     /**
      * Load (or reload) the target and wait for it to be interactive.
      *
@@ -1663,18 +1668,20 @@ async function main() {
      * exist. With one reset per case that difference is the run: paying the full
      * strategy 40+ times pushed a page of 43 cases past the timeout.
      */
-    const reset = async () => {
+    const reset = async (href = target.href) => {
       const t0 = Date.now();
-      await page.goto(target.href, { waitUntil: 'domcontentloaded', timeout });
+      await page.goto(href, { waitUntil: 'domcontentloaded', timeout });
       loadMs = Date.now() - t0;
-      if (!firstLoadDone) {
+      if (!firstLoadFor.has(href)) {
         await page.waitForLoadState('networkidle', { timeout: DEFAULTS.idleTimeout })
           .catch(() => page.waitForTimeout(DEFAULTS.settle));
         await page.waitForFunction(
           () => document.querySelectorAll('form, input, select, textarea, button, a[href]').length > 0,
           undefined, { timeout: DEFAULTS.hydrate }).catch(() => {});
         await page.waitForTimeout(150);
-        firstLoadDone = true;
+        // Recorded per page: a crawl's cases span several, and the load budget a
+        // performance assertion is judged against has to be that page's own.
+        firstLoadFor.set(href, Date.now() - t0);
         return;
       }
       await page.waitForFunction(
@@ -1687,14 +1694,26 @@ async function main() {
     catch (err) {
       return fail('navigation_failed', `Could not load ${target.href}: ${err.message}`);
     }
-
-    const firstLoadMs = loadMs;
     const results = [];
-    for (const kase of cases) {
+    // Grouped by page, and only by page: within a group the plan's order is
+    // preserved. Ungrouped, a crawl's cases ping-pong between pages and every
+    // one of them pays a cold load.
+    const ordered = [...cases].sort((a, b) => String(a.url || '').localeCompare(String(b.url || '')));
+
+    for (const kase of ordered) {
+      // The page this case was derived from. Running it anywhere else asks
+      // questions about elements that are not there — which reads as a wall of
+      // failures rather than as the mistake it is.
+      const href = kase.url || target.href;
       // Each case starts from a clean render — an earlier case that typed into a
       // field or submitted a form must not colour the next one's evidence.
-      try { await reset(); } catch { /* keep the current page; the case will report */ }
-      const base = { reset, loadMs: firstLoadMs, allowSubmit: plan.allow_submit === true };
+      try { await reset(href); } catch { /* keep the current page; the case will report */ }
+      const resetThis = () => reset(href);
+      const base = {
+        reset: resetThis,
+        loadMs: firstLoadFor.get(href) ?? loadMs,
+        allowSubmit: plan.allow_submit === true,
+      };
       let result = await runCase(page, kase, { ...base, stepWait: stepWait });
 
       // One retry at the wider budget, and ONLY for a case that did not pass.
@@ -1703,7 +1722,7 @@ async function main() {
       // the second attempt starts from the same clean render as the first, making
       // the extra time the only difference between them.
       if (result.outcome === 'failed' || result.outcome === 'errored') {
-        try { await reset(); } catch { /* the retry will report what it finds */ }
+        try { await resetThis(); } catch { /* the retry will report what it finds */ }
         const retried = await runCase(page, kase, { ...base, stepWait: stepWaitRetry });
         // The retry REPLACES the first verdict either way. If it passed, the
         // first failure was the clock, not the application. If it failed again,
@@ -1774,7 +1793,9 @@ async function main() {
       step_wait_retry_ms: stepWaitRetry,
       video: videoFile,
       ...(videoError ? { video_error: videoError } : {}),
-      load_ms: firstLoadMs,
+      // The entry page's own first load — the summary figure has always meant
+      // that page, and a crawl's other pages each keep theirs in firstLoadFor.
+      load_ms: firstLoadFor.get(target.href) ?? loadMs,
       elapsed_ms: Date.now() - startedAll,
       results,
     }, 0);

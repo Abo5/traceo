@@ -262,10 +262,28 @@ def ensure_environment(db: Session, org_id: str, project_id: str,
 # the job
 # ---------------------------------------------------------------------------
 
+def _case_url(steps: list[TestStep]) -> str:
+    """The page a case was derived from — the page it has to be run against.
+
+    A crawl generates cases for every page it visited, so the target's own URL
+    is the right page for only some of them. The URL is already recorded on the
+    step that produced the case; this is where it gets read back out.
+    """
+    for step in steps:
+        url = _step_url(step)
+        if url:
+            return url
+    return ""
+
+
 def _plan_case(case: TestCase, steps: list[TestStep]) -> dict:
     return {
         "id": case.id,
         "title": case.title,
+        # Without this the runner has one URL for the whole plan and every case
+        # from a crawled sub-page is executed against the entry page, where its
+        # elements do not exist. Those cases do not fail, they cannot pass.
+        "url": _case_url(steps),
         "checks": [{
             "request": step.request if isinstance(step.request, dict) else {},
             "assertions": step.assertions if isinstance(step.assertions, list) else [],
@@ -348,6 +366,7 @@ def run_verify_job(job, org_id: str, user_id: str, project_id: str,
         counts = {"total": 0, "passed": 0, "failed": 0, "errored": 0, "skipped": 0}
 
         for case, _steps in selected:
+            case_url = _case_url(_steps) or url
             result = by_id.get(case.id)
             if result is None:
                 # The sidecar returns one entry per planned case; a gap means the
@@ -386,7 +405,7 @@ def run_verify_job(job, org_id: str, user_id: str, project_id: str,
                 outcome=outcome, duration_ms=duration,
                 failure_reason=failure if outcome in ("failed", "errored") else None,
                 evidence=_evidence_for({"assertions": assertions, "duration_ms": duration,
-                                        "timing": timing}, url),
+                                        "timing": timing}, case_url),
             ))
 
         run.state = "completed"
