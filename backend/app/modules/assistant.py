@@ -408,11 +408,15 @@ _IN_SCOPE = re.compile(
     r"skip\w*|project\w*|form\w*|field\w*|endpoint\w*|selector\w*|"
     r"page\w*|scan\w*|suite\w*|verdict\w*)\b", re.I)
 
-_FALLBACK = (
-    "I answer from this project's own rows — its runs, requirements, cases and "
-    "results — so I can only tell you what Traceo actually recorded here.\n"
-    "Try: “how did the last run go?”, “what failed?”, “why did <case id> fail?”, "
-    "“how many test cases are there?”, or “what are the requirements?”"
+_NOT_SURE = (
+    "I could not tell which part of the project you meant. I hold this project's "
+    "runs, requirements, cases and results — nothing outside it. Here is where it "
+    "stands:"
+)
+
+_DEEPER = (
+    "Ask about a case, a failure, a run or a requirement and I will go deeper — "
+    "or name a case id and I will tell you what it asserted and what it saw."
 )
 
 
@@ -455,11 +459,16 @@ def answer_question(db: Session, org_id: str, project: Project, question: str) -
         if intent == "counts":
             return _answer_counts(db, org_id, project)
 
-    if _IN_SCOPE.search(question):
-        return _answer_overview(db, org_id, project)
-    return Answer(_FALLBACK, [], "unknown",
-                  ["how did the last run go?", "what failed?",
-                   "how many test cases are there?"])
+    # Nothing matched. Inside a panel that is already scoped to one project, a
+    # refusal is almost never the right answer — the question was about the
+    # project in every case that matters, and a list of better questions is a
+    # lecture, not an answer. So say plainly that the phrasing was not
+    # understood, then hand over what is actually known.
+    overview = _answer_overview(db, org_id, project)
+    return Answer(f"{_NOT_SURE}\n\n{overview.text}\n\n{_DEEPER}",
+                  overview.cites, "unmatched",
+                  ["what failed?", "what should I fix first?",
+                   "what are the requirements?"])
 
 
 # ---------------------------------------------------------------------------

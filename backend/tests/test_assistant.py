@@ -116,11 +116,15 @@ def test_it_declines_questions_the_project_cannot_answer(client, register_org, c
     r = client.post(f"/v1/projects/{project}/assistant",
                     json={"question": "what is the capital of France?"},
                     headers=headers).json()
-    # "What is …" opens a question about anything. Answering it with a list of
-    # the project's defects would be confidently off-topic.
-    assert r["intent"] == "unknown"
-    assert "this project's own rows" in r["answer"]
-    assert r["cites"] == []
+    # It does not claim to know, and it does not lecture either. Inside a panel
+    # scoped to one project, a refusal listing better questions is not an
+    # answer — so it says the phrasing was not understood and hands over what
+    # it does hold.
+    assert r["intent"] == "unmatched"
+    assert "could not tell which part of the project" in r["answer"]
+    assert "nothing outside it" in r["answer"]
+    # …and it still says something true about the project rather than nothing.
+    assert "requirement" in r["answer"]
 
 
 def test_it_cannot_be_pointed_at_another_organisation(client, register_org, create_project):
@@ -241,7 +245,8 @@ def test_a_general_question_gets_a_general_answer(client, register_org, create_p
     # Out of scope is still out of scope.
     off = client.post(f"/v1/projects/{project}/assistant",
                       json={"question": "who won the world cup?"}, headers=headers).json()
-    assert off["intent"] == "unknown"
+    assert off["intent"] == "unmatched"
+    assert "could not tell which part of the project" in off["answer"]
 
 
 def test_the_conversation_is_carried_to_the_model(client, register_org, create_project,
