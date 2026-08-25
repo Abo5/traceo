@@ -48,9 +48,10 @@
   inset: 0;
   cursor: grab;
   background:
-    radial-gradient(120% 90% at 70% 15%, rgba(47, 85, 224, 0.12), transparent 60%),
-    radial-gradient(90% 80% at 15% 80%, rgba(122, 90, 230, 0.1), transparent 62%),
-    linear-gradient(180deg, #f4f6fb 0%, #e9edf7 45%, #f4f6fb 100%);
+    radial-gradient(58% 62% at 74% 34%, rgba(61, 107, 245, 0.2), transparent 68%),
+    radial-gradient(46% 50% at 88% 12%, rgba(122, 90, 230, 0.14), transparent 70%),
+    radial-gradient(60% 55% at 10% 88%, rgba(217, 71, 158, 0.07), transparent 72%),
+    linear-gradient(168deg, #ffffff 0%, #f2f5fc 38%, #e8edf9 72%, #f6f7fb 100%);
 }
 
 .canvas:active {
@@ -104,9 +105,9 @@
   font: 600 11px/1 "JetBrains Mono", ui-monospace, monospace;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: #2f55e0;
-  background: rgba(47, 85, 224, 0.08);
-  border: 1px solid rgba(38, 62, 140, 0.3);
+  color: #2545c4;
+  background: rgba(61, 107, 245, 0.1);
+  border: 1px solid rgba(61, 107, 245, 0.28);
   padding: 7px 12px;
   border-radius: 999px;
   margin-bottom: 26px;
@@ -244,12 +245,15 @@
 
 .actCard {
   max-width: 500px;
-  background: rgba(255, 255, 255, 0.86);
-  border: 1px solid rgba(38, 62, 140, 0.18);
+  background: rgba(255, 255, 255, 0.93);
+  border: 1px solid rgba(47, 85, 224, 0.13);
   border-radius: 18px;
   padding: 30px 32px;
-  backdrop-filter: blur(14px);
-  box-shadow: 0 26px 70px rgba(26, 34, 60, 0.1);
+  backdrop-filter: blur(16px) saturate(1.15);
+  box-shadow:
+    0 1px 2px rgba(28, 42, 92, 0.05),
+    0 12px 26px rgba(28, 42, 92, 0.07),
+    0 34px 70px rgba(28, 42, 92, 0.09);
 }
 
 .actRight {

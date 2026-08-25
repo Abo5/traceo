@@ -51,14 +51,21 @@ export type SceneOptions = {
  * additive over white is invisible by definition.
  */
 const C = {
-  frame: 0xeff2f8,
-  bar: 0xd8e0ef,
-  block: 0xc9d2e8,
-  line: 0xb8c2da,
-  field: 0xe8eef8,
-  button: 0x2f55e0,
-  edge: 0x9fadd0,
-  edgeSoft: 0xb9c3dc,
+  // A white application on a tinted page, which is what the product actually
+  // looks like — the first pass made every surface the same pale blue-grey and
+  // the window read as one flat shape with lines drawn on it.
+  // Spread across a real range instead of three shades of the same grey. The
+  // chrome is white, the content blocks are clearly darker than the surface
+  // they sit on, and the type lines are darker again — which is the hierarchy
+  // an actual interface has and the first light pass flattened away.
+  frame: 0xffffff,
+  bar: 0xeef2fa,
+  block: 0xb9c6e4,
+  line: 0xa4b4da,
+  field: 0xffffff,
+  button: 0x3d6bf5,
+  edge: 0x7d90bd,
+  edgeSoft: 0xaeb9d6,
   blue: 0x2f55e0,
   violet: 0x6d3fd4,
   pink: 0xc02a86,
@@ -101,16 +108,16 @@ const ELEMENTS: ElDef[] = [
   { id: "dot1", kind: "dot", x: -3.14, y: 1.98, w: 0.12, h: 0.12, color: 0xf43f5e },
   { id: "dot2", kind: "dot", x: -2.92, y: 1.98, w: 0.12, h: 0.12, color: 0xf59e0b },
   { id: "dot3", kind: "dot", x: -2.7, y: 1.98, w: 0.12, h: 0.12, color: 0x22c55e },
-  { id: "urlbar", kind: "field", x: 0.4, y: 1.98, w: 4.4, h: 0.26, color: 0xeef1f8 },
+  { id: "urlbar", kind: "field", x: 0.4, y: 1.98, w: 4.4, h: 0.26, color: 0xffffff },
   { id: "lock", kind: "dot", x: -1.68, y: 1.98, w: 0.1, h: 0.1, color: 0x3fa37a },
-  { id: "avatar", kind: "dot", x: 3.24, y: 1.98, w: 0.2, h: 0.2, color: 0xc2cbe1 },
+  { id: "avatar", kind: "dot", x: 3.24, y: 1.98, w: 0.2, h: 0.2, color: 0xa4b4da },
 
   // --- the app's own navigation, inside the page ---
   { id: "logo", kind: "block", x: -3.28, y: 1.56, w: 0.2, h: 0.2, color: 0x2f55e0 },
-  { id: "nav1", kind: "line", x: -2.85, y: 1.56, w: 0.42, h: 0.1, color: 0xc2cbe1 },
-  { id: "nav2", kind: "line", x: -2.3, y: 1.56, w: 0.34, h: 0.1, color: 0xc2cbe1 },
-  { id: "nav3", kind: "line", x: -1.83, y: 1.56, w: 0.38, h: 0.1, color: 0xc2cbe1 },
-  { id: "navrule", kind: "line", x: 0, y: 1.42, w: 6.6, h: 0.02, color: 0xdce1ee },
+  { id: "nav1", kind: "line", x: -2.85, y: 1.56, w: 0.42, h: 0.1, color: 0xa4b4da },
+  { id: "nav2", kind: "line", x: -2.3, y: 1.56, w: 0.34, h: 0.1, color: 0xa4b4da },
+  { id: "nav3", kind: "line", x: -1.83, y: 1.56, w: 0.38, h: 0.1, color: 0xa4b4da },
+  { id: "navrule", kind: "line", x: 0, y: 1.42, w: 6.6, h: 0.02, color: 0xd2dae9 },
 
   // --- left column: content ---
   {
@@ -120,11 +127,11 @@ const ELEMENTS: ElDef[] = [
   { id: "p1", kind: "line", x: -2.05, y: 0.72, w: 2.2, h: 0.11, color: C.line },
   { id: "p2", kind: "line", x: -2.25, y: 0.48, w: 1.8, h: 0.11, color: C.line },
   {
-    id: "hero", kind: "block", x: -1.85, y: -0.5, w: 2.6, h: 1.2, color: 0xccd5e8,
+    id: "hero", kind: "block", x: -1.85, y: -0.5, w: 2.6, h: 1.2, color: 0x93aae4,
     label: "<img> 2.4 MB · no width/height",
   },
   {
-    id: "link", kind: "chip", x: -2.72, y: -1.5, w: 0.86, h: 0.3, color: 0xdfe5f2,
+    id: "link", kind: "chip", x: -2.72, y: -1.5, w: 0.86, h: 0.3, color: 0xdbe4f8,
     label: '<a href="/pricing">',
     cite: "link target resolves",
     bug: {
@@ -136,10 +143,10 @@ const ELEMENTS: ElDef[] = [
       ],
     },
   },
-  { id: "link2", kind: "chip", x: -1.72, y: -1.5, w: 0.86, h: 0.3, color: 0xdfe5f2, label: '<a href="/docs">' },
+  { id: "link2", kind: "chip", x: -1.72, y: -1.5, w: 0.86, h: 0.3, color: 0xdbe4f8, label: '<a href="/docs">' },
 
   // --- right column: the form ---
-  { id: "card", kind: "bar", x: FIELD_X, y: -0.2, w: 3.0, h: 3.5, z: -0.06, color: 0xe4e9f4 },
+  { id: "card", kind: "bar", x: FIELD_X, y: -0.2, w: 3.0, h: 3.5, z: -0.06, color: 0xf3f6fd },
   {
     id: "email", kind: "field", x: FIELD_X, y: 1.02, w: 2.5, h: 0.38, color: C.field,
     label: 'input[type="email"] · required',
@@ -170,29 +177,29 @@ const ELEMENTS: ElDef[] = [
     cite: "selection is accepted",
   },
   {
-    id: "terms", kind: "chip", x: 0.86, y: -1.24, w: 0.28, h: 0.28, color: 0xdfe5f2,
+    id: "terms", kind: "chip", x: 0.86, y: -1.24, w: 0.28, h: 0.28, color: 0xdbe4f8,
     label: 'input[type="checkbox"] · required',
     cite: "submit is gated on the checkbox",
   },
   { id: "termsLabel", kind: "line", x: 1.75, y: -1.24, w: 1.3, h: 0.12, color: C.line },
 
   // --- the small print that makes a form look like a form ---
-  { id: "cardTitle", kind: "line", x: 0.86, y: 1.44, w: 1.2, h: 0.14, color: 0xaab4cf },
-  { id: "labEmail", kind: "line", x: 0.76, y: 1.3, w: 0.5, h: 0.07, color: 0xcdd5e6 },
-  { id: "labName", kind: "line", x: 0.79, y: 0.72, w: 0.56, h: 0.07, color: 0xcdd5e6 },
-  { id: "labPin", kind: "line", x: 0.72, y: 0.14, w: 0.42, h: 0.07, color: 0xcdd5e6 },
-  { id: "labCountry", kind: "line", x: 0.8, y: -0.44, w: 0.58, h: 0.07, color: 0xcdd5e6 },
-  { id: "phEmail", kind: "line", x: 0.86, y: 1.02, w: 0.86, h: 0.06, color: 0xd8dfee },
-  { id: "phName", kind: "line", x: 0.82, y: 0.44, w: 0.78, h: 0.06, color: 0xd8dfee },
-  { id: "phPin", kind: "line", x: 0.74, y: -0.14, w: 0.44, h: 0.06, color: 0xd8dfee },
-  { id: "chevron", kind: "dot", x: 2.86, y: -0.72, w: 0.12, h: 0.12, color: 0xaab4cf },
+  { id: "cardTitle", kind: "line", x: 0.86, y: 1.44, w: 1.2, h: 0.14, color: 0x8496c2 },
+  { id: "labEmail", kind: "line", x: 0.76, y: 1.3, w: 0.5, h: 0.07, color: 0xb6c3e2 },
+  { id: "labName", kind: "line", x: 0.79, y: 0.72, w: 0.56, h: 0.07, color: 0xb6c3e2 },
+  { id: "labPin", kind: "line", x: 0.72, y: 0.14, w: 0.42, h: 0.07, color: 0xb6c3e2 },
+  { id: "labCountry", kind: "line", x: 0.8, y: -0.44, w: 0.58, h: 0.07, color: 0xb6c3e2 },
+  { id: "phEmail", kind: "line", x: 0.86, y: 1.02, w: 0.86, h: 0.06, color: 0xc9d3ec },
+  { id: "phName", kind: "line", x: 0.82, y: 0.44, w: 0.78, h: 0.06, color: 0xc9d3ec },
+  { id: "phPin", kind: "line", x: 0.74, y: -0.14, w: 0.44, h: 0.06, color: 0xc9d3ec },
+  { id: "chevron", kind: "dot", x: 2.86, y: -0.72, w: 0.12, h: 0.12, color: 0x8496c2 },
 
   // --- page furniture ---
-  { id: "footrule", kind: "line", x: 0, y: -1.98, w: 6.6, h: 0.02, color: 0xdce1ee },
-  { id: "foot1", kind: "line", x: -2.95, y: -2.14, w: 0.5, h: 0.08, color: 0xd2d9e8 },
-  { id: "foot2", kind: "line", x: -2.28, y: -2.14, w: 0.42, h: 0.08, color: 0xd2d9e8 },
-  { id: "foot3", kind: "line", x: -1.7, y: -2.14, w: 0.36, h: 0.08, color: 0xd2d9e8 },
-  { id: "scrollbar", kind: "line", x: 3.46, y: 0.9, w: 0.07, h: 1.5, color: 0xb6c0d8 },
+  { id: "footrule", kind: "line", x: 0, y: -1.98, w: 6.6, h: 0.02, color: 0xd2dae9 },
+  { id: "foot1", kind: "line", x: -2.95, y: -2.14, w: 0.5, h: 0.08, color: 0xbcc8e6 },
+  { id: "foot2", kind: "line", x: -2.28, y: -2.14, w: 0.42, h: 0.08, color: 0xbcc8e6 },
+  { id: "foot3", kind: "line", x: -1.7, y: -2.14, w: 0.36, h: 0.08, color: 0xbcc8e6 },
+  { id: "scrollbar", kind: "line", x: 3.46, y: 0.9, w: 0.07, h: 1.5, color: 0xa9b6d8 },
   {
     id: "submit", kind: "button", x: 1.3, y: -1.82, w: 1.5, h: 0.44, color: C.button,
     label: '<button type="submit">',
@@ -405,8 +412,11 @@ export class TraceoScene {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.setSize(w, h);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.0;
+    // No tone mapping. ACES is built to roll off highlights so bright things on
+    // a dark ground keep their detail — on a light scene it does the same to
+    // every white surface, and a white application comes out grey. Without it
+    // the whites are white and the accents keep their saturation.
+    this.renderer.toneMapping = THREE.NoToneMapping;
     const canvas = this.renderer.domElement;
     canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:pan-y";
     this.host.appendChild(canvas);
@@ -421,6 +431,7 @@ export class TraceoScene {
     this.scene.fog = new THREE.Fog(0xf4f6fb, 14, 30);
 
     this.buildLights();
+    this.buildShadow();
     this.buildPage();
     this.buildParticles();
     this.buildBug();
@@ -437,13 +448,45 @@ export class TraceoScene {
     // Bright ambient with a soft key: on paper the shapes are read from their
     // shadows, so the fill has to be high and the key gentle or every panel
     // flattens into the background it sits on.
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0xc3cbdd, 2.4));
-    const key = new THREE.DirectionalLight(0xffffff, 1.15);
+    this.scene.add(new THREE.HemisphereLight(0xffffff, 0xdedbd6, 1.5));
+    const key = new THREE.DirectionalLight(0xffffff, 0.85);
     key.position.set(3.5, 5, 7);
     this.scene.add(key);
-    const fill = new THREE.DirectionalLight(0xdfe6ff, 0.5);
+    const fill = new THREE.DirectionalLight(0xdfe6ff, 0.38);
     fill.position.set(-5, -2, 4);
     this.scene.add(fill);
+  }
+
+  /**
+   * The shadow the window casts on the page.
+   *
+   * On a dark ground the model was separated from its background by being
+   * brighter than it. On paper nothing is brighter than the page, so the
+   * separation has to come from underneath — without this the window is a pale
+   * rectangle floating in a pale field, which is exactly how the first light
+   * pass read.
+   */
+  private buildShadow() {
+    const size = 256;
+    const cv = document.createElement("canvas");
+    cv.width = cv.height = size;
+    const ctx = cv.getContext("2d")!;
+    const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    g.addColorStop(0, "rgba(30,45,95,0.34)");
+    g.addColorStop(0.45, "rgba(30,45,95,0.16)");
+    g.addColorStop(1, "rgba(30,45,95,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    this.textures.push(tex);
+
+    const shadow = new THREE.Mesh(
+      new THREE.PlaneGeometry(9.4, 6.4),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }),
+    );
+    shadow.position.set(0.15, -0.5, -0.6);
+    this.world.add(shadow);
   }
 
   private buildPage() {
@@ -483,9 +526,11 @@ export class TraceoScene {
       const pts = shape.getPoints(28).map((p) => new THREE.Vector3(p.x, p.y, depth / 2 + 0.004));
       const lineGeom = new THREE.BufferGeometry().setFromPoints(pts);
       const lineMat = new THREE.LineBasicMaterial({
-        color: isAccent ? 0x1f3fae : C.edge,
+        color: isAccent ? 0x1c3aa8 : C.edge,
         transparent: true,
-        opacity: isAccent ? 0.55 : 0.65,
+        // A light interface is read from its borders. On the dark version these
+        // were a highlight; here they are the drawing.
+        opacity: isAccent ? 0.5 : 0.85,
       });
       mesh.add(new THREE.LineLoop(lineGeom, lineMat));
 
@@ -615,8 +660,8 @@ export class TraceoScene {
     const pos = new Float32Array(N * 3);
     const col = new Float32Array(N * 3);
     const seed = new Float32Array(N);
-    const c1 = new THREE.Color(0x7d8db8);
-    const c2 = new THREE.Color(0xa08fd0);
+    const c1 = new THREE.Color(0x6f83b4);
+    const c2 = new THREE.Color(0x8f7fc4);
     for (let i = 0; i < N; i++) {
       const r = 5.5 + Math.random() * 7;
       const a = Math.random() * Math.PI * 2;
@@ -635,10 +680,10 @@ export class TraceoScene {
     g.userData.seed = seed;
     g.userData.base = pos.slice();
     const m = new THREE.PointsMaterial({
-      size: 0.04,
+      size: 0.035,
       vertexColors: true,
       transparent: true,
-      opacity: 0.34,
+      opacity: 0.2,
       depthWrite: false,
       // Normal blending, deliberately: additive light on a light ground adds
       // nothing that can be seen.
