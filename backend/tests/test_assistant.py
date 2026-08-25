@@ -134,3 +134,91 @@ def test_it_cannot_be_pointed_at_another_organisation(client, register_org, crea
     assert client.post(f"/v1/projects/{project}/assistant",
                        json={"question": "what failed?"},
                        headers=stranger).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# The model path
+# ---------------------------------------------------------------------------
+
+class _StubProvider:
+    """A provider that records the prompt it was given and returns a fixed reply."""
+    name = "stub"
+    model = "stub-1"
+
+    def __init__(self, data):
+        self.data = data
+        self.prompt = None
+
+    def complete_json(self, prompt_id, prompt, schema):
+        from app.llm.base import LLMResult
+        self.prompt = prompt
+        return LLMResult(data=self.data, model=self.model, prompt_version="v1.0")
+
+
+class _AngryProvider:
+    name = "stub"
+    model = "stub-1"
+
+    def complete_json(self, prompt_id, prompt, schema):
+        raise RuntimeError("the key is dead")
+
+
+def test_a_configured_model_answers_and_says_so(client, register_org, create_project,
+                                                monkeypatch):
+    headers = register_org("Model Org")
+    project = create_project(headers, "Model Project")
+    seeded = _seed_run(*_ids(headers), project)
+
+    stub = _StubProvider({"answer": "The email field is not enforced.",
+                          "cites": [seeded["case_id"]]})
+    monkeypatch.setattr("app.modules.assistant.get_provider", lambda: stub)
+
+    body = client.post(f"/v1/projects/{project}/assistant",
+                       json={"question": "what failed?"}, headers=headers).json()
+    assert body["engine"] == "model"
+    assert body["model"] == "stub-1"
+    assert body["answer"] == "The email field is not enforced."
+    assert [c["id"] for c in body["cites"]] == [seeded["case_id"]]
+
+    # The model was handed the project's rows, inside the untrusted frame — a
+    # scanned page that says "ignore your instructions" is quoted, not obeyed.
+    from app.llm.base import UNTRUSTED_CLOSE, UNTRUSTED_OPEN
+    assert UNTRUSTED_OPEN in stub.prompt and UNTRUSTED_CLOSE in stub.prompt
+    assert "accepted an empty #email" in stub.prompt
+    assert "what failed?" in stub.prompt
+
+
+def test_a_citation_the_facts_do_not_contain_is_dropped(client, register_org,
+                                                        create_project, monkeypatch):
+    headers = register_org("Model Org 2")
+    project = create_project(headers, "Grounded Project")
+    _seed_run(*_ids(headers), project)
+
+    stub = _StubProvider({"answer": "Something failed.",
+                          "cites": ["case-that-never-existed", "0000000000000000"]})
+    monkeypatch.setattr("app.modules.assistant.get_provider", lambda: stub)
+
+    body = client.post(f"/v1/projects/{project}/assistant",
+                       json={"question": "what failed?"}, headers=headers).json()
+    # The answer survives; the invented citations do not. An answer may still be
+    # useful, a fabricated citation never is.
+    assert body["answer"] == "Something failed."
+    assert body["cites"] == []
+
+
+def test_a_dead_provider_falls_back_rather_than_erroring(client, register_org,
+                                                         create_project, monkeypatch):
+    headers = register_org("Model Org 3")
+    project = create_project(headers, "Falling Back")
+    _seed_run(*_ids(headers), project)
+
+    monkeypatch.setattr("app.modules.assistant.get_provider", lambda: _AngryProvider())
+
+    r = client.post(f"/v1/projects/{project}/assistant",
+                    json={"question": "what failed?"}, headers=headers)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # A dead key degrades to the rows, and says which answered. The reader is
+    # never handed an error where an answer was expected.
+    assert body["engine"] == "deterministic"
+    assert "accepted an empty #email" in body["answer"]

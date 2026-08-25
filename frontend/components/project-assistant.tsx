@@ -21,7 +21,7 @@ import { api } from "@/lib/api";
  * using a keyboard cannot reach.
  */
 
-type Msg = { role: "you" | "traceo"; text: string; cites?: Cite[] };
+type Msg = { role: "you" | "traceo"; text: string; cites?: Cite[]; engine?: string; model?: string | null };
 type Cite = { kind: string; id: string; label: string };
 
 const WIDTH_KEY = "traceo.assistant.width";
@@ -34,6 +34,8 @@ export default function ProjectAssistant({ projectId }: { projectId: string }) {
   const [width, setWidth] = useState(380);
   const [available, setAvailable] = useState<boolean | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [engine, setEngine] = useState<string>("deterministic");
+  const [modelName, setModelName] = useState<string | null>(null);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -48,7 +50,11 @@ export default function ProjectAssistant({ projectId }: { projectId: string }) {
     placeholder: "Ask about a run, a case or a failure…",
     send: "Send",
     locked: "Available once this project has completed a run — there are no results to explain yet.",
-    grounded: "Answers come from this project's own runs, requirements and cases. No model is called.",
+    groundedRows: "Answers come from this project's own runs, requirements and cases. No model is called.",
+    groundedModel: "Answers come from this project's own runs, requirements and cases — read by",
+    groundedModelTail: "which is given those rows and nothing else.",
+    byRows: "from the project's rows",
+    byModel: "read by",
     empty: "Ask me what failed, why a case failed, or what this project covers.",
     thinking: "Looking…",
     failed: "Could not reach the assistant.",
@@ -66,11 +72,14 @@ export default function ProjectAssistant({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     let alive = true;
-    api<{ available: boolean; suggestions: string[] }>(`/projects/${projectId}/assistant`)
+    api<{ available: boolean; suggestions: string[]; engine?: string; model?: string | null }>(
+      `/projects/${projectId}/assistant`)
       .then((r) => {
         if (!alive) return;
         setAvailable(!!r.available);
         setSuggestions(r.suggestions ?? []);
+        setEngine(r.engine ?? "deterministic");
+        setModelName(r.model ?? null);
       })
       .catch(() => alive && setAvailable(false));
     return () => {
@@ -126,12 +135,20 @@ export default function ProjectAssistant({ projectId }: { projectId: string }) {
     setMsgs((m) => [...m, { role: "you", text: q }]);
     setBusy(true);
     try {
-      const r = await api<{ answer: string; cites: Cite[]; suggestions: string[] }>(
+      const r = await api<{
+        answer: string; cites: Cite[]; suggestions: string[];
+        engine?: string; model?: string | null;
+      }>(
         `/projects/${projectId}/assistant`,
         // api() serialises the body itself — handing it a string double-encodes it.
         { method: "POST", body: { question: q } },
       );
-      setMsgs((m) => [...m, { role: "traceo", text: r.answer, cites: r.cites }]);
+      // Recorded per message, not per session: a dead key mid-conversation
+      // silently changes which kind of thing is answering, and the reader
+      // should be able to see exactly where that happened.
+      setMsgs((m) => [...m, { role: "traceo", text: r.answer, cites: r.cites,
+                              engine: r.engine, model: r.model }]);
+      if (r.engine) setEngine(r.engine);
       if (r.suggestions?.length) setSuggestions(r.suggestions);
     } catch (e: any) {
       setMsgs((m) => [...m, { role: "traceo", text: e?.message || L.failed }]);
@@ -254,7 +271,9 @@ export default function ProjectAssistant({ projectId }: { projectId: string }) {
             color: "var(--text-muted)", borderBottom: "1px solid var(--border)",
           }}
         >
-          {L.grounded}
+          {engine === "model" && modelName
+            ? `${L.groundedModel} ${modelName} — ${L.groundedModelTail}`
+            : L.groundedRows}
         </p>
 
         <div
@@ -281,6 +300,16 @@ export default function ProjectAssistant({ projectId }: { projectId: string }) {
                 }}
               >
                 {m.role}
+                {m.role === "traceo" && m.engine && (
+                  <span
+                    data-testid="assistant-engine"
+                    // No opacity: --text-muted is already the lightest text
+                    // that clears AA, and fading it took it under.
+                    style={{ marginLeft: 8, color: "var(--text-secondary)" }}
+                  >
+                    · {m.engine === "model" ? `${L.byModel} ${m.model ?? "a model"}` : L.byRows}
+                  </span>
+                )}
               </div>
               <div
                 style={{

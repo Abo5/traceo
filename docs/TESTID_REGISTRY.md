@@ -248,6 +248,7 @@ project has a completed run.
 | `assistant-resize-handle` | separator | Drag or arrow keys; carries `aria-valuenow/min/max` |
 | `assistant-messages` | log | The transcript; focusable, `aria-live="polite"` |
 | `assistant-msg-you` / `assistant-msg-traceo` | container (repeated) | One message |
+| `assistant-engine` | span | Which kind of thing wrote that reply — a model, or the project's rows |
 | `assistant-cite` | chip (repeated) | A row the answer was built from |
 | `assistant-suggestion` | button (repeated) | A follow-up the answer offered |
 | `assistant-input` | input | The question |

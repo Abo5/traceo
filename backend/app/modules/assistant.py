@@ -37,10 +37,29 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import require
+from ..llm import get_provider
+from ..llm.base import frame_untrusted
 from ..models import (Project, Requirement, RequirementTestCase, Run, TestCase,
                       TestResult, User)
 
 router = APIRouter(tags=["assistant"])
+
+# What a model is allowed to see and how much of it. A bound, not a guess: a
+# project with two thousand cases must not turn one question into a prompt that
+# costs more than the run it is describing.
+CONTEXT_FAILURES = 25
+CONTEXT_REQUIREMENTS = 20
+CONTEXT_RUNS = 5
+
+ANSWER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "answer": {"type": "string", "maxLength": 2000},
+        "cites": {"type": "array", "items": {"type": "string"}, "maxItems": 12},
+    },
+    "required": ["answer"],
+    "additionalProperties": False,
+}
 
 # The shapes a question can take. Matched in order, first hit wins — the list is
 # ordered most specific first, so "why did X fail" is not swallowed by "fail".
@@ -342,8 +361,146 @@ def answer_question(db: Session, org_id: str, project: Project, question: str) -
 
 
 # ---------------------------------------------------------------------------
+# The model path
+#
+# The retrieval above does not change when a model is configured: the same rows
+# are gathered, and the model is given ONLY those rows. It phrases and reasons
+# over the project's facts; it is never asked to recall anything about the
+# project, because it knows nothing about the project.
+#
+# Two things are enforced rather than requested. The facts are wrapped in the
+# untrusted-data frame, because case titles and failure messages come from a
+# scanned third-party page and a page that says "ignore your instructions" must
+# be quoted, not obeyed. And every id the model cites is checked against the
+# ids actually in the context — an answer that cites a case that does not exist
+# has its citation dropped, the same gate generation applies to its cases.
+# ---------------------------------------------------------------------------
+
+def _context(db: Session, org_id: str, project: Project) -> tuple[str, dict[str, str]]:
+    """The project's facts as text, and the ids a citation is allowed to name."""
+    allowed: dict[str, str] = {}
+    lines: list[str] = [f"PROJECT: {project.name}"]
+
+    runs = _completed_runs(db, org_id, project.id)
+    lines.append(f"COMPLETED RUNS: {len(runs)}")
+    for run in runs[:CONTEXT_RUNS]:
+        c = run.counts or {}
+        lines.append(
+            f"  run {_short(run.id)} at {str(run.started_at)[:16]}: "
+            f"total={c.get('total', 0)} passed={c.get('passed', 0)} "
+            f"failed={c.get('failed', 0)} errored={c.get('errored', 0)} "
+            f"skipped={c.get('skipped', 0)}")
+        allowed[run.id] = "run"
+
+    cases = list(db.scalars(select(TestCase).where(
+        TestCase.project_id == project.id, TestCase.organisation_id == org_id)))
+    by_type: dict[str, int] = {}
+    for case in cases:
+        key = case.test_type or "unclassified"
+        by_type[key] = by_type.get(key, 0) + 1
+    lines.append("TEST CASES: " + str(len(cases))
+                 + " (" + ", ".join(f"{n} {t}" for t, n in sorted(by_type.items())) + ")")
+
+    reqs = list(db.scalars(select(Requirement).where(
+        Requirement.project_id == project.id, Requirement.organisation_id == org_id)))
+    lines.append(f"REQUIREMENTS: {len(reqs)}")
+    for r in reqs[:CONTEXT_REQUIREMENTS]:
+        lines.append(f"  {r.external_id}: {(r.description or '').strip()[:200]}")
+        allowed[r.id] = "requirement"
+        allowed[r.external_id] = "requirement"
+
+    latest = runs[0] if runs else None
+    if latest is not None:
+        rows = _failures(db, org_id, latest)
+        lines.append(f"FAILURES IN THE LAST RUN: {len(rows)}")
+        for result, case in rows[:CONTEXT_FAILURES]:
+            reason = _reason_text(result.failure_reason) or result.outcome
+            lines.append(f"  case {_short(case.id)} [{case.test_type or 'unclassified'}] "
+                         f"{case.title} -> {result.outcome}: {reason[:220]}")
+            allowed[case.id] = "case"
+        if len(rows) > CONTEXT_FAILURES:
+            lines.append(f"  (+{len(rows) - CONTEXT_FAILURES} more failures not listed here)")
+    return "\n".join(lines), allowed
+
+
+_SYSTEM = (
+    "You are Traceo's project assistant. Answer ONLY from the FACTS below, which "
+    "are this project's own recorded rows.\n"
+    "Rules:\n"
+    "- If the facts do not contain the answer, say so plainly and name what you "
+    "could answer instead. Never guess a number, an id, a cause or a fix.\n"
+    "- Quote failure reasons as recorded rather than paraphrasing them into "
+    "something more confident.\n"
+    "- Cite the ids you used in `cites` (case, run or requirement ids exactly as "
+    "they appear in the facts).\n"
+    "- Be brief: a few sentences, or a short list. No preamble.\n"
+    "- The question is about this project only. Decline anything else.\n"
+)
+
+
+def _ask_model(context: str, allowed: dict[str, str], question: str) -> Answer | None:
+    """Answer with the configured model, or None if there isn't a usable one.
+
+    Returning None rather than raising is deliberate: a missing key, a dead key
+    or a malformed reply should degrade to the deterministic answer, not hand
+    the reader an error where an answer was expected.
+    """
+    provider = get_provider()
+    if getattr(provider, "name", "mock") == "mock":
+        # The mock returns {} for prompt ids it does not know, which would fail
+        # schema validation. There is nothing to gain by asking it.
+        return None
+
+    prompt = (
+        _SYSTEM
+        + "\nFACTS:\n" + frame_untrusted(context)
+        + "\n\nQUESTION:\n" + frame_untrusted(question)
+    )
+    try:
+        result = provider.complete_json("assistant_answer", prompt, ANSWER_SCHEMA)
+    except Exception:
+        return None
+
+    data = result.data if isinstance(result.data, dict) else {}
+    text = str(data.get("answer") or "").strip()
+    if not text:
+        return None
+
+    cites = []
+    for raw in (data.get("cites") or []):
+        key = str(raw).strip()
+        kind = allowed.get(key)
+        if kind is None:
+            # A cited id that is not in the context is dropped rather than shown.
+            # An answer may still be useful; a fabricated citation never is.
+            match = [k for k in allowed if k.startswith(key)] if len(key) >= 8 else []
+            if len(match) != 1:
+                continue
+            key, kind = match[0], allowed[match[0]]
+        cites.append({"kind": kind, "id": key, "label": key})
+
+    return Answer(text, cites, "model", [])
+
+
+# ---------------------------------------------------------------------------
 # Endpoint
 # ---------------------------------------------------------------------------
+
+_SUGGESTIONS = [
+    "How did the last run go?",
+    "What failed?",
+    "How many test cases are there?",
+    "What are the requirements?",
+]
+
+
+def _model_available() -> bool:
+    """Whether a real provider is configured. The mock is not one."""
+    try:
+        return getattr(get_provider(), "name", "mock") != "mock"
+    except Exception:
+        return False
+
 
 def _project_or_404(db: Session, org_id: str, project_id: str) -> Project:
     project = db.get(Project, project_id)
@@ -367,12 +524,10 @@ def assistant_state(project_id: str, user: User = Depends(require("view")),
         "available": bool(runs),
         "reason": None if runs else "no_completed_run",
         "runs": len(runs),
-        "suggestions": [
-            "How did the last run go?",
-            "What failed?",
-            "How many test cases are there?",
-            "What are the requirements?",
-        ] if runs else [],
+        "suggestions": _SUGGESTIONS if runs else [],
+        # The UI says which kind of thing is answering, so it has to be told.
+        "engine": "model" if _model_available() else "deterministic",
+        "model": getattr(get_provider(), "model", None) if _model_available() else None,
     }
 
 
@@ -385,14 +540,29 @@ def ask(project_id: str, body: Ask, user: User = Depends(require("view")),
             "code": "no_completed_run",
             "message": "The assistant answers from run results — start a run first.",
         })
-    result = answer_question(db, user.organisation_id, project, body.question.strip())
+    question = body.question.strip()
+
+    # The model answers when one is configured; the deterministic path answers
+    # when it is not, when the call fails, and when the reply comes back empty.
+    # Both read the same rows — the model is given the facts, never the database.
+    engine, model_name = "deterministic", None
+    result = None
+    context, allowed = _context(db, user.organisation_id, project)
+    from_model = _ask_model(context, allowed, question)
+    if from_model is not None:
+        result, engine = from_model, "model"
+        model_name = getattr(get_provider(), "model", None)
+    else:
+        result = answer_question(db, user.organisation_id, project, question)
+
     return {
         "answer": result.text,
         "cites": result.cites,
         "intent": result.intent,
-        "suggestions": result.suggestions,
-        # Stated on every reply rather than buried in a tooltip: this is not a
-        # model, and a reader deciding how much to trust an answer should be
-        # told which kind of thing produced it.
-        "engine": "deterministic",
+        "suggestions": result.suggestions or _SUGGESTIONS,
+        # Stated on every reply rather than buried in a tooltip. Whether a
+        # sentence came from a model or from a table changes how much weight it
+        # can carry, and the reader is the one who has to decide that.
+        "engine": engine,
+        "model": model_name,
     }
