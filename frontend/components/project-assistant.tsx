@@ -141,7 +141,16 @@ export default function ProjectAssistant({ projectId }: { projectId: string }) {
       }>(
         `/projects/${projectId}/assistant`,
         // api() serialises the body itself — handing it a string double-encodes it.
-        { method: "POST", body: { question: q } },
+        // The transcript goes with the question so a follow-up ("and the other
+        // two?") lands against what was said rather than starting from nothing.
+        // Trimmed to the last turns; the server bounds it again regardless.
+        {
+          method: "POST",
+          body: {
+            question: q,
+            history: msgs.slice(-8).map((m) => ({ role: m.role, text: m.text })),
+          },
+        },
       );
       // Recorded per message, not per session: a dead key mid-conversation
       // silently changes which kind of thing is answering, and the reader

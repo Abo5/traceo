@@ -222,3 +222,63 @@ def test_a_dead_provider_falls_back_rather_than_erroring(client, register_org,
     # never handed an error where an answer was expected.
     assert body["engine"] == "deterministic"
     assert "accepted an empty #email" in body["answer"]
+
+
+def test_a_general_question_gets_a_general_answer(client, register_org, create_project):
+    """Without a model configured, a broad question still lands somewhere useful."""
+    headers = register_org("Overview Org")
+    project = create_project(headers, "Broad Project")
+    _seed_run(*_ids(headers), project)
+
+    body = client.post(f"/v1/projects/{project}/assistant",
+                       json={"question": "tell me about this project"},
+                       headers=headers).json()
+    # It used to fall through to a refusal listing what it could have been
+    # asked — for the most natural opening question there is.
+    assert body["intent"] == "overview"
+    assert "requirement" in body["answer"] and "test case" in body["answer"]
+
+    # Out of scope is still out of scope.
+    off = client.post(f"/v1/projects/{project}/assistant",
+                      json={"question": "who won the world cup?"}, headers=headers).json()
+    assert off["intent"] == "unknown"
+
+
+def test_the_conversation_is_carried_to_the_model(client, register_org, create_project,
+                                                  monkeypatch):
+    headers = register_org("Chat Org")
+    project = create_project(headers, "Chatty Project")
+    _seed_run(*_ids(headers), project)
+
+    stub = _StubProvider({"answer": "The other two are the country and bio fields."})
+    monkeypatch.setattr("app.modules.assistant.get_provider", lambda: stub)
+
+    body = client.post(f"/v1/projects/{project}/assistant", headers=headers, json={
+        "question": "and the other two?",
+        "history": [
+            {"role": "you", "text": "what failed?"},
+            {"role": "traceo", "text": "Three cases failed: email, country, bio."},
+        ],
+    }).json()
+
+    assert body["engine"] == "model"
+    # A follow-up is meaningless without what came before it.
+    assert "Three cases failed: email, country, bio." in stub.prompt
+    assert "and the other two?" in stub.prompt
+    # The transcript is untrusted too — it contains text the page produced.
+    from app.llm.base import UNTRUSTED_OPEN
+    assert stub.prompt.count(UNTRUSTED_OPEN) >= 3
+
+
+def test_history_is_bounded_by_the_server(client, register_org, create_project):
+    headers = register_org("Bounded Org")
+    project = create_project(headers, "Bounded Project")
+    _seed_run(*_ids(headers), project)
+
+    # History is the one field a caller can grow without limit, and an unbounded
+    # one turns a question into a bill.
+    r = client.post(f"/v1/projects/{project}/assistant", headers=headers, json={
+        "question": "what failed?",
+        "history": [{"role": "you", "text": "x"} for _ in range(40)],
+    })
+    assert r.status_code == 422, r.text

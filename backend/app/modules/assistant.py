@@ -74,8 +74,17 @@ class Answer:
     suggestions: list[str]
 
 
+class Turn(BaseModel):
+    role: str = Field(pattern="^(you|traceo)$")
+    text: str = Field(max_length=4000)
+
+
 class Ask(BaseModel):
     question: str = Field(min_length=1, max_length=500)
+    # The conversation so far, oldest first. Bounded here rather than trusted
+    # from the client: history is the one field a caller can grow without limit,
+    # and an unbounded one turns a question into a bill.
+    history: list[Turn] = Field(default_factory=list, max_length=12)
 
 
 def _short(value: str | None, n: int = 8) -> str:
@@ -244,6 +253,82 @@ def _answer_case(db: Session, org_id: str, project: Project, case: TestCase) -> 
                   ["what failed?", "how did the last run go?"])
 
 
+def _answer_priority(db: Session, org_id: str, run: Run) -> Answer:
+    """Where to start, from how the failures actually cluster.
+
+    The clustering is a fact; the recommendation drawn from it is judgement, and
+    it is labelled as judgement. Traceo did not measure that one group should be
+    fixed before another — it measured that the group exists.
+    """
+    rows = _failures(db, org_id, run)
+    if not rows:
+        return Answer("Nothing is failing in the last run, so there is nothing to "
+                      "prioritise.", [{"kind": "run", "id": run.id, "label": "latest run"}],
+                      "priority", ["how did the last run go?"])
+
+    # Grouped by the requirement each case traces to: fixing what a group has in
+    # common is what closes several cases at once.
+    groups: dict[str, list[tuple[TestResult, TestCase]]] = {}
+    labels: dict[str, str] = {}
+    for result, case in rows:
+        reqs = _requirements_for(db, org_id, case.id)
+        key = reqs[0].external_id if reqs else (case.test_type or "unclassified")
+        labels[key] = (reqs[0].description or "").strip()[:140] if reqs else key
+        groups.setdefault(key, []).append((result, case))
+
+    ranked = sorted(groups.items(), key=lambda kv: -len(kv[1]))
+    lines = [f"{len(rows)} case(s) are failing, and they fall into {len(ranked)} group(s)."]
+    cites = []
+    for key, members in ranked[:4]:
+        lines.append(f"  • {key} — {len(members)} case(s): {labels.get(key, '')}")
+        cites.append({"kind": "requirement", "id": key, "label": labels.get(key, key)})
+    biggest, members = ranked[0]
+    lines.append(
+        f"My read — not something Traceo measured: start with {biggest}. It accounts "
+        f"for {len(members)} of the {len(rows)} failures, so whatever they share is "
+        "the one change that closes the most.")
+    lines.append("Name any case and I will tell you what it asserted and what it saw.")
+    return Answer("\n".join(lines), cites, "priority",
+                  ["what failed?", "tell me about this project"])
+
+
+def _answer_overview(db: Session, org_id: str, project: Project) -> Answer:
+    """What this project is and where it stands — the answer to a broad question.
+
+    Before this, anything that did not match a narrow intent fell through to a
+    boilerplate refusal, so "tell me about this project" — the most natural
+    opening question there is — got a list of things it could have asked
+    instead.
+    """
+    runs = _completed_runs(db, org_id, project.id)
+    cases = list(db.scalars(select(TestCase).where(
+        TestCase.project_id == project.id, TestCase.organisation_id == org_id)))
+    reqs = list(db.scalars(select(Requirement).where(
+        Requirement.project_id == project.id, Requirement.organisation_id == org_id)))
+    by_type: dict[str, int] = {}
+    for c in cases:
+        by_type[c.test_type or "unclassified"] = by_type.get(c.test_type or "unclassified", 0) + 1
+
+    lines = [f"{project.name} holds {len(reqs)} requirement(s) and {len(cases)} test case(s)"
+             + (" (" + ", ".join(f"{n} {t}" for t, n in sorted(by_type.items(), key=lambda kv: -kv[1])) + ")" if by_type else "")
+             + f", across {len(runs)} completed run(s)."]
+    if runs:
+        latest = runs[0]
+        c = latest.counts or {}
+        total, passed = int(c.get("total") or 0), int(c.get("passed") or 0)
+        failed = int(c.get("failed") or 0) + int(c.get("errored") or 0)
+        lines.append(f"The last run executed {total} case(s): {passed} passed, {failed} need fixing.")
+        rows = _failures(db, org_id, latest)
+        kinds: dict[str, int] = {}
+        for _r, case in rows:
+            kinds[case.test_type or "unclassified"] = kinds.get(case.test_type or "unclassified", 0) + 1
+        if kinds:
+            lines.append("The failures sit in: "
+                         + ", ".join(f"{n} {t}" for t, n in sorted(kinds.items(), key=lambda kv: -kv[1])) + ".")
+    return Answer("\n".join(lines), [], "overview",
+                  ["what failed?", "what are the requirements?"])
+
+
 def _answer_counts(db: Session, org_id: str, project: Project) -> Answer:
     cases = db.scalars(select(TestCase).where(
         TestCase.project_id == project.id,
@@ -295,10 +380,19 @@ def _answer_history(db: Session, org_id: str, project: Project) -> Answer:
 # Routing a question to an intent
 # ---------------------------------------------------------------------------
 
+_FAILURE_WORDS = re.compile(
+    r"\b(fail\w*|broke\w*|red|defect\w*|bug\w*|error\w*|wrong|problem\w*)\b", re.I)
+
 _PATTERNS: list[tuple[Intent, re.Pattern[str]]] = [
+    ("priority", re.compile(
+        r"\b(fix first|what.*fix|prioriti[sz]e|priority|start with|most important|"
+        r"worst|biggest|where (do|should) (i|we) (start|begin))\b", re.I)),
     ("case", re.compile(r"\b(why|explain|what (is|does)|tell me about)\b", re.I)),
     ("failures", re.compile(r"\b(fail(ed|ing|ures?)?|broke(n)?|red|defects?|bugs?|errors?)\b", re.I)),
-    ("status", re.compile(r"\b(last run|latest run|how did|status|pass rate|result|summary|how many passed)\b", re.I)),
+    ("status", re.compile(
+        r"\b(last run|latest run|how did|status|pass rate|result|summary|"
+        r"how many passed|how('s| is| are)? (it|we|things) (going|doing)|health|"
+        r"state of)\b", re.I)),
     ("history", re.compile(r"\b(history|previous runs?|over time|trend|runs? so far)\b", re.I)),
     ("requirements", re.compile(r"\b(requirements?|specs?|brd|trd|coverage)\b", re.I)),
     ("counts", re.compile(r"\b(how many|count|total|number of)\b", re.I)),
@@ -338,14 +432,20 @@ def answer_question(db: Session, org_id: str, project: Project, question: str) -
         if not pattern.search(question):
             continue
         if intent == "case":
-            # "explain"/"why" with no case named. If the question is about this
-            # project at all, the failure list is the most useful thing to hand
-            # back; if it is not, saying so is.
+            # "why"/"explain"/"tell me about" with no case named. What it wants
+            # depends on the rest of the sentence: asked about failure, hand
+            # back the failures; asked about the project, hand back the project;
+            # asked about neither, say so. Routing all three to the failure list
+            # answered "tell me about this project" with a wall of red.
             if not _IN_SCOPE.search(question):
                 break
-            return _answer_failures(db, org_id, run) if run else _answer_counts(db, org_id, project)
+            if _FAILURE_WORDS.search(question) and run:
+                return _answer_failures(db, org_id, run)
+            return _answer_overview(db, org_id, project)
         if intent == "failures" and run:
             return _answer_failures(db, org_id, run)
+        if intent == "priority" and run:
+            return _answer_priority(db, org_id, run)
         if intent == "status" and run:
             return _answer_status(db, org_id, project, run)
         if intent == "history":
@@ -355,6 +455,8 @@ def answer_question(db: Session, org_id: str, project: Project, question: str) -
         if intent == "counts":
             return _answer_counts(db, org_id, project)
 
+    if _IN_SCOPE.search(question):
+        return _answer_overview(db, org_id, project)
     return Answer(_FALLBACK, [], "unknown",
                   ["how did the last run go?", "what failed?",
                    "how many test cases are there?"])
@@ -400,6 +502,27 @@ def _context(db: Session, org_id: str, project: Project) -> tuple[str, dict[str,
         by_type[key] = by_type.get(key, 0) + 1
     lines.append("TEST CASES: " + str(len(cases))
                  + " (" + ", ".join(f"{n} {t}" for t, n in sorted(by_type.items())) + ")")
+    if project.test_types:
+        lines.append("PROJECT IS SCOPED TO: " + ", ".join(project.test_types))
+
+    # Passing cases matter to a general question. A context holding only
+    # failures makes every answer sound like a project on fire, because the
+    # model is shown nothing that is working.
+    latest_for_pass = _completed_runs(db, org_id, project.id)
+    if latest_for_pass:
+        passing = db.execute(
+            select(TestCase.test_type, TestResult.outcome)
+            .join(TestResult, TestResult.test_case_id == TestCase.id)
+            .where(TestResult.run_id == latest_for_pass[0].id,
+                   TestCase.organisation_id == org_id)).all()
+        tally: dict[str, dict[str, int]] = {}
+        for test_type, outcome in passing:
+            key = test_type or "unclassified"
+            tally.setdefault(key, {})
+            tally[key][outcome] = tally[key].get(outcome, 0) + 1
+        for key, outcomes in sorted(tally.items()):
+            summary = ", ".join(f"{n} {o}" for o, n in sorted(outcomes.items()))
+            lines.append(f"  {key}: {summary}")
 
     reqs = list(db.scalars(select(Requirement).where(
         Requirement.project_id == project.id, Requirement.organisation_id == org_id)))
@@ -424,21 +547,33 @@ def _context(db: Session, org_id: str, project: Project) -> tuple[str, dict[str,
 
 
 _SYSTEM = (
-    "You are Traceo's project assistant. Answer ONLY from the FACTS below, which "
-    "are this project's own recorded rows.\n"
-    "Rules:\n"
-    "- If the facts do not contain the answer, say so plainly and name what you "
-    "could answer instead. Never guess a number, an id, a cause or a fix.\n"
+    "You are Traceo's project assistant, talking with an engineer about THIS "
+    "project. The FACTS below are the project's own recorded rows — runs, "
+    "requirements, cases and results.\n"
+    "How to answer:\n"
+    "- Every FACT you state must come from the facts below. Never invent a "
+    "number, an id, a cause or a result.\n"
+    "- You may reason over them freely: summarise, compare runs, group failures "
+    "by cause, suggest what to fix first and why, explain what a failure means "
+    "for the requirement it traces to. Reasoning from the facts is the job; "
+    "recalling things not in them is not.\n"
+    "- Mark judgement as judgement. \"Three failures share one cause, so that "
+    "is probably where to start\" is useful; stating it as something Traceo "
+    "measured is not.\n"
     "- Quote failure reasons as recorded rather than paraphrasing them into "
-    "something more confident.\n"
-    "- Cite the ids you used in `cites` (case, run or requirement ids exactly as "
-    "they appear in the facts).\n"
-    "- Be brief: a few sentences, or a short list. No preamble.\n"
-    "- The question is about this project only. Decline anything else.\n"
+    "something more confident than the evidence.\n"
+    "- If the facts do not answer it, say so plainly and name what you could "
+    "answer instead.\n"
+    "- Cite the ids you used in `cites`, exactly as they appear in the facts.\n"
+    "- Talk like a colleague: answer the question asked, follow the thread of "
+    "the conversation, ask a clarifying question when the request is ambiguous. "
+    "No preamble, no restating the question.\n"
+    "- This project only. Decline anything else.\n"
 )
 
 
-def _ask_model(context: str, allowed: dict[str, str], question: str) -> Answer | None:
+def _ask_model(context: str, allowed: dict[str, str], question: str,
+               history: list[Turn] | None = None) -> Answer | None:
     """Answer with the configured model, or None if there isn't a usable one.
 
     Returning None rather than raising is deliberate: a missing key, a dead key
@@ -451,10 +586,18 @@ def _ask_model(context: str, allowed: dict[str, str], question: str) -> Answer |
         # schema validation. There is nothing to gain by asking it.
         return None
 
+    # The conversation so far, so a follow-up ("and the other two?") lands
+    # against what was actually said rather than starting from nothing.
+    talk = ""
+    for turn in (history or [])[-8:]:
+        who = "ENGINEER" if turn.role == "you" else "YOU"
+        talk += f"{who}: {turn.text.strip()[:1200]}\n"
+
     prompt = (
         _SYSTEM
         + "\nFACTS:\n" + frame_untrusted(context)
-        + "\n\nQUESTION:\n" + frame_untrusted(question)
+        + (("\n\nCONVERSATION SO FAR:\n" + frame_untrusted(talk)) if talk else "")
+        + "\n\nENGINEER ASKS:\n" + frame_untrusted(question)
     )
     try:
         result = provider.complete_json("assistant_answer", prompt, ANSWER_SCHEMA)
@@ -548,7 +691,7 @@ def ask(project_id: str, body: Ask, user: User = Depends(require("view")),
     engine, model_name = "deterministic", None
     result = None
     context, allowed = _context(db, user.organisation_id, project)
-    from_model = _ask_model(context, allowed, question)
+    from_model = _ask_model(context, allowed, question, body.history)
     if from_model is not None:
         result, engine = from_model, "model"
         model_name = getattr(get_provider(), "model", None)
