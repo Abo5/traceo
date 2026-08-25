@@ -26,6 +26,7 @@ from .modules.components import router as components_router
 from .modules.webtarget import router as webtarget_router
 from .modules.webverify import router as webverify_router
 from .modules.pipeline import router as pipeline_router
+from .modules.assistant import router as assistant_router
 
 app = FastAPI(title=settings.APP_NAME, version="2.0.0")
 
@@ -45,7 +46,7 @@ for r in (integrations_router, reference_router,
           generation_router, insight_router, review_router, execution_router,
           traceability_router, reporting_router, components_router,
           security_router, webtarget_router, webverify_router,
-          pipeline_router):
+          pipeline_router, assistant_router):
     app.include_router(r, prefix=P)
 
 

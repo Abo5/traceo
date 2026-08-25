@@ -234,6 +234,25 @@ prefixes.
 | `dashboard-quick-review-button` | Button | Quick action → review |
 | `dashboard-quick-run-button` | Button | Quick action → run |
 
+## Project assistant — `frontend/components/project-assistant.tsx`
+
+Mounted on the overview. Answers come from `POST /projects/{id}/assistant`,
+which is deterministic and reads only this project's rows. Shut until the
+project has a completed run.
+
+| data-testid | Element | Purpose |
+|---|---|---|
+| `assistant-launcher` | button | Opens the panel; `disabled` before the first completed run, with the reason in `title` |
+| `assistant-panel` | aside | The open panel |
+| `assistant-close` | button | Closes it; the state is remembered |
+| `assistant-resize-handle` | separator | Drag or arrow keys; carries `aria-valuenow/min/max` |
+| `assistant-messages` | log | The transcript; focusable, `aria-live="polite"` |
+| `assistant-msg-you` / `assistant-msg-traceo` | container (repeated) | One message |
+| `assistant-cite` | chip (repeated) | A row the answer was built from |
+| `assistant-suggestion` | button (repeated) | A follow-up the answer offered |
+| `assistant-input` | input | The question |
+| `assistant-send` | button | Sends it |
+
 ## /projects/[id]/requirements — `frontend/app/projects/[id]/requirements/page.tsx`
 
 | data-testid | Element | Purpose |

@@ -22,6 +22,7 @@ import {
   stateTone,
 } from "@/components/ui";
 import { useProject } from "@/lib/project-context";
+import ProjectAssistant from "@/components/project-assistant";
 import { TEST_TYPES, projectTestTypes, type TestType } from "@/lib/test-types";
 import { TestTypePicker } from "@/components/test-type-picker";
 
@@ -769,6 +770,8 @@ export default function ProjectDashboardPage() {
           <Callout testId="dashboard-loop-callout">{L.loop}</Callout>
         </>
       )}
+      {/* Answers from this project's rows; shut until a run has completed. */}
+      <ProjectAssistant projectId={id} />
     </div>
   );
 }
