@@ -345,6 +345,18 @@ export class TraceoScene {
   private markers: Marker[] = [];
   private verdicts: THREE.Sprite[] = [];
   private particles!: THREE.Points;
+  private bug!: THREE.Group;
+  private bugLegs: THREE.Object3D[] = [];
+  private bugState = {
+    pos: new THREE.Vector3(-4.5, -2.2, 1.25),
+    heading: 0,
+    speed: 0.55,
+    target: new THREE.Vector3(3, 1.5, 1.25),
+    pause: 0,
+    gait: 0,
+    startled: 0,
+    squashed: 0,
+  };
   private scanGlow!: THREE.Sprite;
   private scanLight!: THREE.PointLight;
   private burstPool: { pts: THREE.Points; life: number }[] = [];
@@ -403,6 +415,7 @@ export class TraceoScene {
     this.buildLights();
     this.buildPage();
     this.buildParticles();
+    this.buildBug();
     this.buildScan();
     this.buildMarkers();
 
@@ -498,6 +511,99 @@ export class TraceoScene {
     ].join(";");
     this.labelLayer.appendChild(el);
     this.labels.push({ el, pos, shown: 0, onlyStage });
+  }
+
+  /**
+   * A bug, crawling about behind everything.
+   *
+   * The joke earns its place: this is a product that finds bugs, and one is
+   * loose in its own shop window. It keeps to the background plane so it never
+   * competes with the copy, it scurries when the cursor comes near, and it can
+   * be squashed — which is the same gesture as fixing a defect, and the same
+   * burst of particles.
+   *
+   * Built from primitives rather than a model file: a loaded mesh would be a
+   * network request and a loader on a page whose whole point is that it costs
+   * one dynamic import.
+   */
+  private buildBug() {
+    const g = new THREE.Group();
+    // Lit from within rather than lit by the scene: it walks the background
+    // plane, well behind the key light, and a body that only reflects would be
+    // a dark shape on a dark ground — which is to say invisible.
+    const shell = new THREE.MeshStandardMaterial({
+      color: 0x39405c,
+      roughness: 0.38,
+      metalness: 0.3,
+      emissive: new THREE.Color(0xc6425a),
+      emissiveIntensity: 0.85,
+    });
+    const limb = new THREE.MeshStandardMaterial({
+      color: 0x1b2236,
+      roughness: 0.6,
+      emissive: new THREE.Color(0x7a2436),
+      emissiveIntensity: 0.5,
+    });
+
+    // Forward is +Y: the bug lies in the background plane facing where it walks.
+    const abdomen = new THREE.Mesh(new THREE.SphereGeometry(0.13, 14, 12), shell);
+    abdomen.scale.set(0.85, 1.25, 0.7);
+    abdomen.position.y = -0.1;
+    const thorax = new THREE.Mesh(new THREE.SphereGeometry(0.095, 14, 12), shell);
+    thorax.scale.set(0.95, 1, 0.75);
+    thorax.position.y = 0.09;
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.062, 12, 10), shell);
+    head.position.y = 0.19;
+    g.add(abdomen, thorax, head);
+
+    // A seam down the back, so it reads as a beetle rather than a pebble.
+    const seam = new THREE.Mesh(
+      new THREE.BoxGeometry(0.012, 0.22, 0.01),
+      new THREE.MeshBasicMaterial({ color: 0x2a3350 }),
+    );
+    seam.position.set(0, -0.09, 0.09);
+    g.add(seam);
+
+    const legGeom = new THREE.CylinderGeometry(0.012, 0.006, 0.16, 5);
+    for (let side = -1; side <= 1; side += 2) {
+      for (let i = 0; i < 3; i++) {
+        // Each leg is a pivot at the body with the shin hung off it, so the
+        // walk cycle is one rotation rather than six positions to keep in sync.
+        const pivot = new THREE.Object3D();
+        pivot.position.set(side * 0.07, 0.12 - i * 0.11, 0);
+        const leg = new THREE.Mesh(legGeom, limb);
+        leg.position.set(side * 0.075, -0.01, -0.015);
+        leg.rotation.z = side * 0.82;
+        pivot.add(leg);
+        pivot.userData.side = side;
+        pivot.userData.index = i;
+        g.add(pivot);
+        this.bugLegs.push(pivot);
+      }
+    }
+
+    for (let side = -1; side <= 1; side += 2) {
+      const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.003, 0.115, 4), limb);
+      ant.position.set(side * 0.032, 0.245, 0);
+      ant.rotation.z = side * -0.42;
+      g.add(ant);
+    }
+
+    // Big enough to be a bug rather than a speck, small enough to stay
+    // background — it is a joke in the corner of the eye, not a mascot.
+    // Clicking a beetle made of eight small primitives is a game of darts, so
+    // it carries one invisible sphere that is the actual target.
+    const hit = new THREE.Mesh(
+      new THREE.SphereGeometry(0.42, 10, 8),
+      new THREE.MeshBasicMaterial({ visible: false }),
+    );
+    hit.position.y = 0.02;
+    g.add(hit);
+
+    g.scale.setScalar(1.15);
+    g.position.copy(this.bugState.pos);
+    this.bug = g;
+    this.scene.add(g);
   }
 
   private buildParticles() {
@@ -704,7 +810,14 @@ export class TraceoScene {
     const wasDrag = this.dragMoved > 6;
     this.dragging = false;
     this.renderer.domElement.releasePointerCapture?.(e.pointerId);
-    if (!wasDrag) this.tryFixAtPointer();
+    if (wasDrag) return;
+    // The bug is a target in its own right, at every stage — it is loose in the
+    // background, not part of the act being explained.
+    if (this.bugUnderPointer()) {
+      this.squashBug();
+      return;
+    }
+    this.tryFixAtPointer();
   };
 
   private onPointerLeave = () => {
@@ -871,6 +984,7 @@ export class TraceoScene {
     this.updateChips(dt);
     this.updateMarkers(dt, t);
     this.updateVerdicts(dt);
+    this.updateBug(dt, t, reduce);
     this.updateBursts(dt);
     if (!reduce) this.updateParticles(t);
 
@@ -1055,9 +1169,11 @@ export class TraceoScene {
         }
       }
     }
-    if (anyHover !== this.hovering) {
-      this.hovering = anyHover;
-      this.renderer.domElement.style.cursor = anyHover ? "pointer" : "grab";
+    const overBug = !this.dragging && this.bugUnderPointer();
+    const wantPointer = anyHover || overBug;
+    if (wantPointer !== this.hovering) {
+      this.hovering = wantPointer;
+      this.renderer.domElement.style.cursor = wantPointer ? "pointer" : "grab";
     }
 
     for (const m of this.markers) {
@@ -1094,6 +1210,122 @@ export class TraceoScene {
       const target = want ? 0.3 : 0.001;
       s.scale.setScalar(damp(s.scale.x, target, 7, dt));
     }
+  }
+
+  /** Where the bug is allowed to wander — behind everything, and off to the sides. */
+  // In FRONT of the window, not behind it. Behind, the model occludes the bug
+  // across most of the frame and the joke is invisible; in front it reads as
+  // something crawling on the glass. It is still behind every word on the page,
+  // because the copy is HTML laid over the canvas.
+  private static BUG_BOUNDS = { x: 6.4, yTop: 3.2, yBottom: -3.2, z: 1.25 };
+
+  private updateBug(dt: number, t: number, reduce: boolean) {
+    const b = this.bugState;
+    const B = TraceoScene.BUG_BOUNDS;
+
+    // Reduced motion: it stays, it does not crawl. A small thing wandering
+    // across the field of view is close to the definition of what that setting
+    // is asking to be spared, so the bug is left parked — still there, still
+    // squashable, just not moving.
+    if (reduce) {
+      this.bug.position.copy(b.pos);
+      this.bug.rotation.z = b.heading;
+      for (const pivot of this.bugLegs) {
+        pivot.rotation.z = 0;
+        pivot.rotation.x = 0;
+      }
+      return;
+    }
+
+    if (b.squashed > 0) {
+      // Squashed: gone for a moment, then back in from an edge. A bug that
+      // never comes back would make the joke a one-shot, and the page is
+      // scrolled through more than once.
+      b.squashed -= dt;
+      if (b.squashed <= 0) {
+        b.pos.set(Math.random() < 0.5 ? -B.x : B.x, B.yBottom + Math.random() * 2, B.z);
+        b.target.set((Math.random() * 2 - 1) * B.x * 0.7, B.yBottom + Math.random() * 3, B.z);
+        this.bug.visible = true;
+        this.bug.scale.setScalar(1);
+      }
+      return;
+    }
+
+    const toTarget = b.target.clone().sub(b.pos);
+    const dist = toTarget.length();
+
+    if (b.pause > 0 && !reduce) {
+      // Bugs do not cross a room at a constant speed; they stop, think about
+      // it, and go again. The pause is what stops it reading as a cursor.
+      b.pause -= dt;
+    } else if (dist < 0.25) {
+      b.pause = 0.4 + Math.random() * 1.6;
+      b.target.set(
+        (Math.random() * 2 - 1) * B.x * 0.85,
+        B.yBottom + Math.random() * (B.yTop - B.yBottom),
+        B.z,
+      );
+    } else {
+      const step = Math.min(dist, b.speed * (1 + b.startled * 2.4) * dt);
+      b.pos.addScaledVector(toTarget.normalize(), step);
+      b.gait += step * 13;
+    }
+
+    // The cursor is a threat. The scan point is in the world group's local
+    // space and the bug is not, so it is brought across before comparing.
+    if (this.pointerActive && !reduce) {
+      const cursor = this.scanPoint.clone().applyMatrix4(this.world.matrixWorld);
+      const away = new THREE.Vector2(b.pos.x - cursor.x, b.pos.y - cursor.y);
+      const near = away.length();
+      // Close enough to be noticed, near enough that it can still be caught.
+      // At the old radius it bolted before the cursor could ever reach it, so
+      // the joke had a punchline nobody could get to.
+      if (near < 0.62) {
+        b.startled = 1;
+        away.normalize().multiplyScalar(2.6);
+        b.target.set(
+          THREE.MathUtils.clamp(b.pos.x + away.x, -B.x, B.x),
+          THREE.MathUtils.clamp(b.pos.y + away.y, B.yBottom, B.yTop),
+          B.z,
+        );
+        b.pause = 0;
+      }
+    }
+    b.startled = damp(b.startled, 0, 1.2, dt);
+
+    // Face the way it walks, and lean into a turn rather than snapping round.
+    const wanted = Math.atan2(b.target.y - b.pos.y, b.target.x - b.pos.x) - Math.PI / 2;
+    const delta = ((wanted - b.heading + Math.PI) % (Math.PI * 2)) - Math.PI;
+    b.heading += delta * (1 - Math.exp(-6 * dt));
+
+    this.bug.position.copy(b.pos);
+    this.bug.rotation.z = b.heading;
+
+    // Alternating tripod: legs 0 and 2 on one side swing with leg 1 on the
+    // other, which is how six legs stay standing on three of them.
+    const walking = b.pause <= 0 && dist >= 0.25;
+    for (const pivot of this.bugLegs) {
+      const side = pivot.userData.side as number;
+      const index = pivot.userData.index as number;
+      const tripod = (index + (side > 0 ? 1 : 0)) % 2;
+      const swing = reduce || !walking ? 0 : Math.sin(b.gait + tripod * Math.PI) * 0.42;
+      pivot.rotation.z = swing;
+      pivot.rotation.x = reduce || !walking ? 0 : Math.abs(Math.cos(b.gait + tripod * Math.PI)) * 0.2;
+    }
+    void t;
+  }
+
+  /** True when the pointer is over the bug — it is a click target of its own. */
+  private bugUnderPointer(): boolean {
+    if (!this.bug?.visible || this.bugState.squashed > 0) return false;
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+    return this.raycaster.intersectObject(this.bug, true).length > 0;
+  }
+
+  private squashBug() {
+    this.bugState.squashed = 1.6;
+    this.bug.visible = false;
+    this.burst(this.bug.position.clone().applyMatrix4(this.world.matrixWorld.clone().invert()), 0xc6425a);
   }
 
   private updateBursts(dt: number) {
@@ -1157,6 +1389,7 @@ export class TraceoScene {
       if (Array.isArray(mat)) mat.forEach((m: THREE.Material) => m.dispose());
       else if (mat) (mat as THREE.Material).dispose();
     });
+    this.scene.remove(this.bug);
     for (const tex of this.textures) tex.dispose();
     this.renderer.dispose();
     c.remove();
