@@ -42,21 +42,29 @@ export type SceneOptions = {
  * read CSS custom properties. Kept in sync with globals.css by hand; these are
  * the design's blue/violet/pink spectrum over a deep slate ground.
  * ------------------------------------------------------------------------- */
+/*
+ * Light mode. Not the dark palette inverted — a scene lit for a dark ground and
+ * then flipped comes out chalky, because everything that read as "glowing" on
+ * black reads as "washed out" on paper. So the panels are near-white surfaces
+ * that get their form from shading rather than from emission, the accents keep
+ * their saturation, and anything that was additive is now blended normally:
+ * additive over white is invisible by definition.
+ */
 const C = {
-  frame: 0x121a2e,
-  bar: 0x1a2340,
-  block: 0x223056,
-  line: 0x2c3c68,
-  field: 0x18213c,
-  button: 0x3d6bf5,
-  edge: 0x4c6ef5,
-  edgeSoft: 0x2e3f6b,
-  blue: 0x3d6bf5,
-  violet: 0x7a5ae6,
-  pink: 0xd9479e,
-  ok: 0x22c55e,
-  err: 0xf43f5e,
-  scan: 0x7f9cff,
+  frame: 0xeff2f8,
+  bar: 0xd8e0ef,
+  block: 0xc9d2e8,
+  line: 0xb8c2da,
+  field: 0xe8eef8,
+  button: 0x2f55e0,
+  edge: 0x9fadd0,
+  edgeSoft: 0xb9c3dc,
+  blue: 0x2f55e0,
+  violet: 0x6d3fd4,
+  pink: 0xc02a86,
+  ok: 0x1f7a4d,
+  err: 0xc0304a,
+  scan: 0x4f7bf0,
 };
 
 /* ---------------------------------------------------------------------------
@@ -93,16 +101,16 @@ const ELEMENTS: ElDef[] = [
   { id: "dot1", kind: "dot", x: -3.14, y: 1.98, w: 0.12, h: 0.12, color: 0xf43f5e },
   { id: "dot2", kind: "dot", x: -2.92, y: 1.98, w: 0.12, h: 0.12, color: 0xf59e0b },
   { id: "dot3", kind: "dot", x: -2.7, y: 1.98, w: 0.12, h: 0.12, color: 0x22c55e },
-  { id: "urlbar", kind: "field", x: 0.4, y: 1.98, w: 4.4, h: 0.26, color: 0x141c33 },
+  { id: "urlbar", kind: "field", x: 0.4, y: 1.98, w: 4.4, h: 0.26, color: 0xeef1f8 },
   { id: "lock", kind: "dot", x: -1.68, y: 1.98, w: 0.1, h: 0.1, color: 0x3fa37a },
-  { id: "avatar", kind: "dot", x: 3.24, y: 1.98, w: 0.2, h: 0.2, color: 0x2c3c68 },
+  { id: "avatar", kind: "dot", x: 3.24, y: 1.98, w: 0.2, h: 0.2, color: 0xc2cbe1 },
 
   // --- the app's own navigation, inside the page ---
-  { id: "logo", kind: "block", x: -3.28, y: 1.56, w: 0.2, h: 0.2, color: 0x3d6bf5 },
-  { id: "nav1", kind: "line", x: -2.85, y: 1.56, w: 0.42, h: 0.1, color: 0x2c3c68 },
-  { id: "nav2", kind: "line", x: -2.3, y: 1.56, w: 0.34, h: 0.1, color: 0x2c3c68 },
-  { id: "nav3", kind: "line", x: -1.83, y: 1.56, w: 0.38, h: 0.1, color: 0x2c3c68 },
-  { id: "navrule", kind: "line", x: 0, y: 1.42, w: 6.6, h: 0.02, color: 0x1d2740 },
+  { id: "logo", kind: "block", x: -3.28, y: 1.56, w: 0.2, h: 0.2, color: 0x2f55e0 },
+  { id: "nav1", kind: "line", x: -2.85, y: 1.56, w: 0.42, h: 0.1, color: 0xc2cbe1 },
+  { id: "nav2", kind: "line", x: -2.3, y: 1.56, w: 0.34, h: 0.1, color: 0xc2cbe1 },
+  { id: "nav3", kind: "line", x: -1.83, y: 1.56, w: 0.38, h: 0.1, color: 0xc2cbe1 },
+  { id: "navrule", kind: "line", x: 0, y: 1.42, w: 6.6, h: 0.02, color: 0xdce1ee },
 
   // --- left column: content ---
   {
@@ -112,11 +120,11 @@ const ELEMENTS: ElDef[] = [
   { id: "p1", kind: "line", x: -2.05, y: 0.72, w: 2.2, h: 0.11, color: C.line },
   { id: "p2", kind: "line", x: -2.25, y: 0.48, w: 1.8, h: 0.11, color: C.line },
   {
-    id: "hero", kind: "block", x: -1.85, y: -0.5, w: 2.6, h: 1.2, color: 0x1d2a4c,
+    id: "hero", kind: "block", x: -1.85, y: -0.5, w: 2.6, h: 1.2, color: 0xccd5e8,
     label: "<img> 2.4 MB · no width/height",
   },
   {
-    id: "link", kind: "chip", x: -2.72, y: -1.5, w: 0.86, h: 0.3, color: 0x1c274a,
+    id: "link", kind: "chip", x: -2.72, y: -1.5, w: 0.86, h: 0.3, color: 0xdfe5f2,
     label: '<a href="/pricing">',
     cite: "link target resolves",
     bug: {
@@ -128,10 +136,10 @@ const ELEMENTS: ElDef[] = [
       ],
     },
   },
-  { id: "link2", kind: "chip", x: -1.72, y: -1.5, w: 0.86, h: 0.3, color: 0x1c274a, label: '<a href="/docs">' },
+  { id: "link2", kind: "chip", x: -1.72, y: -1.5, w: 0.86, h: 0.3, color: 0xdfe5f2, label: '<a href="/docs">' },
 
   // --- right column: the form ---
-  { id: "card", kind: "bar", x: FIELD_X, y: -0.2, w: 3.0, h: 3.5, z: -0.06, color: 0x16203a },
+  { id: "card", kind: "bar", x: FIELD_X, y: -0.2, w: 3.0, h: 3.5, z: -0.06, color: 0xe4e9f4 },
   {
     id: "email", kind: "field", x: FIELD_X, y: 1.02, w: 2.5, h: 0.38, color: C.field,
     label: 'input[type="email"] · required',
@@ -162,29 +170,29 @@ const ELEMENTS: ElDef[] = [
     cite: "selection is accepted",
   },
   {
-    id: "terms", kind: "chip", x: 0.86, y: -1.24, w: 0.28, h: 0.28, color: 0x1c274a,
+    id: "terms", kind: "chip", x: 0.86, y: -1.24, w: 0.28, h: 0.28, color: 0xdfe5f2,
     label: 'input[type="checkbox"] · required',
     cite: "submit is gated on the checkbox",
   },
   { id: "termsLabel", kind: "line", x: 1.75, y: -1.24, w: 1.3, h: 0.12, color: C.line },
 
   // --- the small print that makes a form look like a form ---
-  { id: "cardTitle", kind: "line", x: 0.86, y: 1.44, w: 1.2, h: 0.14, color: 0x3b4d7d },
-  { id: "labEmail", kind: "line", x: 0.76, y: 1.3, w: 0.5, h: 0.07, color: 0x27345a },
-  { id: "labName", kind: "line", x: 0.79, y: 0.72, w: 0.56, h: 0.07, color: 0x27345a },
-  { id: "labPin", kind: "line", x: 0.72, y: 0.14, w: 0.42, h: 0.07, color: 0x27345a },
-  { id: "labCountry", kind: "line", x: 0.8, y: -0.44, w: 0.58, h: 0.07, color: 0x27345a },
-  { id: "phEmail", kind: "line", x: 0.86, y: 1.02, w: 0.86, h: 0.06, color: 0x223058 },
-  { id: "phName", kind: "line", x: 0.82, y: 0.44, w: 0.78, h: 0.06, color: 0x223058 },
-  { id: "phPin", kind: "line", x: 0.74, y: -0.14, w: 0.44, h: 0.06, color: 0x223058 },
-  { id: "chevron", kind: "dot", x: 2.86, y: -0.72, w: 0.12, h: 0.12, color: 0x3b4d7d },
+  { id: "cardTitle", kind: "line", x: 0.86, y: 1.44, w: 1.2, h: 0.14, color: 0xaab4cf },
+  { id: "labEmail", kind: "line", x: 0.76, y: 1.3, w: 0.5, h: 0.07, color: 0xcdd5e6 },
+  { id: "labName", kind: "line", x: 0.79, y: 0.72, w: 0.56, h: 0.07, color: 0xcdd5e6 },
+  { id: "labPin", kind: "line", x: 0.72, y: 0.14, w: 0.42, h: 0.07, color: 0xcdd5e6 },
+  { id: "labCountry", kind: "line", x: 0.8, y: -0.44, w: 0.58, h: 0.07, color: 0xcdd5e6 },
+  { id: "phEmail", kind: "line", x: 0.86, y: 1.02, w: 0.86, h: 0.06, color: 0xd8dfee },
+  { id: "phName", kind: "line", x: 0.82, y: 0.44, w: 0.78, h: 0.06, color: 0xd8dfee },
+  { id: "phPin", kind: "line", x: 0.74, y: -0.14, w: 0.44, h: 0.06, color: 0xd8dfee },
+  { id: "chevron", kind: "dot", x: 2.86, y: -0.72, w: 0.12, h: 0.12, color: 0xaab4cf },
 
   // --- page furniture ---
-  { id: "footrule", kind: "line", x: 0, y: -1.98, w: 6.6, h: 0.02, color: 0x1d2740 },
-  { id: "foot1", kind: "line", x: -2.95, y: -2.14, w: 0.5, h: 0.08, color: 0x25314f },
-  { id: "foot2", kind: "line", x: -2.28, y: -2.14, w: 0.42, h: 0.08, color: 0x25314f },
-  { id: "foot3", kind: "line", x: -1.7, y: -2.14, w: 0.36, h: 0.08, color: 0x25314f },
-  { id: "scrollbar", kind: "line", x: 3.46, y: 0.9, w: 0.07, h: 1.5, color: 0x2b3a63 },
+  { id: "footrule", kind: "line", x: 0, y: -1.98, w: 6.6, h: 0.02, color: 0xdce1ee },
+  { id: "foot1", kind: "line", x: -2.95, y: -2.14, w: 0.5, h: 0.08, color: 0xd2d9e8 },
+  { id: "foot2", kind: "line", x: -2.28, y: -2.14, w: 0.42, h: 0.08, color: 0xd2d9e8 },
+  { id: "foot3", kind: "line", x: -1.7, y: -2.14, w: 0.36, h: 0.08, color: 0xd2d9e8 },
+  { id: "scrollbar", kind: "line", x: 3.46, y: 0.9, w: 0.07, h: 1.5, color: 0xb6c0d8 },
   {
     id: "submit", kind: "button", x: 1.3, y: -1.82, w: 1.5, h: 0.44, color: C.button,
     label: '<button type="submit">',
@@ -230,7 +238,7 @@ const FRAMES: Record<Stage, Frame> = {
   // types into are HTML, because a password field has to BE a password field —
   // focusable, autofillable and readable by a screen reader, none of which a
   // painted rectangle can be.
-  5: { z: 6.6, focus: [1.75, -0.1], bias: 0.4, scale: 0.9 },
+  5: { z: 7.4, focus: [1.75, -0.1], bias: 0.4, scale: 0.86 },
 };
 
 /* --- small geometry helpers ------------------------------------------------ */
@@ -283,9 +291,9 @@ function glowTexture(): THREE.CanvasTexture {
   cv.width = cv.height = size;
   const ctx = cv.getContext("2d")!;
   const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  g.addColorStop(0, "rgba(150,180,255,0.95)");
-  g.addColorStop(0.35, "rgba(90,130,255,0.35)");
-  g.addColorStop(1, "rgba(60,100,255,0)");
+  g.addColorStop(0, "rgba(79,123,240,0.34)");
+  g.addColorStop(0.35, "rgba(79,123,240,0.16)");
+  g.addColorStop(1, "rgba(79,123,240,0)");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, size, size);
   const tex = new THREE.CanvasTexture(cv);
@@ -398,7 +406,7 @@ export class TraceoScene {
     this.renderer.setSize(w, h);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.15;
+    this.renderer.toneMappingExposure = 1.0;
     const canvas = this.renderer.domElement;
     canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:pan-y";
     this.host.appendChild(canvas);
@@ -410,7 +418,7 @@ export class TraceoScene {
     this.camera = new THREE.PerspectiveCamera(42, w / h, 0.1, 100);
     this.camera.position.copy(this.camPos);
     this.scene.add(this.world);
-    this.scene.fog = new THREE.Fog(0x080c18, 12, 26);
+    this.scene.fog = new THREE.Fog(0xf4f6fb, 14, 30);
 
     this.buildLights();
     this.buildPage();
@@ -426,16 +434,16 @@ export class TraceoScene {
   }
 
   private buildLights() {
-    this.scene.add(new THREE.HemisphereLight(0x8fa8ff, 0x0a0f1e, 1.05));
-    const key = new THREE.DirectionalLight(0xdce6ff, 1.5);
+    // Bright ambient with a soft key: on paper the shapes are read from their
+    // shadows, so the fill has to be high and the key gentle or every panel
+    // flattens into the background it sits on.
+    this.scene.add(new THREE.HemisphereLight(0xffffff, 0xc3cbdd, 2.4));
+    const key = new THREE.DirectionalLight(0xffffff, 1.15);
     key.position.set(3.5, 5, 7);
     this.scene.add(key);
-    const rimV = new THREE.PointLight(C.violet, 55, 26);
-    rimV.position.set(-6.5, 2.5, 3.5);
-    this.scene.add(rimV);
-    const rimP = new THREE.PointLight(C.pink, 26, 22);
-    rimP.position.set(6.5, -3, 2.5);
-    this.scene.add(rimP);
+    const fill = new THREE.DirectionalLight(0xdfe6ff, 0.5);
+    fill.position.set(-5, -2, 4);
+    this.scene.add(fill);
   }
 
   private buildPage() {
@@ -457,10 +465,11 @@ export class TraceoScene {
       const isAccent = def.kind === "button";
       const mat = new THREE.MeshStandardMaterial({
         color: def.color ?? C.block,
-        roughness: isAccent ? 0.3 : 0.62,
+        roughness: isAccent ? 0.42 : 0.72,
         metalness: isAccent ? 0.15 : 0.08,
+        // Almost no emission: on paper a glowing panel just loses its edges.
         emissive: new THREE.Color(isAccent ? C.button : C.edgeSoft),
-        emissiveIntensity: isAccent ? 0.5 : 0.12,
+        emissiveIntensity: isAccent ? 0.12 : 0.02,
       });
 
       const mesh = new THREE.Mesh(geom, mat);
@@ -474,9 +483,9 @@ export class TraceoScene {
       const pts = shape.getPoints(28).map((p) => new THREE.Vector3(p.x, p.y, depth / 2 + 0.004));
       const lineGeom = new THREE.BufferGeometry().setFromPoints(pts);
       const lineMat = new THREE.LineBasicMaterial({
-        color: isAccent ? 0xa9c0ff : C.edge,
+        color: isAccent ? 0x1f3fae : C.edge,
         transparent: true,
-        opacity: isAccent ? 0.7 : 0.34,
+        opacity: isAccent ? 0.55 : 0.65,
       });
       mesh.add(new THREE.LineLoop(lineGeom, lineMat));
 
@@ -501,10 +510,10 @@ export class TraceoScene {
       "border-radius:7px",
       "font:500 11px/1.35 'JetBrains Mono',ui-monospace,monospace",
       "letter-spacing:0.01em",
-      "color:#dbe6ff",
-      "background:rgba(12,18,36,0.86)",
-      "border:1px solid rgba(108,142,255,0.45)",
-      "box-shadow:0 6px 22px rgba(0,0,0,0.45)",
+      "color:#1d2434",
+      "background:rgba(255,255,255,0.94)",
+      "border:1px solid rgba(38,62,140,0.3)",
+      "box-shadow:0 6px 22px rgba(26,34,60,0.14)",
       "white-space:nowrap",
       "opacity:0",
       "will-change:transform,opacity",
@@ -528,22 +537,17 @@ export class TraceoScene {
    */
   private buildBug() {
     const g = new THREE.Group();
-    // Lit from within rather than lit by the scene: it walks the background
-    // plane, well behind the key light, and a body that only reflects would be
-    // a dark shape on a dark ground — which is to say invisible.
+    // On paper it needs no glow: a dark carapace is what reads against a light
+    // ground, and the deep red keeps it a bug rather than a smudge. The dark
+    // version of this page had it lit from within for the opposite reason.
     const shell = new THREE.MeshStandardMaterial({
-      color: 0x39405c,
-      roughness: 0.38,
-      metalness: 0.3,
-      emissive: new THREE.Color(0xc6425a),
-      emissiveIntensity: 0.85,
+      color: 0x7d2033,
+      roughness: 0.34,
+      metalness: 0.22,
+      emissive: new THREE.Color(0x3a0d16),
+      emissiveIntensity: 0.1,
     });
-    const limb = new THREE.MeshStandardMaterial({
-      color: 0x1b2236,
-      roughness: 0.6,
-      emissive: new THREE.Color(0x7a2436),
-      emissiveIntensity: 0.5,
-    });
+    const limb = new THREE.MeshStandardMaterial({ color: 0x35141c, roughness: 0.6 });
 
     // Forward is +Y: the bug lies in the background plane facing where it walks.
     const abdomen = new THREE.Mesh(new THREE.SphereGeometry(0.13, 14, 12), shell);
@@ -559,7 +563,7 @@ export class TraceoScene {
     // A seam down the back, so it reads as a beetle rather than a pebble.
     const seam = new THREE.Mesh(
       new THREE.BoxGeometry(0.012, 0.22, 0.01),
-      new THREE.MeshBasicMaterial({ color: 0x2a3350 }),
+      new THREE.MeshBasicMaterial({ color: 0x4a1522 }),
     );
     seam.position.set(0, -0.09, 0.09);
     g.add(seam);
@@ -611,8 +615,8 @@ export class TraceoScene {
     const pos = new Float32Array(N * 3);
     const col = new Float32Array(N * 3);
     const seed = new Float32Array(N);
-    const c1 = new THREE.Color(C.blue);
-    const c2 = new THREE.Color(C.violet);
+    const c1 = new THREE.Color(0x7d8db8);
+    const c2 = new THREE.Color(0xa08fd0);
     for (let i = 0; i < N; i++) {
       const r = 5.5 + Math.random() * 7;
       const a = Math.random() * Math.PI * 2;
@@ -631,12 +635,14 @@ export class TraceoScene {
     g.userData.seed = seed;
     g.userData.base = pos.slice();
     const m = new THREE.PointsMaterial({
-      size: 0.045,
+      size: 0.04,
       vertexColors: true,
       transparent: true,
-      opacity: 0.75,
+      opacity: 0.34,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      // Normal blending, deliberately: additive light on a light ground adds
+      // nothing that can be seen.
+      blending: THREE.NormalBlending,
       sizeAttenuation: true,
     });
     this.particles = new THREE.Points(g, m);
@@ -649,16 +655,16 @@ export class TraceoScene {
     const mat = new THREE.SpriteMaterial({
       map: tex,
       transparent: true,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending,
       depthWrite: false,
-      opacity: 0.9,
+      opacity: 0.95,
     });
     this.scanGlow = new THREE.Sprite(mat);
     this.scanGlow.scale.setScalar(2.6);
     this.scanGlow.position.set(0, 0, 0.5);
     this.world.add(this.scanGlow);
 
-    this.scanLight = new THREE.PointLight(C.scan, 12, 4.5, 1.8);
+    this.scanLight = new THREE.PointLight(C.scan, 4, 4.5, 1.8);
     this.scanLight.position.set(0, 0, 1.1);
     this.world.add(this.scanLight);
   }
@@ -776,7 +782,7 @@ export class TraceoScene {
       g,
       new THREE.PointsMaterial({
         color: hex, size: 0.07, transparent: true, opacity: 1,
-        depthWrite: false, blending: THREE.AdditiveBlending,
+        depthWrite: false, blending: THREE.NormalBlending,
       })
     );
     this.world.add(pts);
@@ -1046,7 +1052,7 @@ export class TraceoScene {
       const d = mesh.position.distanceTo(this.scanPoint);
       const near = THREE.MathUtils.clamp(1 - d / 1.9, 0, 1);
       const base = mesh.userData.baseEmissive as number;
-      mat.emissiveIntensity = damp(mat.emissiveIntensity, base + near * 0.85, 9, dt);
+      mat.emissiveIntensity = damp(mat.emissiveIntensity, base + near * 0.22, 9, dt);
     }
   }
 
