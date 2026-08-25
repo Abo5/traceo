@@ -33,6 +33,33 @@ form or link to one may appear anywhere in the shell. The HTTP endpoints
 `/auth/login` and `/auth/register` are untouched — the suite composes its role
 sessions from them.
 
+## /landing — `frontend/app/landing/page.tsx`
+
+The public page. It renders with no shell and no session (see
+`PUBLIC_ROUTES` in `components/providers.tsx`), so nothing in the app-shell
+table applies to it.
+
+| data-testid | Element | Purpose |
+|---|---|---|
+| `landing-root` | main | Landing page root |
+| `landing-hero` | section | Hero; `data-stage="0"` |
+| `landing-canvas` | container | WebGL scene host; `data-ready="1"` once the scene is constructed |
+| `landing-hint` | paragraph | Interaction hint under the calls to action |
+| `landing-cta-app` | link | Into the application (`/projects`) |
+| `landing-cta-scroll` | link | Jumps to the first act |
+| `landing-act-1` … `landing-act-4` | section | One per act; `data-stage` carries 1–4 |
+| `landing-bug-bar` | container | Defects outstanding, with the repair control |
+| `landing-fix-all` | Button | Resolves every remaining defect |
+| `landing-fix-prompt` | container | The brief a repaired defect leaves behind |
+| `landing-copy-prompt` | Button | Copies that brief |
+| `landing-features` | section | The light half |
+| `landing-signin` | section | Sign-in at the foot of the page; `data-stage="5"`, the model is its frame |
+| `landing-signin-form` | form | Real credentials form against `POST /auth/login` |
+| `landing-signin-email` | input | `type=email` |
+| `landing-signin-password` | input | `type=password`, `autocomplete=current-password` |
+| `landing-signin-submit` | button | Disabled while the request is in flight |
+| `landing-signin-error` | alert | The server's own refusal, shown verbatim |
+
 ## /projects — `frontend/app/projects/page.tsx`
 
 | data-testid | Element | Purpose |

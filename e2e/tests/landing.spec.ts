@@ -100,6 +100,44 @@ test.describe('landing page — the fix loop', () => {
   });
 });
 
+test.describe('landing page — sign in', () => {
+  test.beforeEach(() => {
+    test.setTimeout(60_000);
+  });
+
+  test('the model frames a real credentials form, not a picture of one', async ({ page }) => {
+    const landing = new LandingPage(page);
+
+    await landing.goto();
+    await landing.waitForScene();
+    await landing.signIn.scrollIntoViewIfNeeded();
+
+    // The frame is WebGL; the inputs are not. A password field has to be a
+    // password field or the browser cannot mask it, autofill it, or offer to
+    // save it, and a screen reader cannot announce what it is.
+    await expect(landing.signInPassword).toHaveAttribute('type', 'password');
+    await expect(landing.signInPassword).toHaveAttribute('autocomplete', 'current-password');
+    await expect(landing.signInEmail).toHaveAttribute('type', 'email');
+  });
+
+  test('a refused sign-in says what the server said @negative', async ({ page }) => {
+    const landing = new LandingPage(page);
+
+    await landing.goto();
+    await landing.waitForScene();
+    await landing.signIn.scrollIntoViewIfNeeded();
+
+    await landing.signInWith('nobody@traceo.invalid', 'not-the-password');
+
+    // The server's own words. "Something went wrong" in front of a password
+    // field is the least useful sentence in software.
+    await expect(landing.signInError).toBeVisible({ timeout: 20_000 });
+    await expect(landing.signInError).toContainText(/invalid|incorrect|password/i);
+    // and it must not have let anyone through
+    await expect(page).toHaveURL(/\/landing/);
+  });
+});
+
 test.describe('landing page @a11y', () => {
   test.beforeEach(() => {
     test.setTimeout(60_000);

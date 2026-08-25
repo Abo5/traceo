@@ -56,6 +56,32 @@ export class LandingPage {
     return this.page.getByTestId('landing-cta-app');
   }
 
+  /**
+   * The sign-in at the foot of the page. The model is the frame around it, but
+   * these are real inputs against the real endpoint — a painted rectangle
+   * cannot be focused, autofilled, or read out by a screen reader.
+   */
+  get signIn(): Locator {
+    return this.page.getByTestId('landing-signin');
+  }
+
+  get signInEmail(): Locator {
+    return this.page.getByTestId('landing-signin-email');
+  }
+
+  get signInPassword(): Locator {
+    return this.page.getByTestId('landing-signin-password');
+  }
+
+  get signInSubmit(): Locator {
+    return this.page.getByTestId('landing-signin-submit');
+  }
+
+  /** Whatever the server said, shown verbatim rather than as "something went wrong". */
+  get signInError(): Locator {
+    return this.page.getByTestId('landing-signin-error');
+  }
+
   get features(): Locator {
     return this.page.getByTestId('landing-features');
   }
@@ -77,6 +103,12 @@ export class LandingPage {
 
   async openAct(n: 1 | 2 | 3 | 4): Promise<void> {
     await this.act(n).scrollIntoViewIfNeeded();
+  }
+
+  async signInWith(email: string, password: string): Promise<void> {
+    await this.signInEmail.fill(email);
+    await this.signInPassword.fill(password);
+    await this.signInSubmit.click();
   }
 
   async fixEveryDefect(): Promise<void> {

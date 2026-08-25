@@ -20,7 +20,7 @@
  */
 import * as THREE from "three";
 
-export type Stage = 0 | 1 | 2 | 3 | 4;
+export type Stage = 0 | 1 | 2 | 3 | 4 | 5;
 
 export type BugInfo = {
   id: string;
@@ -93,7 +93,16 @@ const ELEMENTS: ElDef[] = [
   { id: "dot1", kind: "dot", x: -3.14, y: 1.98, w: 0.12, h: 0.12, color: 0xf43f5e },
   { id: "dot2", kind: "dot", x: -2.92, y: 1.98, w: 0.12, h: 0.12, color: 0xf59e0b },
   { id: "dot3", kind: "dot", x: -2.7, y: 1.98, w: 0.12, h: 0.12, color: 0x22c55e },
-  { id: "urlbar", kind: "field", x: 0.3, y: 1.98, w: 4.6, h: 0.26, color: 0x141c33 },
+  { id: "urlbar", kind: "field", x: 0.4, y: 1.98, w: 4.4, h: 0.26, color: 0x141c33 },
+  { id: "lock", kind: "dot", x: -1.68, y: 1.98, w: 0.1, h: 0.1, color: 0x3fa37a },
+  { id: "avatar", kind: "dot", x: 3.24, y: 1.98, w: 0.2, h: 0.2, color: 0x2c3c68 },
+
+  // --- the app's own navigation, inside the page ---
+  { id: "logo", kind: "block", x: -3.28, y: 1.56, w: 0.2, h: 0.2, color: 0x3d6bf5 },
+  { id: "nav1", kind: "line", x: -2.85, y: 1.56, w: 0.42, h: 0.1, color: 0x2c3c68 },
+  { id: "nav2", kind: "line", x: -2.3, y: 1.56, w: 0.34, h: 0.1, color: 0x2c3c68 },
+  { id: "nav3", kind: "line", x: -1.83, y: 1.56, w: 0.38, h: 0.1, color: 0x2c3c68 },
+  { id: "navrule", kind: "line", x: 0, y: 1.42, w: 6.6, h: 0.02, color: 0x1d2740 },
 
   // --- left column: content ---
   {
@@ -158,6 +167,24 @@ const ELEMENTS: ElDef[] = [
     cite: "submit is gated on the checkbox",
   },
   { id: "termsLabel", kind: "line", x: 1.75, y: -1.24, w: 1.3, h: 0.12, color: C.line },
+
+  // --- the small print that makes a form look like a form ---
+  { id: "cardTitle", kind: "line", x: 0.86, y: 1.44, w: 1.2, h: 0.14, color: 0x3b4d7d },
+  { id: "labEmail", kind: "line", x: 0.76, y: 1.3, w: 0.5, h: 0.07, color: 0x27345a },
+  { id: "labName", kind: "line", x: 0.79, y: 0.72, w: 0.56, h: 0.07, color: 0x27345a },
+  { id: "labPin", kind: "line", x: 0.72, y: 0.14, w: 0.42, h: 0.07, color: 0x27345a },
+  { id: "labCountry", kind: "line", x: 0.8, y: -0.44, w: 0.58, h: 0.07, color: 0x27345a },
+  { id: "phEmail", kind: "line", x: 0.86, y: 1.02, w: 0.86, h: 0.06, color: 0x223058 },
+  { id: "phName", kind: "line", x: 0.82, y: 0.44, w: 0.78, h: 0.06, color: 0x223058 },
+  { id: "phPin", kind: "line", x: 0.74, y: -0.14, w: 0.44, h: 0.06, color: 0x223058 },
+  { id: "chevron", kind: "dot", x: 2.86, y: -0.72, w: 0.12, h: 0.12, color: 0x3b4d7d },
+
+  // --- page furniture ---
+  { id: "footrule", kind: "line", x: 0, y: -1.98, w: 6.6, h: 0.02, color: 0x1d2740 },
+  { id: "foot1", kind: "line", x: -2.95, y: -2.14, w: 0.5, h: 0.08, color: 0x25314f },
+  { id: "foot2", kind: "line", x: -2.28, y: -2.14, w: 0.42, h: 0.08, color: 0x25314f },
+  { id: "foot3", kind: "line", x: -1.7, y: -2.14, w: 0.36, h: 0.08, color: 0x25314f },
+  { id: "scrollbar", kind: "line", x: 3.46, y: 0.9, w: 0.07, h: 1.5, color: 0x2b3a63 },
   {
     id: "submit", kind: "button", x: 1.3, y: -1.82, w: 1.5, h: 0.44, color: C.button,
     label: '<button type="submit">',
@@ -198,6 +225,12 @@ const FRAMES: Record<Stage, Frame> = {
   2: { z: 11.5, focus: [-0.9, 0.1], bias: -0.355, scale: 0.68 },
   3: { z: 9.4, focus: [0.3, 0], bias: 0.371, scale: 0.8 },
   4: { z: 8.2, focus: [1.7, -0.25], bias: -0.22, scale: 0.78 },
+  // Sign-in: close on the form card, held to the RIGHT so the real credentials
+  // form has the left of the frame to itself. The window is the frame; the inputs a visitor actually
+  // types into are HTML, because a password field has to BE a password field —
+  // focusable, autofillable and readable by a screen reader, none of which a
+  // painted rectangle can be.
+  5: { z: 6.6, focus: [1.75, -0.1], bias: 0.4, scale: 0.9 },
 };
 
 /* --- small geometry helpers ------------------------------------------------ */
@@ -778,8 +811,9 @@ export class TraceoScene {
       }
     }
     for (const m of this.markers) {
-      if (stage >= 3 && !m.fixed) m.group.visible = true;
-      if (stage < 3) {
+      const showing = stage === 3 || stage === 4;
+      if (showing && !m.fixed) m.group.visible = true;
+      if (!showing) {
         m.group.visible = false;
         m.group.scale.setScalar(0.001);
       }
@@ -1053,7 +1087,7 @@ export class TraceoScene {
   }
 
   private updateVerdicts(dt: number) {
-    const want = this.stage >= 3 ? 1 : 0;
+    const want = this.stage === 3 || this.stage === 4 ? 1 : 0;
     for (const s of this.verdicts) {
       const mat = s.material as THREE.SpriteMaterial;
       mat.opacity = damp(mat.opacity, want, 5, dt);

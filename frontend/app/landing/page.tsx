@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { ApiError, login } from "@/lib/api";
 import Link from "next/link";
 import StageCanvas, { type CanvasHandle } from "@/components/landing/stage-canvas";
 import type { BugInfo, Stage } from "@/components/landing/scene";
@@ -57,6 +59,18 @@ const ACTS: { id: Stage; kicker: string; title: string; body: string; note?: str
   },
 ];
 
+const SIGN_IN = {
+  kicker: "Sign in",
+  title: "Your app is already in there. Come and get it.",
+  body:
+    "The window beside you is the shape of the thing Traceo works on. Sign in and it stops being a demonstration.",
+  email: "Email",
+  password: "Password",
+  submit: "Sign in",
+  working: "Signing in…",
+  hint: "No account? The sign-up form lives inside the app.",
+};
+
 const FEATURES = [
   {
     k: "Grounded",
@@ -87,6 +101,34 @@ export default function LandingPage() {
   const [copied, setCopied] = useState(false);
   const canvas = useRef<CanvasHandle | null>(null);
   const actRefs = useRef<(HTMLElement | null)[]>([]);
+  const router = useRouter();
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [signingIn, setSigningIn] = useState(false);
+  const [signInError, setSignInError] = useState<string | null>(null);
+  /** True while the light half covers the canvas — see StageCanvas.paused. */
+  const [covered, setCovered] = useState(false);
+
+  async function submitSignIn(e: React.FormEvent) {
+    e.preventDefault();
+    if (signingIn) return;
+    setSigningIn(true);
+    setSignInError(null);
+    try {
+      await login(email.trim(), password);
+      router.push("/projects");
+    } catch (err) {
+      // The message the server sent, when it sent one. "Something went wrong"
+      // in front of a password field is the least useful sentence in software.
+      setSignInError(
+        err instanceof ApiError
+          ? err.message
+          : "Could not reach the server. Check that the backend is running.",
+      );
+      setSigningIn(false);
+    }
+  }
 
   // Which act is on screen drives the scene. IntersectionObserver rather than a
   // scroll handler: no work happens between the boundaries that matter.
@@ -105,6 +147,31 @@ export default function LandingPage() {
       { threshold: [0.45], rootMargin: "-10% 0px -10% 0px" }
     );
     nodes.forEach((n) => io.observe(n));
+    return () => io.disconnect();
+  }, []);
+
+  // The canvas is fixed behind the page, so it cannot tell for itself when the
+  // opaque light half has covered it. This watches the two regions that are
+  // meant to show it and stops the loop when neither does.
+  useEffect(() => {
+    const dark = [
+      document.querySelector("[data-testid=landing-hero]"),
+      document.querySelector("[data-testid=landing-signin]"),
+      ...Array.from(document.querySelectorAll("[data-testid^=landing-act-]")),
+    ].filter(Boolean) as Element[];
+    if (!dark.length) return;
+    const visible = new Set<Element>();
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) visible.add(e.target);
+          else visible.delete(e.target);
+        }
+        setCovered(visible.size === 0);
+      },
+      { threshold: 0 },
+    );
+    dark.forEach((n) => io.observe(n));
     return () => io.disconnect();
   }, []);
 
@@ -137,6 +204,7 @@ export default function LandingPage() {
           <StageCanvas
             ref={canvas}
             stage={stage}
+            paused={covered}
             onBugFixed={onFixed}
             onBugCount={onCount}
             className={s.canvas}
@@ -267,18 +335,64 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className={s.closer} data-testid="landing-closer">
-        <div className={s.closerInner}>
-          <h2 className={s.h2Light}>Give it a URL and watch.</h2>
-          <p className={s.subLight}>
-            A scan of a form-heavy page takes a couple of minutes and comes back with cases you did
-            not write, run against a page you did not have to describe.
-          </p>
-          <Link href="/projects" className={s.ctaPrimary} data-testid="landing-cta-final">
-            Start a run
-          </Link>
+      {/* The model is the frame; the credentials are HTML */}
+      <section
+        className={s.signin}
+        data-testid="landing-signin"
+        ref={(el) => { actRefs.current[5] = el; }}
+        data-stage="5"
+      >
+        <div className={s.signinInner}>
+          <span className={s.kicker}>{SIGN_IN.kicker}</span>
+          <h2 className={s.h2}>{SIGN_IN.title}</h2>
+          <p className={s.body}>{SIGN_IN.body}</p>
+
+          <form className={s.signinForm} onSubmit={submitSignIn} data-testid="landing-signin-form">
+            <label className={s.field}>
+              <span className={s.fieldLabel}>{SIGN_IN.email}</span>
+              <input
+                type="email"
+                required
+                autoComplete="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className={s.input}
+                data-testid="landing-signin-email"
+              />
+            </label>
+            <label className={s.field}>
+              <span className={s.fieldLabel}>{SIGN_IN.password}</span>
+              <input
+                type="password"
+                required
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className={s.input}
+                data-testid="landing-signin-password"
+              />
+            </label>
+
+            {signInError && (
+              <p className={s.signinError} role="alert" data-testid="landing-signin-error">
+                {signInError}
+              </p>
+            )}
+
+            <button
+              type="submit"
+              className={s.ctaPrimary}
+              disabled={signingIn}
+              data-testid="landing-signin-submit"
+            >
+              {signingIn ? SIGN_IN.working : SIGN_IN.submit}
+            </button>
+          </form>
+
+          <p className={s.hint}>{SIGN_IN.hint}</p>
         </div>
       </section>
+
     </main>
   );
 }

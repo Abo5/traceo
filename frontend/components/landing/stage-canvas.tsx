@@ -19,6 +19,12 @@ type Props = {
   stage: Stage;
   onBugFixed?: (bug: BugInfo) => void;
   onBugCount?: (remaining: number, total: number) => void;
+  /**
+   * Stop rendering. The canvas is fixed behind the whole page now, so it is
+   * always "on screen" as far as an observer is concerned — the page has to say
+   * when it is covered, or the GPU keeps drawing a scene nobody can see.
+   */
+  paused?: boolean;
   className?: string;
   /** React 19 passes ref as an ordinary prop — no forwardRef wrapper needed. */
   ref?: Ref<CanvasHandle>;
@@ -26,7 +32,7 @@ type Props = {
 
 export type CanvasHandle = { fixAll: () => void };
 
-export default function StageCanvas({ stage, onBugFixed, onBugCount, className, ref }: Props) {
+export default function StageCanvas({ stage, onBugFixed, onBugCount, paused, className, ref }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<TraceoScene | null>(null);
   const [ready, setReady] = useState(false);
@@ -83,20 +89,11 @@ export default function StageCanvas({ stage, onBugFixed, onBugCount, className, 
     sceneRef.current?.setStage(stage);
   }, [stage]);
 
-  // Nothing off-screen should be burning a GPU frame.
   useEffect(() => {
-    const host = hostRef.current;
-    if (!host || !("IntersectionObserver" in window)) return;
-    const io = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) sceneRef.current?.start();
-        else sceneRef.current?.stop();
-      },
-      { threshold: 0.01 }
-    );
-    io.observe(host);
-    return () => io.disconnect();
-  }, [ready]);
+    if (!ready) return;
+    if (paused) sceneRef.current?.stop();
+    else sceneRef.current?.start();
+  }, [paused, ready]);
 
   const fixAll = useCallback(() => sceneRef.current?.fixAll(), []);
   useImperativeHandle(ref, () => ({ fixAll }), [fixAll]);
