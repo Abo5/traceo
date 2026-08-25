@@ -37,7 +37,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import require
-from ..llm import get_provider
+from ..llm import get_provider, provider_status
 from ..llm.base import frame_untrusted
 from ..models import (Project, Requirement, RequirementTestCase, Run, TestCase,
                       TestResult, User)
@@ -589,7 +589,13 @@ def _ask_model(context: str, allowed: dict[str, str], question: str,
     or a malformed reply should degrade to the deterministic answer, not hand
     the reader an error where an answer was expected.
     """
-    provider = get_provider()
+    try:
+        provider = get_provider()
+    except Exception:
+        # Selecting a provider can fail on its own — a key set with the SDK
+        # missing, a malformed model id. That is a reason to fall back to the
+        # rows, not to hand the reader a 500 where an answer was expected.
+        return None
     if getattr(provider, "name", "mock") == "mock":
         # The mock returns {} for prompt ids it does not know, which would fail
         # schema validation. There is nothing to gain by asking it.
@@ -647,11 +653,19 @@ _SUGGESTIONS = [
 
 
 def _model_available() -> bool:
-    """Whether a real provider is configured. The mock is not one."""
+    """Whether a real provider is configured AND answered when it was checked.
+
+    Configured is not the same as working. A dead key selects the provider
+    perfectly well and fails every call, and the panel would have announced
+    "read by claude-opus-5" over answers that all came from the rows. The boot
+    probe already establishes which it is; this reads its verdict.
+    """
     try:
-        return getattr(get_provider(), "name", "mock") != "mock"
+        if getattr(get_provider(), "name", "mock") == "mock":
+            return False
     except Exception:
         return False
+    return provider_status().get("state") == "ok"
 
 
 def _project_or_404(db: Session, org_id: str, project_id: str) -> Project:
@@ -703,7 +717,10 @@ def ask(project_id: str, body: Ask, user: User = Depends(require("view")),
     from_model = _ask_model(context, allowed, question, body.history)
     if from_model is not None:
         result, engine = from_model, "model"
-        model_name = getattr(get_provider(), "model", None)
+        try:
+            model_name = getattr(get_provider(), "model", None)
+        except Exception:
+            model_name = None
     else:
         result = answer_question(db, user.organisation_id, project, question)
 
