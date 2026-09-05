@@ -399,3 +399,43 @@ def test_deleting_a_scanned_project_does_not_500(client, project, monkeypatch):
         assert db.query(TestResult).filter(TestResult.run_id == body["run_id"]).count() == 0
     finally:
         db.close()
+
+
+def test_a_browser_pass_with_nothing_evaluated_is_not_a_pass(client, project, monkeypatch):
+    """H1, for the engine the product actually runs on.
+
+    The HTTP engine has refused to call an unevaluated case "passed" since the
+    invariant was written. The browser engine never counted what it evaluated,
+    so the rule could not fire there — and in one measured run all 63 browser
+    passes were recorded with zero assertions evaluated. Nothing distinguished
+    "the rule held" from "nothing ran".
+    """
+    headers, pid = project
+    org_id = _org_of(client, headers)
+    target_id, case_ids = _seed_target(org_id, pid)
+
+    def _claims_a_pass_but_checked_nothing(plan, timeout_s=None, artifacts_dir=None):
+        return {
+            "ok": True, "schema_version": 1, "url": TARGET_URL, "final_url": TARGET_URL,
+            "load_ms": 90, "elapsed_ms": 100,
+            "results": [{
+                "case_id": case_ids[0], "outcome": "passed", "duration_ms": 12,
+                # Every assertion skipped, and the runner still called it a pass.
+                "assertions": [{"type": "contrast", "outcome": "skipped",
+                                "expected": None, "actual": None,
+                                "message": "not supported by this runner"}],
+                "failure": None,
+            }],
+        }
+
+    monkeypatch.setattr(webverify, "run_check_sidecar", _claims_a_pass_but_checked_nothing)
+    r = client.post(f"/v1/web-targets/{target_id}/verify", json={}, headers=headers)
+    assert r.status_code == 202, r.text
+    body = r.json()
+    poll_job(client, headers, body["job_id"])
+
+    payload = client.get(f"/v1/runs/{body['run_id']}/report", headers=headers).json()
+    entry = next(c for c in payload["cases"] if c["test_case"]["id"] == case_ids[0])
+    assert entry["outcome"] == "inconclusive", entry
+    assert payload["counts"].get("passed", 0) == 0
+    assert "Nothing was checked" in (entry["failure_reason"] or {}).get("message", "")

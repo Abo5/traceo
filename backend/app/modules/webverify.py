@@ -46,6 +46,7 @@ from ..config import settings
 from ..db import SessionLocal, get_db
 from ..deps import audit, require
 from ..jobs import JobError
+from .execution import decide_outcome
 from ..models import (Environment, Run, TestCase, TestResult, TestStep, User,
                       WebTarget)
 from .webtarget import (BROWSER_UNAVAILABLE, _UNAVAILABLE_CODES,
@@ -397,15 +398,32 @@ def run_verify_job(job, org_id: str, user_id: str, project_id: str,
                 if result.get("screenshot_error"):
                     timing["screenshot_error"] = result["screenshot_error"]
 
+            # How much was actually checked. The HTTP engine has counted this
+            # since H1; the browser engine did not, so every browser pass was
+            # recorded with no evidence that anything had been evaluated —
+            # 63 of 63 passes in one measured run — and the rule below could
+            # never fire for the engine the product actually runs on.
+            evaluated = sum(1 for a in assertions
+                            if str(a.get("outcome") or "") not in ("skipped", "unsupported", ""))
+            skipped_assertions = sum(1 for a in assertions
+                                     if str(a.get("outcome") or "") in ("skipped", "unsupported"))
+            evidence = _evidence_for({"assertions": assertions, "duration_ms": duration,
+                                      "timing": timing}, case_url)
+            # The same function the HTTP engine uses, imported rather than
+            # restated: a pass with nothing evaluated is inconclusive, not a pass.
+            outcome, failure = decide_outcome(outcome, failure, evaluated,
+                                              skipped_assertions, evidence)
+
             counts["total"] += 1
             counts[outcome] = counts.get(outcome, 0) + 1
             db.add(TestResult(
                 run_id=run.id, test_case_id=case.id, test_case_version=1,
                 # A skipped case is not a passed case: the DB stores what happened.
                 outcome=outcome, duration_ms=duration,
-                failure_reason=failure if outcome in ("failed", "errored") else None,
-                evidence=_evidence_for({"assertions": assertions, "duration_ms": duration,
-                                        "timing": timing}, case_url),
+                failure_reason=failure if outcome in ("failed", "errored", "inconclusive") else None,
+                evidence=evidence,
+                assertions_evaluated=evaluated,
+                assertions_skipped=skipped_assertions,
             ))
 
         run.state = "completed"
