@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { TEST_TYPES, TEST_TYPE_META, type TestType } from "@/lib/test-types";
 import type { CSSProperties, ReactNode } from "react";
 import { useParams } from "next/navigation";
 import { API, api, getToken } from "@/lib/api";
@@ -96,6 +97,15 @@ export default function RunReportPage() {
     reqs: "Requirements",
     caseCol: "Case",
     outcome: "Outcome",
+    ofType: "cases",
+    ofTypeOne: "case",
+    failing: "failing",
+    noneAtSeverity: "Nothing at this severity",
+    noneAtSeverityHint: "This run failed, but not at the level you filtered to — clear the filter to see the rest.",
+    typePassed: "passed",
+    typeAttention: "need attention",
+    untyped: "Unclassified",
+    untypedHint: "These cases predate the type being recorded on a case.",
     durationCol: "Duration",
     empty: "No results",
     emptyHint: "No case has finished in this run yet",
@@ -219,7 +229,72 @@ export default function RunReportPage() {
   }, [results]);
 
   const failures = cases.filter((c) => c.outcome === "failed" || c.outcome === "errored");
+
+  /**
+   * The results, split by the discipline each case belongs to.
+   *
+   * A run mixes five kinds of testing, and they are not read the same way: a
+   * failing security case and a failing performance case call for different
+   * people and different fixes. One flat table of 133 rows makes the reader do
+   * that sorting in their head every time.
+   *
+   * Canonical order, and only the types this run actually produced — an empty
+   * "Security" heading would report a discipline as covered-and-clean when it
+   * was never run at all.
+   */
+  /**
+   * Split a list of results by the discipline each case belongs to.
+   *
+   * Both tabs use it. A run mixes five kinds of testing and they are not read
+   * the same way — a failing security case and a failing performance case call
+   * for different people and different fixes, so a flat list makes the reader
+   * do that sorting in their head from case titles.
+   *
+   * Canonical order, and only the disciplines present in the list it was handed.
+   * An empty "Security" heading would report a kind of testing as covered and
+   * clean when it never ran; on the failures tab it would be worse, reading as a
+   * discipline that failed nothing when it produced nothing.
+   */
+  function groupByType(list: any[]) {
+    const buckets = new Map<string, any[]>();
+    for (const c of list) {
+      const raw = String(c.test_case?.test_type ?? c.test_type ?? "").trim().toLowerCase();
+      const key = (TEST_TYPES as readonly string[]).includes(raw) ? raw : "untyped";
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key)!.push(c);
+    }
+    return [...TEST_TYPES, "untyped"]
+      .filter((k) => buckets.has(k))
+      .map((k) => {
+        const items = buckets.get(k)!;
+        return {
+          key: k,
+          label: k === "untyped" ? L.untyped : TEST_TYPE_META[k as TestType].label,
+          scope: k === "untyped" ? L.untypedHint : TEST_TYPE_META[k as TestType].scope,
+          items,
+          passed: items.filter((c) => c.outcome === "passed").length,
+          attention: items.filter((c) => c.outcome === "failed" || c.outcome === "errored").length,
+        };
+      });
+  }
+
+  const byType = useMemo(() => groupByType(cases), [cases]);
   const sevFailures = sevF === "all" ? failures : failures.filter((c) => c.severity === sevF);
+
+  const failuresByType = useMemo(() => groupByType(sevFailures), [sevFailures]);
+
+  /**
+   * Where each failure sits in the unfiltered list.
+   *
+   * The cards key and expand on that index, and grouping restarts it per
+   * section — without this, the first card of every section would share one
+   * expanded state and open together.
+   */
+  const failureIndex = useMemo(() => {
+    const m = new Map<any, number>();
+    sevFailures.forEach((c, i) => m.set(c, i));
+    return m;
+  }, [sevFailures]);
   const perf: any[] = Array.isArray(report?.perf) ? report.perf : [];
 
   const durationMs = useMemo(() => {
@@ -242,177 +317,7 @@ export default function RunReportPage() {
     return c.requirements ?? c.test_case?.requirements ?? [];
   }
 
-  function renderFailureReason(fr: any) {
-    if (!fr) return null;
-    if (typeof fr === "object") {
-      return (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          {fr.message && <span style={{ fontSize: 12, color: "var(--error-text)" }}>{fr.message}</span>}
-          {fr.expected !== undefined && (
-            <Badge tone="success">
-              {L.expected}: <M style={{ fontSize: 11 }}>{typeof fr.expected === "object" ? JSON.stringify(fr.expected) : String(fr.expected)}</M>
-            </Badge>
-          )}
-          {fr.actual !== undefined && (
-            <Badge tone="error">
-              {L.actual}: <M style={{ fontSize: 11 }}>{typeof fr.actual === "object" ? JSON.stringify(fr.actual) : String(fr.actual)}</M>
-            </Badge>
-          )}
-        </div>
-      );
-    }
-    return <span style={{ fontSize: 12, color: "var(--error-text)" }}>{String(fr)}</span>;
-  }
-
-  /** Verdict hero: share of finished checks that passed, and a plain headline. */
-  const verifiedTotal = Number(counts.total ?? cases.length) || 0;
-  const verifiedPct = verifiedTotal
-    ? Math.round((Number(counts.passed ?? 0) / verifiedTotal) * 100)
-    : 0;
-  const verdictTone = verifiedPct >= 95 ? "success" : verifiedPct >= 70 ? "warning" : "error";
-  const failCount = Number(counts.failed ?? 0) + Number(counts.errored ?? 0);
-  const verdictHeadline =
-    failCount === 0
-      ? "Everything you asked for works."
-      : failCount === 1
-        ? "Most of what you asked for works. One thing needs fixing."
-        : `Most of what you asked for works. ${failCount} things need fixing.`;
-
-  const compareRuns = projRuns.filter((r) => r.id !== runId);
-  const newlyFailing: any[] = Array.isArray(compare?.newly_failing) ? compare.newly_failing : [];
-  const newlyPassing: any[] = Array.isArray(compare?.newly_passing) ? compare.newly_passing : [];
-
-  function compareItemLabel(x: any): string {
-    if (typeof x === "string") return x;
-    return x?.title ?? x?.test_case?.title ?? x?.test_case_id ?? x?.id ?? "—";
-  }
-
-  if (loading) {
-    return <div style={{ padding: 24, color: "var(--text-secondary)", fontSize: 13 }}>…</div>;
-  }
-
-  if (error && !report) {
-    return (
-      <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-start" }}>
-        <div style={{ color: "var(--error-text)", fontSize: 13 }}>
-          {L.loadError} — {error}
-        </div>
-        <Button variant="secondary" size="sm" onClick={() => load()}>
-          {L.retry}
-        </Button>
-      </div>
-    );
-  }
-
-  return (
-    <div data-testid="runs-report-page-root" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      {/* verdict hero — the design's report headline */}
-      <div
-        className="card"
-        data-testid="runs-report-page-header"
-        style={{ display: "flex", gap: 24, alignItems: "center", padding: "22px 24px", flexWrap: "wrap" }}
-      >
-        <div
-          className={`verdict-ring verdict-ring-${verdictTone}`}
-          role="img"
-          aria-label={`${verifiedPct}% of checks passed`}
-        >
-          <span style={{ fontSize: 22, fontWeight: 600 }}>{verifiedPct}%</span>
-          <span style={{ fontSize: 9, color: "var(--text-secondary)" }}>verified</span>
-        </div>
-
-        <div style={{ flex: 1, minWidth: 260 }}>
-          <b style={{ fontSize: 18, display: "block" }}>{verdictHeadline}</b>
-          <div
-            style={{
-              fontSize: 12.5,
-              color: "var(--text-secondary)",
-              margin: "6px 0 10px",
-              maxWidth: 640,
-            }}
-          >
-            {L.title} {run.display_id ? `#${run.display_id}` : shortId(String(runId))} ·{" "}
-            {L.env}: {envName} · {L.initiator}: {initiator} · {L.started}:{" "}
-            <DateTimeText value={run.started_at} /> · {L.duration}: {fmtDur(durationMs)}
-          </div>
-          <div className="row" style={{ gap: 8 }}>
-            <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-              <StatusDot state={run.state} testId="runs-report-status-dot" />
-              <Badge tone={stateTone(run.state)} testId="runs-report-state-badge" state={run.state}>
-                {run.state}
-              </Badge>
-            </span>
-            <Badge tone="success">{counts.passed ?? 0} passed</Badge>
-            <Badge tone="error">{counts.failed ?? 0} need fixing</Badge>
-            <Badge tone="warning">{counts.errored ?? 0} errored</Badge>
-          </div>
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <Button variant="primary" testId="runs-report-export-button" onClick={openHtmlReport} title={L.exportHint}>
-            {L.exportHtml}
-          </Button>
-        </div>
-      </div>
-
-      {error && <div style={{ fontSize: 13, color: "var(--error-text)" }}>{error}</div>}
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
-        <StatCard value={counts.total ?? cases.length} label={L.total} testId="runs-report-total-stat" />
-        <StatCard value={counts.passed ?? 0} label={L.passed} color="var(--success)" testId="runs-report-passed-stat" />
-        <StatCard value={counts.failed ?? 0} label={L.failed} color="var(--error)" testId="runs-report-failed-stat" />
-        <StatCard value={counts.errored ?? 0} label={L.errored} color="var(--warning)" testId="runs-report-errored-stat" />
-        <StatCard value={fmtDur(durationMs)} label={L.duration} testId="runs-report-duration-stat" />
-      </div>
-
-      <div className="tabs" role="tablist">
-        {(
-          [
-            ["failures", `${L.tabFailures} · ${failures.length}`],
-            ["all", `${L.tabAll} · ${cases.length}`],
-            ["compare", L.tabCompare],
-          ] as const
-        ).map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            role="tab"
-            aria-selected={tab === key}
-            className={`tab ${tab === key ? "tab-active" : ""}`}
-            data-testid={`runs-report-tab-${key}-pill`}
-            onClick={() => setTab(key)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {/* Failures */}
-      {tab === "failures" &&
-        (failures.length === 0 ? (
-          <Card>
-            <Empty icon="✓" title={L.noFailures} hint={L.noFailuresHint} testId="runs-report-no-failures-empty" />
-          </Card>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {[
-                ["all", L.sevAll],
-                ["critical", L.sevCritical],
-                ["major", L.sevMajor],
-                ["minor", L.sevMinor],
-              ].map(([v, label]) => (
-                <Pill key={v} active={sevF === v} testId={`runs-report-severity-${v}-pill`} onClick={() => setSevF(v)}>
-                  {label}
-                  {v !== "all" && (
-                    <M style={{ fontSize: 10, marginLeft: 4 }}>
-                      {failures.filter((c) => c.severity === v).length}
-                    </M>
-                  )}
-                </Pill>
-              ))}
-            </div>
-            {sevFailures.map((c, i) => {
+  function renderFailure(c: any, i: number) {
               const cid = caseId(c);
               const isOpen = expanded.has(cid || String(i));
               const key = cid || String(i);
@@ -597,46 +502,315 @@ export default function RunReportPage() {
                   )}
                 </div>
               );
-            })}
+  }
+
+  function renderFailureReason(fr: any) {
+    if (!fr) return null;
+    if (typeof fr === "object") {
+      return (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {fr.message && <span style={{ fontSize: 12, color: "var(--error-text)" }}>{fr.message}</span>}
+          {fr.expected !== undefined && (
+            <Badge tone="success">
+              {L.expected}: <M style={{ fontSize: 11 }}>{typeof fr.expected === "object" ? JSON.stringify(fr.expected) : String(fr.expected)}</M>
+            </Badge>
+          )}
+          {fr.actual !== undefined && (
+            <Badge tone="error">
+              {L.actual}: <M style={{ fontSize: 11 }}>{typeof fr.actual === "object" ? JSON.stringify(fr.actual) : String(fr.actual)}</M>
+            </Badge>
+          )}
+        </div>
+      );
+    }
+    return <span style={{ fontSize: 12, color: "var(--error-text)" }}>{String(fr)}</span>;
+  }
+
+  /** Verdict hero: share of finished checks that passed, and a plain headline. */
+  const verifiedTotal = Number(counts.total ?? cases.length) || 0;
+  const verifiedPct = verifiedTotal
+    ? Math.round((Number(counts.passed ?? 0) / verifiedTotal) * 100)
+    : 0;
+  const verdictTone = verifiedPct >= 95 ? "success" : verifiedPct >= 70 ? "warning" : "error";
+  const failCount = Number(counts.failed ?? 0) + Number(counts.errored ?? 0);
+  const verdictHeadline =
+    failCount === 0
+      ? "Everything you asked for works."
+      : failCount === 1
+        ? "Most of what you asked for works. One thing needs fixing."
+        : `Most of what you asked for works. ${failCount} things need fixing.`;
+
+  const compareRuns = projRuns.filter((r) => r.id !== runId);
+  const newlyFailing: any[] = Array.isArray(compare?.newly_failing) ? compare.newly_failing : [];
+  const newlyPassing: any[] = Array.isArray(compare?.newly_passing) ? compare.newly_passing : [];
+
+  function compareItemLabel(x: any): string {
+    if (typeof x === "string") return x;
+    return x?.title ?? x?.test_case?.title ?? x?.test_case_id ?? x?.id ?? "—";
+  }
+
+  if (loading) {
+    return <div style={{ padding: 24, color: "var(--text-secondary)", fontSize: 13 }}>…</div>;
+  }
+
+  if (error && !report) {
+    return (
+      <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-start" }}>
+        <div style={{ color: "var(--error-text)", fontSize: 13 }}>
+          {L.loadError} — {error}
+        </div>
+        <Button variant="secondary" size="sm" onClick={() => load()}>
+          {L.retry}
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div data-testid="runs-report-page-root" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/* verdict hero — the design's report headline */}
+      <div
+        className="card"
+        data-testid="runs-report-page-header"
+        style={{ display: "flex", gap: 24, alignItems: "center", padding: "22px 24px", flexWrap: "wrap" }}
+      >
+        <div
+          className={`verdict-ring verdict-ring-${verdictTone}`}
+          role="img"
+          aria-label={`${verifiedPct}% of checks passed`}
+        >
+          <span style={{ fontSize: 22, fontWeight: 600 }}>{verifiedPct}%</span>
+          <span style={{ fontSize: 9, color: "var(--text-secondary)" }}>verified</span>
+        </div>
+
+        <div style={{ flex: 1, minWidth: 260 }}>
+          <b style={{ fontSize: 18, display: "block" }}>{verdictHeadline}</b>
+          <div
+            style={{
+              fontSize: 12.5,
+              color: "var(--text-secondary)",
+              margin: "6px 0 10px",
+              maxWidth: 640,
+            }}
+          >
+            {L.title} {run.display_id ? `#${run.display_id}` : shortId(String(runId))} ·{" "}
+            {L.env}: {envName} · {L.initiator}: {initiator} · {L.started}:{" "}
+            <DateTimeText value={run.started_at} /> · {L.duration}: {fmtDur(durationMs)}
+          </div>
+          <div className="row" style={{ gap: 8 }}>
+            <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+              <StatusDot state={run.state} testId="runs-report-status-dot" />
+              <Badge tone={stateTone(run.state)} testId="runs-report-state-badge" state={run.state}>
+                {run.state}
+              </Badge>
+            </span>
+            <Badge tone="success">{counts.passed ?? 0} passed</Badge>
+            <Badge tone="error">{counts.failed ?? 0} need fixing</Badge>
+            <Badge tone="warning">{counts.errored ?? 0} errored</Badge>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <Button variant="primary" testId="runs-report-export-button" onClick={openHtmlReport} title={L.exportHint}>
+            {L.exportHtml}
+          </Button>
+        </div>
+      </div>
+
+      {error && <div style={{ fontSize: 13, color: "var(--error-text)" }}>{error}</div>}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
+        <StatCard value={counts.total ?? cases.length} label={L.total} testId="runs-report-total-stat" />
+        <StatCard value={counts.passed ?? 0} label={L.passed} color="var(--success)" testId="runs-report-passed-stat" />
+        <StatCard value={counts.failed ?? 0} label={L.failed} color="var(--error)" testId="runs-report-failed-stat" />
+        <StatCard value={counts.errored ?? 0} label={L.errored} color="var(--warning)" testId="runs-report-errored-stat" />
+        <StatCard value={fmtDur(durationMs)} label={L.duration} testId="runs-report-duration-stat" />
+      </div>
+
+      <div className="tabs" role="tablist">
+        {(
+          [
+            ["failures", `${L.tabFailures} · ${failures.length}`],
+            ["all", `${L.tabAll} · ${cases.length}`],
+            ["compare", L.tabCompare],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={tab === key}
+            className={`tab ${tab === key ? "tab-active" : ""}`}
+            data-testid={`runs-report-tab-${key}-pill`}
+            onClick={() => setTab(key)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Failures */}
+      {tab === "failures" &&
+        (failures.length === 0 ? (
+          <Card>
+            <Empty icon="✓" title={L.noFailures} hint={L.noFailuresHint} testId="runs-report-no-failures-empty" />
+          </Card>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {[
+                ["all", L.sevAll],
+                ["critical", L.sevCritical],
+                ["major", L.sevMajor],
+                ["minor", L.sevMinor],
+              ].map(([v, label]) => (
+                <Pill key={v} active={sevF === v} testId={`runs-report-severity-${v}-pill`} onClick={() => setSevF(v)}>
+                  {label}
+                  {v !== "all" && (
+                    <M style={{ fontSize: 10, marginLeft: 4 }}>
+                      {failures.filter((c) => c.severity === v).length}
+                    </M>
+                  )}
+                </Pill>
+              ))}
+            </div>
+            {sevFailures.length === 0 ? (
+              // The sections vanish with the filter, and a blank panel reads as
+              // a page that broke rather than a filter that matched nothing.
+              <Card>
+                <Empty
+                  title={L.noneAtSeverity}
+                  hint={L.noneAtSeverityHint}
+                  testId="runs-report-no-failures-at-severity-empty"
+                />
+              </Card>
+            ) : null}
+            {failuresByType.map((group) => (
+              <section
+                key={group.key}
+                data-testid="runs-report-failure-type-section"
+                data-type={group.key}
+                style={{ display: "flex", flexDirection: "column", gap: 10 }}
+              >
+                <header style={{ display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
+                  <h3
+                    data-testid="runs-report-failure-type-heading"
+                    style={{ fontSize: 15, fontWeight: 650, margin: 0, color: "var(--text)" }}
+                  >
+                    {group.label}
+                  </h3>
+                  <Badge tone="error" testId="runs-report-failure-type-count">
+                    {group.items.length} {L.failing}
+                  </Badge>
+                </header>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {group.items.map((c: any) => renderFailure(c, failureIndex.get(c) ?? 0))}
+                </div>
+              </section>
+            ))}
           </div>
         ))}
 
-      {/* All results */}
+      {/* All results, one section per discipline */}
       {tab === "all" && (
-        <Card pad={false}>
-          {cases.length === 0 ? (
+        cases.length === 0 ? (
+          <Card pad={false}>
             <Empty title={L.empty} hint={L.emptyHint} testId="runs-report-results-empty" />
-          ) : (
-            <Table head={["ID", L.caseCol, L.outcome, L.durationCol, L.reqs]} testId="runs-report-table-root">
-              {cases.map((c, i) => (
-                <tr key={caseId(c) || i} data-testid="runs-report-result-row">
-                  <td>
-                    <M style={{ color: "var(--text-secondary)" }}>{shortId(caseId(c))}</M>
-                  </td>
-                  <td style={{ fontSize: 13, color: "var(--text)" }}>{caseTitle(c)}</td>
-                  <td>
-                    <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                      <StatusDot state={c.outcome} testId="runs-report-result-status-dot" />
-                      <Badge tone={OUTCOME_TONE[c.outcome] ?? "muted"} testId="runs-report-result-outcome-badge" state={c.outcome}>{c.outcome}</Badge>
-                    </span>
-                  </td>
-                  <td>
-                    <M style={{ color: "var(--text-secondary)" }}>{fmtDur(Number(c.duration_ms) || 0)}</M>
-                  </td>
-                  <td>
-                    <span style={{ display: "inline-flex", gap: 8, flexWrap: "wrap" }}>
-                      {caseReqChips(c).map((r: any, j: number) => (
-                        <M key={j} style={{ fontSize: 10, color: "var(--accent-text)" }}>
-                          {r.external_id ?? r.id}
-                        </M>
-                      ))}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </Table>
-          )}
-        </Card>
+          </Card>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+            {byType.map((group) => (
+              <section
+                key={group.key}
+                data-testid="runs-report-type-section"
+                data-type={group.key}
+                style={{ display: "flex", flexDirection: "column", gap: 10 }}
+              >
+                <header
+                  style={{ display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}
+                >
+                  <h3
+                    data-testid="runs-report-type-heading"
+                    style={{ fontSize: 15, fontWeight: 650, margin: 0, color: "var(--text)" }}
+                  >
+                    {group.label}
+                  </h3>
+                  <Badge tone="muted" testId="runs-report-type-count">
+                    {group.items.length} {group.items.length === 1 ? L.ofTypeOne : L.ofType}
+                  </Badge>
+                  <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                    <span data-testid="runs-report-type-passed">{group.passed}</span> {L.typePassed}
+                    {group.attention > 0 && (
+                      <>
+                        {" · "}
+                        <span
+                          data-testid="runs-report-type-attention"
+                          style={{ color: "var(--error-text)" }}
+                        >
+                          {group.attention}
+                        </span>{" "}
+                        {L.typeAttention}
+                      </>
+                    )}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 11.5,
+                      color: "var(--text-muted)",
+                      flex: 1,
+                      minWidth: 200,
+                      textAlign: "right",
+                    }}
+                  >
+                    {group.scope}
+                  </span>
+                </header>
+
+                <Card pad={false}>
+                  <Table
+                    head={["ID", L.caseCol, L.outcome, L.durationCol, L.reqs]}
+                    testId={`runs-report-table-${group.key}`}
+                  >
+                    {group.items.map((c: any, i: number) => (
+                      <tr key={caseId(c) || i} data-testid="runs-report-result-row">
+                        <td>
+                          <M style={{ color: "var(--text-secondary)" }}>{shortId(caseId(c))}</M>
+                        </td>
+                        <td style={{ fontSize: 13, color: "var(--text)" }}>{caseTitle(c)}</td>
+                        <td>
+                          <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                            <StatusDot state={c.outcome} testId="runs-report-result-status-dot" />
+                            <Badge
+                              tone={OUTCOME_TONE[c.outcome] ?? "muted"}
+                              testId="runs-report-result-outcome-badge"
+                              state={c.outcome}
+                            >
+                              {c.outcome}
+                            </Badge>
+                          </span>
+                        </td>
+                        <td>
+                          <M style={{ color: "var(--text-secondary)" }}>
+                            {fmtDur(Number(c.duration_ms) || 0)}
+                          </M>
+                        </td>
+                        <td>
+                          <span style={{ display: "inline-flex", gap: 8, flexWrap: "wrap" }}>
+                            {caseReqChips(c).map((r: any, j: number) => (
+                              <M key={j} style={{ fontSize: 10, color: "var(--accent-text)" }}>
+                                {r.external_id ?? r.id}
+                              </M>
+                            ))}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </Table>
+                </Card>
+              </section>
+            ))}
+          </div>
+        )
       )}
 
       {/* Compare */}

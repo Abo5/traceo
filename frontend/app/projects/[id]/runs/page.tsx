@@ -222,6 +222,17 @@ export default function RunsPage() {
     if (search?.get("start") !== "1") return;
     if (!pUrl.trim() || pTypes.size === 0 || !canDo("trigger_run")) return;
     autoStarted.current = true;
+    // Spend the instruction as it is obeyed. Leaving ?start=1 in the address
+    // bar means a refresh — or a shared link — silently launches a second
+    // discovery against the same target, which costs minutes and muddies the
+    // run history with a duplicate nobody asked for.
+    //
+    // history.replaceState rather than router.replace: this runs while the
+    // route is still settling, and a router navigation issued mid-hydration
+    // races with the router's own — it lands often enough to look correct and
+    // gets reverted often enough to be a bug. Rewriting the address bar is
+    // what is actually wanted here; no navigation is involved.
+    window.history.replaceState(null, "", `/projects/${id}/runs`);
     void startPipeline();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pUrl, pTypes, search]);

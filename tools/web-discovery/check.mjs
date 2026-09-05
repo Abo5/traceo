@@ -60,6 +60,16 @@ const DEFAULTS = {
   // slow — the single largest source of false failures in a browser suite.
   // It is a CEILING, not a sleep: a page that settles in 80ms costs 80ms.
   stepWait: 3000,
+  // How many pages run at once. Cases are independent by construction — each
+  // starts from a clean render — so the only thing serialising them bought was
+  // a single continuous video, which is not worth minutes of wall clock.
+  concurrency: 4,
+  maxConcurrency: 8,
+  // Budget for the RE-load between cases. The first load of a page pays the
+  // full wait strategy; after that the document is warm and only the first
+  // control has to exist again. Absent, this read as `undefined` and Playwright
+  // substituted its own 30s default — in the one path that runs once per case.
+  rehydrate: 1500,
   // Second chance for a case that failed or errored at the base budget. A slow
   // page and a broken one look identical in one attempt; they stop looking alike
   // when the slow one is given twice the time and then passes. A case that fails
@@ -1598,7 +1608,7 @@ async function main() {
     }
   }
 
-  let viewport, timeout, stepWait, stepWaitRetry;
+  let viewport, timeout, stepWait, stepWaitRetry, concurrency;
   try {
     viewport = parseViewport(plan.viewport || args.viewport || DEFAULTS.viewport);
     timeout = asInt(args.timeout, plan.timeout_ms || DEFAULTS.timeout, 'timeout');
@@ -1608,6 +1618,8 @@ async function main() {
     // A retry budget at or below the base one would spend the extra pass proving
     // nothing, so it is raised rather than silently honoured as configured.
     if (stepWaitRetry <= stepWait) stepWaitRetry = stepWait * 2;
+    concurrency = asInt(args.concurrency, plan.concurrency || DEFAULTS.concurrency, 'concurrency');
+    concurrency = Math.max(1, Math.min(DEFAULTS.maxConcurrency, concurrency));
   } catch (err) { return fail('bad_arguments', err.message, undefined, 2); }
 
   // A full-viewport recording of a run with hundreds of cases is a very large
@@ -1635,132 +1647,212 @@ async function main() {
         undefined, 3);
     }
 
-    // One context, one page, one continuous video: every case in this plan runs
-    // on the same page, so the recording is the whole run end to end rather than
-    // a pile of clips that have to be stitched back together. Playwright writes
-    // the file only on context.close(), which is why the close below is in a
-    // finally and is awaited.
-    const videoDir = artifactsDir ? path.join(artifactsDir, 'video') : null;
-    const context = await browser.newContext({
-      viewport,
-      deviceScaleFactor: 1,
-      reducedMotion: 'reduce',
-      ...(videoDir ? { recordVideo: { dir: videoDir, size: videoSize } } : {}),
-      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 TraceoCheck/1.0',
-    });
-    const page = await context.newPage();
-
-    let loadMs = 0;
-    /** Load (or reload) the target and wait for it to be interactive. */
-    let firstLoadDone = false;
-    /**
-     * Load (or reload) the target and wait for it to be interactive.
-     *
-     * The first load pays the full wait strategy — network idle, hydration,
-     * fonts — because that is what makes an SPA readable at all. Every case
-     * after it re-loads the SAME page, so it only waits for the first control to
-     * exist. With one reset per case that difference is the run: paying the full
-     * strategy 40+ times pushed a page of 43 cases past the timeout.
-     */
-    const reset = async () => {
-      const t0 = Date.now();
-      await page.goto(target.href, { waitUntil: 'domcontentloaded', timeout });
-      loadMs = Date.now() - t0;
-      if (!firstLoadDone) {
-        await page.waitForLoadState('networkidle', { timeout: DEFAULTS.idleTimeout })
-          .catch(() => page.waitForTimeout(DEFAULTS.settle));
-        await page.waitForFunction(
-          () => document.querySelectorAll('form, input, select, textarea, button, a[href]').length > 0,
-          undefined, { timeout: DEFAULTS.hydrate }).catch(() => {});
-        await page.waitForTimeout(150);
-        firstLoadDone = true;
-        return;
-      }
-      await page.waitForFunction(
-        () => document.querySelectorAll('form, input, select, textarea, button, a[href]').length > 0,
-        undefined, { timeout: DEFAULTS.rehydrate }).catch(() => {});
-      await page.waitForTimeout(60);
-    };
-
-    try { await reset(); }
-    catch (err) {
-      return fail('navigation_failed', `Could not load ${target.href}: ${err.message}`);
-    }
-
-    const firstLoadMs = loadMs;
-    const results = [];
+    // Cases are grouped by the page they belong to, and the groups are dealt
+    // out to a small pool of contexts. Grouping is what makes a page load cold
+    // once instead of once per case; the pool is what stops a run of a hundred
+    // cases being a hundred page loads end to end.
+    //
+    // Every URL a case names is put through the same SSRF policy as the plan's
+    // own. They arrive from discovery rather than from a user, but this process
+    // navigates wherever it is told, and "the caller is trusted" is exactly the
+    // assumption that stops being true first.
+    const groups = new Map();
+    const rejectedUrls = new Map();
     for (const kase of cases) {
-      // Each case starts from a clean render — an earlier case that typed into a
-      // field or submitted a form must not colour the next one's evidence.
-      try { await reset(); } catch { /* keep the current page; the case will report */ }
-      const base = { reset, loadMs: firstLoadMs, allowSubmit: plan.allow_submit === true };
-      let result = await runCase(page, kase, { ...base, stepWait: stepWait });
-
-      // One retry at the wider budget, and ONLY for a case that did not pass.
-      // A pass is never re-run: it has already answered, and re-running it could
-      // only turn a good result into a flaky one. The retry re-navigates first so
-      // the second attempt starts from the same clean render as the first, making
-      // the extra time the only difference between them.
-      if (result.outcome === 'failed' || result.outcome === 'errored') {
-        try { await reset(); } catch { /* the retry will report what it finds */ }
-        const retried = await runCase(page, kase, { ...base, stepWait: stepWaitRetry });
-        // The retry REPLACES the first verdict either way. If it passed, the
-        // first failure was the clock, not the application. If it failed again,
-        // its evidence is the better record: same defect, observed with twice the
-        // patience, which is what makes the finding worth acting on.
-        result = { ...retried, retried: true, retried_after: result.outcome,
-          step_wait_ms: stepWaitRetry };
-      } else {
-        result = { ...result, step_wait_ms: stepWait };
-      }
-
-      // The screenshot is taken AFTER the verdict and BEFORE the next case's
-      // reset, so it shows the page in the state the assertion actually judged.
-      // Taken for every non-passing case, not only failures: an errored or
-      // skipped case is exactly the one whose reason is hardest to reconstruct
-      // from text, and the frame is often the whole explanation — a consent
-      // banner over the form, a login screen, an empty render.
-      if (shotsDir && result.outcome !== 'passed') {
-        const file = `${safeName(kase.id)}.png`;
-        try {
-          await page.screenshot({ path: path.join(shotsDir, file), fullPage: false });
-          result = { ...result, screenshot: file };
-        } catch (err) {
-          // A screenshot that cannot be taken must not sink the case's real
-          // verdict, which is already decided; the report says it is missing.
-          result = { ...result, screenshot_error: cleanMessage(err.message || err) };
+      let href = kase.url || target.href;
+      if (href !== target.href) {
+        try { href = (await assertAllowedUrl(href)).href; }
+        catch (err) {
+          rejectedUrls.set(href, cleanMessage(err.message || err));
+          href = target.href;
         }
       }
-      results.push(result);
+      if (!groups.has(href)) groups.set(href, []);
+      groups.get(href).push(kase);
     }
 
-    const finalUrl = page.url();
+    // Balanced by CASE, not by page.
+    //
+    // Dealing out whole pages looks tidier and is much slower: one page holding
+    // 45 of 171 cases sets the floor for the entire run however many workers
+    // there are. So a large page is split across workers instead. The cost is
+    // one extra cold load of that page per worker that gets a piece of it — a
+    // second or two, against minutes saved — and cases from the same page stay
+    // contiguous within a worker, so the piece still loads cold only once.
+    const groupList = [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
+    const workerCount = Math.max(1, Math.min(concurrency, cases.length));
+    const perWorker = Math.ceil(cases.length / workerCount);
+    const buckets = Array.from({ length: workerCount }, () => []);
+    const bucketLoad = new Array(workerCount).fill(0);
+    for (const [href, list] of groupList) {
+      let offset = 0;
+      while (offset < list.length) {
+        let lightest = 0;
+        for (let i = 1; i < workerCount; i++) if (bucketLoad[i] < bucketLoad[lightest]) lightest = i;
+        const room = Math.max(1, perWorker - bucketLoad[lightest]);
+        const slice = list.slice(offset, offset + room);
+        buckets[lightest].push([href, slice]);
+        bucketLoad[lightest] += slice.length;
+        offset += slice.length;
+      }
+    }
 
-    // Playwright flushes the recording on context close, and only then is the
-    // file complete on disk — so the close has to happen BEFORE the document is
-    // emitted, not in the finally that tears the browser down afterwards. The
-    // Video handle is taken while the page is still open because it cannot be
-    // obtained from a closed one.
+    // Preflight: prove the entry page is reachable before spinning up a pool.
+    // Without this an unreachable target produces a hundred individually failed
+    // cases instead of one plain answer about the target, which buries the only
+    // fact that matters under the noise of its consequences.
+    {
+      const probe = await browser.newContext({ viewport, deviceScaleFactor: 1 });
+      const probePage = await probe.newPage();
+      try {
+        await probePage.goto(target.href, { waitUntil: 'domcontentloaded', timeout });
+      } catch (err) {
+        await probe.close().catch(() => {});
+        return fail('navigation_failed', `Could not load ${target.href}: ${err.message}`);
+      } finally {
+        await probe.close().catch(() => {});
+      }
+    }
+
+    const videoDir = artifactsDir ? path.join(artifactsDir, 'video') : null;
+    const collected = new Map();
+    const loadByPage = new Map();
     let videoFile = null;
     let videoError = null;
-    if (videoDir) {
-      const video = page.video();
-      try {
-        await context.close();
-        if (video) {
-          const src = await video.path();
-          // Playwright names the file after an internal id; a fixed name is what
-          // lets the backend serve it without recording the name anywhere.
-          videoFile = 'run.webm';
-          const dest = path.join(videoDir, videoFile);
-          if (path.resolve(src) !== path.resolve(dest)) fs.renameSync(src, dest);
+    let finalUrl = target.href;
+
+    /**
+     * One worker: its own context, its own page, its own share of the pages.
+     *
+     * Worker 0 records the video when one was asked for. With a pool there is no
+     * single recording of the whole run to be had, and a pile of clips that have
+     * to be stitched together is worse than one that says what it covers — so
+     * the document reports the recording as partial when it is.
+     */
+    const runWorker = async (index, assigned) => {
+      const wantVideo = Boolean(videoDir) && index === 0;
+      const context = await browser.newContext({
+        viewport,
+        deviceScaleFactor: 1,
+        reducedMotion: 'reduce',
+        ...(wantVideo ? { recordVideo: { dir: videoDir, size: videoSize } } : {}),
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+          '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 TraceoCheck/1.0',
+      });
+      const page = await context.newPage();
+      let loadMs = 0;
+      /** Pages this worker has already given the full wait strategy, and its cost. */
+      const firstLoadFor = new Map();
+
+      /**
+       * Load (or reload) a page and wait for it to be interactive.
+       *
+       * The first load of a page pays the full wait strategy — network idle,
+       * hydration — because that is what makes an SPA readable at all. Every
+       * case after it re-loads the SAME page, so it only waits for the first
+       * control to exist. Paying the full strategy per case pushed a page of 43
+       * cases past the timeout.
+       */
+      const reset = async (href) => {
+        const t0 = Date.now();
+        await page.goto(href, { waitUntil: 'domcontentloaded', timeout });
+        loadMs = Date.now() - t0;
+        if (!firstLoadFor.has(href)) {
+          await page.waitForLoadState('networkidle', { timeout: DEFAULTS.idleTimeout })
+            .catch(() => page.waitForTimeout(DEFAULTS.settle));
+          await page.waitForFunction(
+            () => document.querySelectorAll('form, input, select, textarea, button, a[href]').length > 0,
+            undefined, { timeout: DEFAULTS.hydrate }).catch(() => {});
+          await page.waitForTimeout(150);
+          firstLoadFor.set(href, Date.now() - t0);
+          loadByPage.set(href, Date.now() - t0);
+          return;
         }
-      } catch (err) {
-        // A recording that failed to save must not discard a run's results.
-        videoFile = null;
-        videoError = cleanMessage(err.message || err);
+        await page.waitForFunction(
+          () => document.querySelectorAll('form, input, select, textarea, button, a[href]').length > 0,
+          undefined, { timeout: DEFAULTS.rehydrate }).catch(() => {});
+        await page.waitForTimeout(60);
+      };
+
+      try {
+        for (const [href, list] of assigned) {
+          for (const kase of list) {
+            // Each case starts from a clean render — an earlier case that typed
+            // into a field or submitted a form must not colour the next one's.
+            try { await reset(href); } catch { /* keep the page; the case will report */ }
+            const resetThis = () => reset(href);
+            const base = {
+              reset: resetThis,
+              loadMs: firstLoadFor.get(href) ?? loadMs,
+              allowSubmit: plan.allow_submit === true,
+            };
+            let result = await runCase(page, kase, { ...base, stepWait });
+
+            // One retry at the wider budget, and ONLY for a case that did not
+            // pass. A pass is never re-run: it has already answered, and
+            // re-running it could only turn a good result into a flaky one. The
+            // retry re-navigates first so the second attempt starts from the
+            // same clean render, making the extra time the only difference.
+            if (result.outcome === 'failed' || result.outcome === 'errored') {
+              try { await resetThis(); } catch { /* the retry will report what it finds */ }
+              const retried = await runCase(page, kase, { ...base, stepWait: stepWaitRetry });
+              result = { ...retried, retried: true, retried_after: result.outcome,
+                step_wait_ms: stepWaitRetry };
+            } else {
+              result = { ...result, step_wait_ms: stepWait };
+            }
+
+            // The screenshot is taken AFTER the verdict and BEFORE the next
+            // case's reset, so it shows the page the assertion actually judged.
+            // Taken for every non-passing case, not only failures: an errored or
+            // skipped case is the one whose reason is hardest to reconstruct
+            // from text, and the frame is often the whole explanation.
+            if (shotsDir && result.outcome !== 'passed') {
+              const file = `${safeName(kase.id)}.png`;
+              try {
+                await page.screenshot({ path: path.join(shotsDir, file), fullPage: false });
+                result = { ...result, screenshot: file };
+              } catch (err) {
+                result = { ...result, screenshot_error: cleanMessage(err.message || err) };
+              }
+            }
+            collected.set(kase.id, result);
+          }
+        }
+        if (index === 0) finalUrl = page.url();
+      } finally {
+        // Playwright flushes a recording on context close, and only then is the
+        // file complete on disk — so this close happens BEFORE the document is
+        // emitted, not in the finally that tears the browser down afterwards.
+        // The Video handle is taken while the page is still open because it
+        // cannot be obtained from a closed one.
+        const video = wantVideo ? page.video() : null;
+        try {
+          await context.close();
+          if (video) {
+            const src = await video.path();
+            // Playwright names the file after an internal id; a fixed name is
+            // what lets the backend serve it without recording the name.
+            videoFile = 'run.webm';
+            const dest = path.join(videoDir, videoFile);
+            if (path.resolve(src) !== path.resolve(dest)) fs.renameSync(src, dest);
+          }
+        } catch (err) {
+          // A recording that failed to save must not discard a run's results.
+          if (wantVideo) { videoFile = null; videoError = cleanMessage(err.message || err); }
+        }
       }
+    };
+
+    await Promise.all(buckets.map((assigned, i) => runWorker(i, assigned)));
+
+    // Emitted in the plan's own order. The pool finishes cases in whatever order
+    // the pages allow, and a report whose rows move between runs of the same
+    // plan is a report nobody can diff.
+    const results = [];
+    for (const kase of cases) {
+      const result = collected.get(kase.id);
+      if (result) results.push(result);
     }
 
     emit({
@@ -1774,7 +1866,17 @@ async function main() {
       step_wait_retry_ms: stepWaitRetry,
       video: videoFile,
       ...(videoError ? { video_error: videoError } : {}),
-      load_ms: firstLoadMs,
+      // Said plainly rather than left to be inferred: with a pool, the recording
+      // covers one worker's share of the run, not the run.
+      ...(videoFile && buckets.length > 1 ? { video_partial: true } : {}),
+      concurrency: buckets.length,
+      pages: groups.size,
+      ...(rejectedUrls.size
+        ? { rejected_urls: [...rejectedUrls].map(([url, reason]) => ({ url, reason })) }
+        : {}),
+      // The entry page's own first load — the summary figure has always meant
+      // that page, and a crawl's other pages each keep theirs.
+      load_ms: loadByPage.get(target.href) ?? 0,
       elapsed_ms: Date.now() - startedAll,
       results,
     }, 0);

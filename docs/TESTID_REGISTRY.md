@@ -33,6 +33,33 @@ form or link to one may appear anywhere in the shell. The HTTP endpoints
 `/auth/login` and `/auth/register` are untouched — the suite composes its role
 sessions from them.
 
+## /landing — `frontend/app/landing/page.tsx`
+
+The public page. It renders with no shell and no session (see
+`PUBLIC_ROUTES` in `components/providers.tsx`), so nothing in the app-shell
+table applies to it.
+
+| data-testid | Element | Purpose |
+|---|---|---|
+| `landing-root` | main | Landing page root |
+| `landing-hero` | section | Hero; `data-stage="0"` |
+| `landing-canvas` | container | WebGL scene host; `data-ready="1"` once the scene is constructed |
+| `landing-hint` | paragraph | Interaction hint under the calls to action |
+| `landing-cta-app` | link | Into the application (`/projects`) |
+| `landing-cta-scroll` | link | Jumps to the first act |
+| `landing-act-1` … `landing-act-4` | section | One per act; `data-stage` carries 1–4 |
+| `landing-bug-bar` | container | Defects outstanding, with the repair control |
+| `landing-fix-all` | Button | Resolves every remaining defect |
+| `landing-fix-prompt` | container | The brief a repaired defect leaves behind |
+| `landing-copy-prompt` | Button | Copies that brief |
+| `landing-features` | section | The light half |
+| `landing-signin` | section | Sign-in at the foot of the page; `data-stage="5"`, the model is its frame |
+| `landing-signin-form` | form | Real credentials form against `POST /auth/login` |
+| `landing-signin-email` | input | `type=email` |
+| `landing-signin-password` | input | `type=password`, `autocomplete=current-password` |
+| `landing-signin-submit` | button | Disabled while the request is in flight |
+| `landing-signin-error` | alert | The server's own refusal, shown verbatim |
+
 ## /projects — `frontend/app/projects/page.tsx`
 
 | data-testid | Element | Purpose |
@@ -206,6 +233,26 @@ prefixes.
 | `dashboard-quick-generate-button` | Button | Quick action → generate |
 | `dashboard-quick-review-button` | Button | Quick action → review |
 | `dashboard-quick-run-button` | Button | Quick action → run |
+
+## Project assistant — `frontend/components/project-assistant.tsx`
+
+Mounted on the overview. Answers come from `POST /projects/{id}/assistant`,
+which is deterministic and reads only this project's rows. Shut until the
+project has a completed run.
+
+| data-testid | Element | Purpose |
+|---|---|---|
+| `assistant-launcher` | button | Opens the panel; `disabled` before the first completed run, with the reason in `title` |
+| `assistant-panel` | aside | The open panel |
+| `assistant-close` | button | Closes it; the state is remembered |
+| `assistant-resize-handle` | separator | Drag or arrow keys; carries `aria-valuenow/min/max` |
+| `assistant-messages` | log | The transcript; focusable, `aria-live="polite"` |
+| `assistant-msg-you` / `assistant-msg-traceo` | container (repeated) | One message |
+| `assistant-engine` | span | Which kind of thing wrote that reply — a model, or the project's rows |
+| `assistant-cite` | chip (repeated) | A row the answer was built from |
+| `assistant-suggestion` | button (repeated) | A follow-up the answer offered |
+| `assistant-input` | input | The question |
+| `assistant-send` | button | Sends it |
 
 ## /projects/[id]/requirements — `frontend/app/projects/[id]/requirements/page.tsx`
 
@@ -593,8 +640,17 @@ The **QA Insight Agent** screen — the sixth engine: fully deterministic, no la
 | `runs-report-failure-toggle-button` | Button | Expand/collapse failure evidence |
 | `runs-report-failure-severity-badge` | Badge | `data-state` carries the severity |
 | `runs-report-failure-outcome-badge` | Badge | `data-state="failed\|errored"` |
+| `runs-report-failure-type-section` | section (repeated) | One discipline's failures; `data-type` carries `functional\|api\|ui\|performance\|security\|untyped` |
+| `runs-report-failure-type-heading` | heading | The discipline's name |
+| `runs-report-failure-type-count` | Badge | How many of that discipline are failing |
+| `runs-report-no-failures-at-severity-empty` | Empty | The run failed, but nothing at the filtered severity |
 | `runs-report-results-empty` | Empty | No results to list |
-| `runs-report-table-root` | Table | All-results table |
+| `runs-report-type-section` | section (repeated) | One discipline's results; `data-type` carries `functional\|api\|ui\|performance\|security\|untyped` |
+| `runs-report-type-heading` | heading | The discipline's name |
+| `runs-report-type-count` | Badge | How many cases that discipline contributed |
+| `runs-report-type-passed` | span | Passed within the discipline |
+| `runs-report-type-attention` | span | Failed or errored within the discipline; absent when none |
+| `runs-report-table-<type>` | Table | That discipline's results table, one per section |
 | `runs-report-result-row` | row (repeated) | One result |
 | `runs-report-result-status-dot` | StatusDot | Result outcome indicator |
 | `runs-report-result-outcome-badge` | Badge | `data-state="passed\|failed\|errored"` |

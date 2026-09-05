@@ -105,9 +105,13 @@ def _report_entries(db: Session, run: Run) -> list[dict]:
         linked = reqs.get(tc.id, [])
         high = any(is_high_priority(r.get("priority")) for r in linked)
         entries.append({
+            # `type` is the case's own shape (positive/negative); `test_type` is
+            # the discipline it belongs to — functional, api, ui, performance,
+            # security. The report groups by the latter, and a reader comparing
+            # a run against what the project is FOR needs it named, not inferred.
             "test_case": {"id": tc.id, "title": tc.title, "description": tc.description,
                           "type": tc.type, "priority": tc.priority, "state": tc.state,
-                          "technique": tc.technique},
+                          "technique": tc.technique, "test_type": tc.test_type},
             "test_case_version": res.test_case_version,
             "outcome": res.outcome,
             "duration_ms": res.duration_ms,

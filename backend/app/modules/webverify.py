@@ -46,6 +46,7 @@ from ..config import settings
 from ..db import SessionLocal, get_db
 from ..deps import audit, require
 from ..jobs import JobError
+from .execution import decide_outcome
 from ..models import (Environment, Run, TestCase, TestResult, TestStep, User,
                       WebTarget)
 from .webtarget import (BROWSER_UNAVAILABLE, _UNAVAILABLE_CODES,
@@ -262,10 +263,28 @@ def ensure_environment(db: Session, org_id: str, project_id: str,
 # the job
 # ---------------------------------------------------------------------------
 
+def _case_url(steps: list[TestStep]) -> str:
+    """The page a case was derived from — the page it has to be run against.
+
+    A crawl generates cases for every page it visited, so the target's own URL
+    is the right page for only some of them. The URL is already recorded on the
+    step that produced the case; this is where it gets read back out.
+    """
+    for step in steps:
+        url = _step_url(step)
+        if url:
+            return url
+    return ""
+
+
 def _plan_case(case: TestCase, steps: list[TestStep]) -> dict:
     return {
         "id": case.id,
         "title": case.title,
+        # Without this the runner has one URL for the whole plan and every case
+        # from a crawled sub-page is executed against the entry page, where its
+        # elements do not exist. Those cases do not fail, they cannot pass.
+        "url": _case_url(steps),
         "checks": [{
             "request": step.request if isinstance(step.request, dict) else {},
             "assertions": step.assertions if isinstance(step.assertions, list) else [],
@@ -348,6 +367,7 @@ def run_verify_job(job, org_id: str, user_id: str, project_id: str,
         counts = {"total": 0, "passed": 0, "failed": 0, "errored": 0, "skipped": 0}
 
         for case, _steps in selected:
+            case_url = _case_url(_steps) or url
             result = by_id.get(case.id)
             if result is None:
                 # The sidecar returns one entry per planned case; a gap means the
@@ -378,15 +398,32 @@ def run_verify_job(job, org_id: str, user_id: str, project_id: str,
                 if result.get("screenshot_error"):
                     timing["screenshot_error"] = result["screenshot_error"]
 
+            # How much was actually checked. The HTTP engine has counted this
+            # since H1; the browser engine did not, so every browser pass was
+            # recorded with no evidence that anything had been evaluated —
+            # 63 of 63 passes in one measured run — and the rule below could
+            # never fire for the engine the product actually runs on.
+            evaluated = sum(1 for a in assertions
+                            if str(a.get("outcome") or "") not in ("skipped", "unsupported", ""))
+            skipped_assertions = sum(1 for a in assertions
+                                     if str(a.get("outcome") or "") in ("skipped", "unsupported"))
+            evidence = _evidence_for({"assertions": assertions, "duration_ms": duration,
+                                      "timing": timing}, case_url)
+            # The same function the HTTP engine uses, imported rather than
+            # restated: a pass with nothing evaluated is inconclusive, not a pass.
+            outcome, failure = decide_outcome(outcome, failure, evaluated,
+                                              skipped_assertions, evidence)
+
             counts["total"] += 1
             counts[outcome] = counts.get(outcome, 0) + 1
             db.add(TestResult(
                 run_id=run.id, test_case_id=case.id, test_case_version=1,
                 # A skipped case is not a passed case: the DB stores what happened.
                 outcome=outcome, duration_ms=duration,
-                failure_reason=failure if outcome in ("failed", "errored") else None,
-                evidence=_evidence_for({"assertions": assertions, "duration_ms": duration,
-                                        "timing": timing}, url),
+                failure_reason=failure if outcome in ("failed", "errored", "inconclusive") else None,
+                evidence=evidence,
+                assertions_evaluated=evaluated,
+                assertions_skipped=skipped_assertions,
             ))
 
         run.state = "completed"

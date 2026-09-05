@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { ensureSession, getToken } from "@/lib/api";
 import AppShell from "@/components/shell";
 import AuthScreen from "@/components/auth-screen";
@@ -22,8 +23,29 @@ import AuthScreen from "@/components/auth-screen";
  * ensureSession asks for a credential-free session first, and only when that is
  * refused (404 on any normal backend) does the sign-in screen appear. So the
  * development convenience survives without the production build depending on it.
+ *
+ * The chrome itself — icon rail, project sidebar, topbar — lives in
+ * components/shell.tsx, ported from the v3 design.
+ *
+ * PUBLIC ROUTES SIT IN FRONT OF ALL THREE STATES. The landing page is the
+ * product's public face rather than a screen inside it: it must render for
+ * someone who has never signed in, which is precisely the person the gate above
+ * is built to stop. Sending that visitor to a sign-in form is not a degraded
+ * landing page, it is no landing page. So a public route renders bare — no
+ * gate, no chrome — and never reaches for a session, because a marketing page
+ * that cannot be read until a backend answers is a marketing page that is down
+ * whenever the backend is.
  */
+
+/** Rendered bare: no gate, no chrome, no session. */
+const PUBLIC_ROUTES = ["/landing"];
+
 export default function Providers({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const isPublic = PUBLIC_ROUTES.some(
+    (route) => pathname === route || pathname?.startsWith(route + "/"),
+  );
+
   const [state, setState] = useState<"checking" | "out" | "in">("checking");
 
   const settle = useCallback(() => {
@@ -31,6 +53,10 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // The hook still runs — hooks must — but a public route asks the backend
+    // for nothing at all.
+    if (isPublic) return;
+
     let alive = true;
     (async () => {
       if (getToken()) {
@@ -54,8 +80,9 @@ export default function Providers({ children }: { children: React.ReactNode }) {
       window.removeEventListener("traceo-auth", onAuth);
       window.removeEventListener("storage", onAuth);
     };
-  }, [settle]);
+  }, [settle, isPublic]);
 
+  if (isPublic) return <>{children}</>;
   if (state === "checking") return <div className="auth-wrap" aria-busy="true" />;
   if (state === "out") return <AuthScreen onDone={settle} />;
   return <AppShell>{children}</AppShell>;

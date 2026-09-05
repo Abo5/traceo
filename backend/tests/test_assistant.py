@@ -1,0 +1,289 @@
+"""The project assistant answers from this project's rows, or declines.
+
+Three properties are worth a test, and they are the three that make the panel
+safe to put in front of someone: it says nothing before there is anything to
+say, it never crosses a project boundary, and it never answers a question the
+project's data does not bear on.
+"""
+from __future__ import annotations
+
+from app.db import SessionLocal
+from app.models import (Environment, Requirement, RequirementTestCase, Run,
+                        TestCase, TestResult)
+
+
+def _claims(headers) -> dict:
+    import base64, json
+    payload = headers["Authorization"].split(" ", 1)[1].split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    return json.loads(base64.urlsafe_b64decode(payload))
+
+
+def _ids(headers) -> tuple[str, str]:
+    """(organisation, user) as the token states them."""
+    c = _claims(headers)
+    return c["org"], c["sub"]
+
+
+def _seed_run(org_id: str, user_id: str, project_id: str,
+              *, outcome: str = "failed") -> dict:
+    """One requirement, one case, one completed run holding one result."""
+    with SessionLocal() as db:
+        req = Requirement(organisation_id=org_id, project_id=project_id,
+                          external_id="BRD-014", description="Email is mandatory",
+                          acceptance_criteria=["refused when empty"], type="functional",
+                          priority="high", source_text="", version=1)
+        db.add(req)
+        db.flush()
+        case = TestCase(organisation_id=org_id, project_id=project_id,
+                        title="Form: 'signup' rejects submission with Email empty",
+                        description="Derived from the 'signup' form.", preconditions="",
+                        type="negative", priority="high", state="draft", generated=True,
+                        technique="ep", test_type="functional")
+        db.add(case)
+        db.flush()
+        db.add(RequirementTestCase(requirement_id=req.id, test_case_id=case.id,
+                                   link_source="generated", requirement_version_at_link=1))
+        # A Run needs somewhere it ran; the assistant never reads it, but the
+        # schema is right to insist a result came from a place.
+        env = Environment(organisation_id=org_id, project_id=project_id,
+                          name="test", base_url="http://127.0.0.1:9", auth_type="none",
+                          variables={})
+        db.add(env)
+        db.flush()
+        run = Run(organisation_id=org_id, project_id=project_id,
+                  environment_id=env.id, initiated_by=user_id, state="completed",
+                  counts={"total": 1, "passed": 0, "failed": 1, "errored": 0, "skipped": 0})
+        db.add(run)
+        db.flush()
+        db.add(TestResult(
+            run_id=run.id, test_case_id=case.id, test_case_version=1, outcome=outcome,
+            duration_ms=120,
+            failure_reason={"message": "The form accepted an empty #email and submitted."},
+            evidence=[]))
+        db.commit()
+        return {"case_id": case.id, "run_id": run.id, "req": req.external_id}
+
+
+def test_assistant_is_shut_until_a_run_has_completed(client, register_org, create_project):
+    headers = register_org("Assistant Org")
+    project = create_project(headers, "Quiet Project")
+
+    state = client.get(f"/v1/projects/{project}/assistant", headers=headers)
+    assert state.status_code == 200
+    assert state.json()["available"] is False
+    assert state.json()["reason"] == "no_completed_run"
+
+    # And it refuses rather than inventing an answer from an empty project.
+    r = client.post(f"/v1/projects/{project}/assistant",
+                    json={"question": "what failed?"}, headers=headers)
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["code"] == "no_completed_run"
+
+
+def test_it_answers_from_the_rows_and_cites_them(client, register_org, create_project):
+    headers = register_org("Assistant Org 2")
+    project = create_project(headers, "Answering Project")
+    seeded = _seed_run(*_ids(headers), project)
+
+    assert client.get(f"/v1/projects/{project}/assistant",
+                      headers=headers).json()["available"] is True
+
+    r = client.post(f"/v1/projects/{project}/assistant",
+                    json={"question": "what failed?"}, headers=headers)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["intent"] == "failures"
+    # The reason came from the recorded result, not from a paraphrase of it.
+    assert "accepted an empty #email" in body["answer"]
+    assert any(c["id"] == seeded["case_id"] for c in body["cites"])
+    # Every reply says what produced it, so a reader can weigh it.
+    assert body["engine"] == "deterministic"
+
+    # Naming a case answers about that case, including what it traces to.
+    named = client.post(f"/v1/projects/{project}/assistant",
+                        json={"question": f"why did {seeded['case_id'][:8]} fail?"},
+                        headers=headers).json()
+    assert named["intent"] == "case"
+    assert seeded["req"] in named["answer"]
+
+
+def test_it_declines_questions_the_project_cannot_answer(client, register_org, create_project):
+    headers = register_org("Assistant Org 3")
+    project = create_project(headers, "Scoped Project")
+    _seed_run(*_ids(headers), project)
+
+    r = client.post(f"/v1/projects/{project}/assistant",
+                    json={"question": "what is the capital of France?"},
+                    headers=headers).json()
+    # It does not claim to know, and it does not lecture either. Inside a panel
+    # scoped to one project, a refusal listing better questions is not an
+    # answer — so it says the phrasing was not understood and hands over what
+    # it does hold.
+    assert r["intent"] == "unmatched"
+    assert "could not tell which part of the project" in r["answer"]
+    assert "nothing outside it" in r["answer"]
+    # …and it still says something true about the project rather than nothing.
+    assert "requirement" in r["answer"]
+
+
+def test_it_cannot_be_pointed_at_another_organisation(client, register_org, create_project):
+    owner = register_org("Owner Org")
+    project = create_project(owner, "Private Project")
+    _seed_run(*_ids(owner), project)
+
+    stranger = register_org("Stranger Org")
+    assert client.get(f"/v1/projects/{project}/assistant",
+                      headers=stranger).status_code == 404
+    assert client.post(f"/v1/projects/{project}/assistant",
+                       json={"question": "what failed?"},
+                       headers=stranger).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# The model path
+# ---------------------------------------------------------------------------
+
+class _StubProvider:
+    """A provider that records the prompt it was given and returns a fixed reply."""
+    name = "stub"
+    model = "stub-1"
+
+    def __init__(self, data):
+        self.data = data
+        self.prompt = None
+
+    def complete_json(self, prompt_id, prompt, schema):
+        from app.llm.base import LLMResult
+        self.prompt = prompt
+        return LLMResult(data=self.data, model=self.model, prompt_version="v1.0")
+
+
+class _AngryProvider:
+    name = "stub"
+    model = "stub-1"
+
+    def complete_json(self, prompt_id, prompt, schema):
+        raise RuntimeError("the key is dead")
+
+
+def test_a_configured_model_answers_and_says_so(client, register_org, create_project,
+                                                monkeypatch):
+    headers = register_org("Model Org")
+    project = create_project(headers, "Model Project")
+    seeded = _seed_run(*_ids(headers), project)
+
+    stub = _StubProvider({"answer": "The email field is not enforced.",
+                          "cites": [seeded["case_id"]]})
+    monkeypatch.setattr("app.modules.assistant.get_provider", lambda: stub)
+
+    body = client.post(f"/v1/projects/{project}/assistant",
+                       json={"question": "what failed?"}, headers=headers).json()
+    assert body["engine"] == "model"
+    assert body["model"] == "stub-1"
+    assert body["answer"] == "The email field is not enforced."
+    assert [c["id"] for c in body["cites"]] == [seeded["case_id"]]
+
+    # The model was handed the project's rows, inside the untrusted frame — a
+    # scanned page that says "ignore your instructions" is quoted, not obeyed.
+    from app.llm.base import UNTRUSTED_CLOSE, UNTRUSTED_OPEN
+    assert UNTRUSTED_OPEN in stub.prompt and UNTRUSTED_CLOSE in stub.prompt
+    assert "accepted an empty #email" in stub.prompt
+    assert "what failed?" in stub.prompt
+
+
+def test_a_citation_the_facts_do_not_contain_is_dropped(client, register_org,
+                                                        create_project, monkeypatch):
+    headers = register_org("Model Org 2")
+    project = create_project(headers, "Grounded Project")
+    _seed_run(*_ids(headers), project)
+
+    stub = _StubProvider({"answer": "Something failed.",
+                          "cites": ["case-that-never-existed", "0000000000000000"]})
+    monkeypatch.setattr("app.modules.assistant.get_provider", lambda: stub)
+
+    body = client.post(f"/v1/projects/{project}/assistant",
+                       json={"question": "what failed?"}, headers=headers).json()
+    # The answer survives; the invented citations do not. An answer may still be
+    # useful, a fabricated citation never is.
+    assert body["answer"] == "Something failed."
+    assert body["cites"] == []
+
+
+def test_a_dead_provider_falls_back_rather_than_erroring(client, register_org,
+                                                         create_project, monkeypatch):
+    headers = register_org("Model Org 3")
+    project = create_project(headers, "Falling Back")
+    _seed_run(*_ids(headers), project)
+
+    monkeypatch.setattr("app.modules.assistant.get_provider", lambda: _AngryProvider())
+
+    r = client.post(f"/v1/projects/{project}/assistant",
+                    json={"question": "what failed?"}, headers=headers)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # A dead key degrades to the rows, and says which answered. The reader is
+    # never handed an error where an answer was expected.
+    assert body["engine"] == "deterministic"
+    assert "accepted an empty #email" in body["answer"]
+
+
+def test_a_general_question_gets_a_general_answer(client, register_org, create_project):
+    """Without a model configured, a broad question still lands somewhere useful."""
+    headers = register_org("Overview Org")
+    project = create_project(headers, "Broad Project")
+    _seed_run(*_ids(headers), project)
+
+    body = client.post(f"/v1/projects/{project}/assistant",
+                       json={"question": "tell me about this project"},
+                       headers=headers).json()
+    # It used to fall through to a refusal listing what it could have been
+    # asked — for the most natural opening question there is.
+    assert body["intent"] == "overview"
+    assert "requirement" in body["answer"] and "test case" in body["answer"]
+
+    # Out of scope is still out of scope.
+    off = client.post(f"/v1/projects/{project}/assistant",
+                      json={"question": "who won the world cup?"}, headers=headers).json()
+    assert off["intent"] == "unmatched"
+    assert "could not tell which part of the project" in off["answer"]
+
+
+def test_the_conversation_is_carried_to_the_model(client, register_org, create_project,
+                                                  monkeypatch):
+    headers = register_org("Chat Org")
+    project = create_project(headers, "Chatty Project")
+    _seed_run(*_ids(headers), project)
+
+    stub = _StubProvider({"answer": "The other two are the country and bio fields."})
+    monkeypatch.setattr("app.modules.assistant.get_provider", lambda: stub)
+
+    body = client.post(f"/v1/projects/{project}/assistant", headers=headers, json={
+        "question": "and the other two?",
+        "history": [
+            {"role": "you", "text": "what failed?"},
+            {"role": "traceo", "text": "Three cases failed: email, country, bio."},
+        ],
+    }).json()
+
+    assert body["engine"] == "model"
+    # A follow-up is meaningless without what came before it.
+    assert "Three cases failed: email, country, bio." in stub.prompt
+    assert "and the other two?" in stub.prompt
+    # The transcript is untrusted too — it contains text the page produced.
+    from app.llm.base import UNTRUSTED_OPEN
+    assert stub.prompt.count(UNTRUSTED_OPEN) >= 3
+
+
+def test_history_is_bounded_by_the_server(client, register_org, create_project):
+    headers = register_org("Bounded Org")
+    project = create_project(headers, "Bounded Project")
+    _seed_run(*_ids(headers), project)
+
+    # History is the one field a caller can grow without limit, and an unbounded
+    # one turns a question into a bill.
+    r = client.post(f"/v1/projects/{project}/assistant", headers=headers, json={
+        "question": "what failed?",
+        "history": [{"role": "you", "text": "x"} for _ in range(40)],
+    })
+    assert r.status_code == 422, r.text
